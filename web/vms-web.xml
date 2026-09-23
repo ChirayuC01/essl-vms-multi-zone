@@ -1,0 +1,19 @@
+﻿<service>
+  <id>VmsWeb</id>
+  <name>VMS Web Console</name>
+  <description>Operator web console for the Vendor Management System.</description>
+  <executable>C:\Program Files\nodejs\node.exe</executable>
+  <arguments>"C:\Work\essl-vms-main\web\node_modules\next\dist\bin\next" start -p 47101</arguments>
+  <workingdirectory>C:\Work\essl-vms-main\web</workingdirectory>
+  <env name="VMS_APP_ROOT" value="C:\Work\essl-vms-main\web"/>
+  <depend>VmsBackend</depend>
+  <startmode>Automatic</startmode>
+  <onfailure action="restart" delay="5 sec"/>
+  <onfailure action="restart" delay="30 sec"/>
+  <resetfailure>1 hour</resetfailure>
+  <stoptimeout>30 sec</stoptimeout>
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>8</keepFiles>
+  </log>
+</service>

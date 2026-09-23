@@ -1,0 +1,18 @@
+# Known Issues — People Upgrade Release Candidate
+
+## Open acceptance items
+
+> **Source/installer boundary (17 September 2026):** `vms-setup.exe` 0.4.19 is the current packaged artifact. The earlier 0.4.14 artifact is known-bad and must not be deployed: its compiled frontend targets `localhost:48102` even though the installed backend uses `47102`.
+
+| Issue | Impact | Workaround/check | Disposition |
+|---|---|---|---|
+| Real firmware has not yet completed the new Employee/Visitor alphanumeric acceptance matrix. | Casing, auto-registration, or delete/restore behavior could differ on site hardware. | Run section 9 of `PEOPLE_UPGRADE_VERIFICATION_GUIDE.md` on the target terminal and record exact replies. | Release gate; Phase 10. |
+| The 0.4.11 installer is not Authenticode-signed or clean-VM tested. | Windows displays an unknown-publisher warning; installer automation and current lifecycle/report behavior remain unproven by a fresh field install. | Sign when a certificate is available and run the full clean-VM, Windows Server 2016, remote-LAN login, punch/report/CSV time, resign/rehire, upgrade, expiry, and renewal matrix. | Release gate; Phase 10. |
+| ProgramData trial/key persistence still needs installed-Windows reinstall verification. | Trial/key adoption could fail despite service/unit logic passing. | Execute section 7/8 of the acceptance guide. | Release gate; Phase 10. |
+| Offline licensing cannot defeat a determined Windows administrator deleting DB + ProgramData or restoring a VM snapshot. | A sophisticated client can reset local evidence. | Commercial/process controls; require online activation or hardware-backed storage for stronger enforcement. | Accepted limitation/future scope. |
+| A full Windows reinstall, MachineGuid change, or VM/hardware replacement changes the internal license binding. | Existing paid key is rejected. | Privately collect the new binding, issue a replacement key, and retain ledger history. | Expected behavior. |
+| `PUSH_PHOTO` fails with `device Return=-1001` for webcam/phone photos (observed on site 12 Sep 2026, two visitors, both terminals). | The visitor is on the device without a face; the barrier never opens for them. | The terminal rejects photos unlike its own (~45-60 KB portraits): raw webcam frames were full-resolution landscape JPEGs. Since the fix, the console centre-crops every upload to a 480×640 portrait before sending. To recover an affected person: open their page → Enrollment photo → upload/take a new photo (now allowed even when one exists) → Command queue → Retry the failed rows (PUSH_PHOTO re-reads the JPEG from disk). Check the photo card's **Size** stat: hundreds of KB means the old shape. | Fixed in console; the exact -1001 meaning is unconfirmed by eSSL documentation — record the device reply verbatim if it recurs with a normalised photo. |
+| Denied terminal attempts are not uploaded by tested firmware. | Reports cannot show attempted misuse by a blocked person. | Use physical/security logs if required. | Firmware limitation. |
+| Face capacity is 3,000 on the verified terminal, not the advertised 6,000. | Overprovisioning causes enrollment failures. | Configure actual capacity and monitor alerts. | Hardware fact. |
+
+Resolved implementation failures and their fixes are retained in `PEOPLE_UPGRADE_EXECUTION_LOG.md`; historical release defects remain in `VERSIONS.md`. The 0.4.0 PostgreSQL executable-ACL and missing-firewall defects are corrected in 0.4.1 and carried into 0.4.11, pending clean-machine acceptance of the current installer.

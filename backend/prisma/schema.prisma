@@ -1,0 +1,549 @@
+// VMS Master DB — the permanent system of record.
+//
+// Models are PascalCase and fields camelCase (idiomatic Prisma client);
+// tables and columns are mapped to snake_case for the DB. Reflects PRD §8
+// with every Phase 0 correction from VMS_PROJECT_CONTEXT.md applied.
+//
+// Invariants that shaped this schema:
+//   - People are never deleted (soft is_active only); the device is a working set.
+//   - Photos live on local disk; only the path + metadata are stored here.
+//   - Face templates are algorithm-bound — a same-device cache, never durable.
+//   - There is no device-native expiry; the sweeper is load-bearing.
+//   - Access control is by group, not TZ; group IDs are per-device config.
+//   - The command protocol supplies its own correlation id + return code.
+
+generator client {
+  provider      = "prisma-client-js"
+  // Phase 6 packaging: the dev machine generates its own OS's query engine by
+  // default, but the packaged backend runs at a client site on Windows. Both
+  // targets are listed so `prisma generate` still works unmodified on a
+  // non-Windows dev machine.
+  binaryTargets = ["native", "windows"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum EntryState {
+  REGISTERED
+  PENDING_PROVISION
+  PROVISIONED
+  INSIDE
+  PENDING_DEPROVISION
+}
+
+enum RetentionPolicy {
+  ONE_DAY
+  ONE_WEEK
+  ONE_MONTH
+  QUARTERLY
+  CUSTOM
+}
+
+enum EntryMode {
+  SINGLE_ENTRY
+  MULTI_ENTRY
+}
+
+enum CommandStatus {
+  PENDING
+  SENT
+  SUCCESS
+  FAILED
+  RETRY
+}
+
+enum CommandType {
+  PROVISION
+  PUSH_PHOTO
+  DEPROVISION
+  BLOCK
+  UNBLOCK
+  QUERY_USER
+  DEVICE_INFO
+  CLEAR_LOGS
+}
+
+enum UserRole {
+  ADMIN
+  AUTHORIZED_PERSON
+}
+
+enum DeviceRole {
+  IN
+  OUT
+  BOTH
+}
+
+enum PersonCategory {
+  EMPLOYEE
+  VISITOR
+}
+
+enum AttendanceQuality {
+  EXACT
+  LEGACY_COUNTS_ONLY
+}
+
+enum PunchDirection {
+  IN
+  OUT
+}
+
+// ---------------------------------------------------------------------------
+// Core identity — permanent, never deleted
+// ---------------------------------------------------------------------------
+
+model Person {
+  id                String         @id @default(cuid())
+  name              String
+  category          PersonCategory @default(VISITOR)
+  mobile            String?
+  companyId         String?        @map("company_id")
+  departmentId      String?        @map("department_id")
+  // Government identity number, and the second unique key on this row.
+  //
+  // Nullable in the database but mandatory at registration: people are never
+  // deleted, so rows registered before this column existed have none and a
+  // NOT NULL would have needed a fabricated value for each. Postgres allows
+  // many NULLs under a unique index, so the constraint binds exactly the rows
+  // that carry a number.
+  aadharNumber      String?        @unique @map("aadhar_number")
+  panNumber         String?        @unique @map("pan_number")
+  // The device PIN and the forever join key between DB and device. Text, not
+  // a number: real terminals hold IDs like `WCTPL070` and `ye01` beside plain
+  // numbers. Supplied at registration - the ID typed on the terminal, or one
+  // the operator picks - and immutable afterwards.
+  //
+  // Uniqueness is case-INSENSITIVE, enforced by a functional unique index on
+  // UPPER(essl_user_id) rather than by @unique, which Prisma cannot express.
+  // See the migration, and `src/user-id.ts` for why case is preserved but
+  // never significant.
+  esslUserId        String         @map("essl_user_id")
+  isActive          Boolean        @default(true) @map("is_active")
+  resignedAt        DateTime?      @map("resigned_at")
+  resignedReason    String?        @map("resigned_reason")
+  resignedById      String?        @map("resigned_by")
+  // This face is on a terminal because somebody enrolled it there, not
+  // because we pushed it — a person adopted from an unclaimed enrollment, or
+  // one who predates this installation entirely. Reconciliation must not
+  // auto-remove them: it removes only what it can prove is a stale record of
+  // ours, and this is the opposite of that proof. Cleared the moment we
+  // provision them, at which point they are an ordinary managed person.
+  //
+  // Deliberately a column rather than "has a PROVISION command ever existed":
+  // retention prunes completed commands for closed entries, so that question
+  // silently changes its answer over time and would switch the self-heal off
+  // for real people months after the fact.
+  adoptedFromDevice Boolean        @default(false) @map("adopted_from_device")
+  createdAt         DateTime       @default(now()) @map("created_at")
+  updatedAt         DateTime       @updatedAt @map("updated_at")
+
+  company        Company?               @relation(fields: [companyId], references: [id])
+  department     Department?            @relation(fields: [departmentId], references: [id])
+  biometric      PersonBiometric?
+  entries        Entry[]
+  syncCommands   SyncCommand[]
+  employeeAccess EmployeeDeviceAccess[]
+  attendanceDays AttendanceDaySummary[]
+  resignedBy     AppUser?               @relation("EmployeeResignedBy", fields: [resignedById], references: [id])
+
+  @@index([category])
+  @@index([companyId])
+  @@index([departmentId])
+  @@index([resignedAt])
+  @@map("person")
+}
+
+model Company {
+  id        String   @id @default(cuid())
+  name      String
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  people Person[]
+
+  @@map("company")
+}
+
+model Department {
+  id        String   @id @default(cuid())
+  name      String
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  people Person[]
+
+  @@map("department")
+}
+
+model PersonBiometric {
+  id               String   @id @default(cuid())
+  personId         String   @unique @map("person_id")
+  // The durable artifact is the JPEG on disk; the DB holds only the path.
+  photoPath        String   @map("photo_path")
+  photoSizeBytes   Int?     @map("photo_size_bytes")
+  // Algorithm-bound face template — a same-device optimisation only, never
+  // treated as portable. Nullable because it may not be cached.
+  faceTemplate     String?  @map("face_template")
+  algorithmVersion String?  @map("algorithm_version")
+  biometricType    Int      @default(9) @map("biometric_type") // 9 = face
+  capturedAt       DateTime @default(now()) @map("captured_at")
+
+  person Person @relation(fields: [personId], references: [id], onDelete: Cascade)
+
+  @@map("person_biometric")
+}
+
+// ---------------------------------------------------------------------------
+// Authorization cycles
+// ---------------------------------------------------------------------------
+
+model Entry {
+  id                 String          @id @default(cuid())
+  personId           String          @map("person_id")
+  state              EntryState      @default(REGISTERED)
+  expectedInAt       DateTime?       @map("expected_in_at")
+  inAt               DateTime?       @map("in_at")
+  outAt              DateTime?       @map("out_at")
+  retentionPolicy    RetentionPolicy @default(ONE_DAY) @map("retention_policy")
+  retentionExpiresAt DateTime?       @map("retention_expires_at")
+  entryMode          EntryMode       @default(MULTI_ENTRY) @map("entry_mode")
+  // Why this visit was authorized, in the operator's own words. Required at
+  // provision time; nullable here only because entries authorized before the
+  // field existed have nothing to put in it and are never rewritten.
+  purposeOfVisit     String?         @map("purpose_of_visit")
+  // Optional host selected from active operators when the visit is authorized.
+  // Nullable so entries created before this field remain valid after upgrade.
+  personToMeetId     String?         @map("person_to_meet_id")
+  // Maps to "user is currently in the blocked group" on the device.
+  dayBlocked         Boolean         @default(false) @map("day_blocked")
+  authorizedById     String?         @map("authorized_by")
+  createdAt          DateTime        @default(now()) @map("created_at")
+
+  person       Person        @relation(fields: [personId], references: [id])
+  authorizedBy AppUser?      @relation("EntryAuthorizedBy", fields: [authorizedById], references: [id])
+  personToMeet AppUser?      @relation("EntryPersonToMeet", fields: [personToMeetId], references: [id])
+  punchEvents  PunchEvent[]
+  syncCommands SyncCommand[]
+
+  @@index([state])
+  @@index([personId])
+  @@index([retentionExpiresAt])
+  @@index([personToMeetId])
+  @@map("entry")
+}
+
+// ---------------------------------------------------------------------------
+// Devices — the working set. Identity fields come from the INFO response.
+// ---------------------------------------------------------------------------
+
+model Device {
+  id                          String     @id @default(cuid())
+  name                        String?
+  serialNo                    String     @unique @map("serial_no")
+  ip                          String?
+  role                        DeviceRole @default(BOTH)
+  // Timestamps arrive device-local; store the offset and normalise on ingest.
+  timezoneOffsetMinutes       Int        @default(330) @map("timezone_offset_minutes")
+  // Populated from INFO — never hardcoded, never typed from a label.
+  maxFaces                    Int?       @map("max_faces")
+  facesUsed                   Int        @default(0) @map("faces_used")
+  // Group numbering may vary by device/firmware, so it is configuration.
+  normalGroupId               Int        @default(1) @map("normal_group_id")
+  blockedGroupId              Int        @default(100) @map("blocked_group_id")
+  // Decoding ATTLOG field 3 into a direction. A gate terminal in Fixed Mode
+  // stamps one state on every record, so `role` alone decides direction and
+  // the code merely corroborates it. A single bidirectional terminal
+  // (role BOTH, Manual Mode) varies the field per punch and these maps are
+  // what read it. Per-device rather than constants for the same reason the
+  // group IDs are: the punch-state list is firmware configuration.
+  // Observed on ZAM180: Check-In = 0, Check-Out = 1.
+  inStatusCodes               Int[]      @default([0]) @map("in_status_codes")
+  outStatusCodes              Int[]      @default([1]) @map("out_status_codes")
+  // Menu > System > Attendance > Duplicate Punch Period(m). The device drops
+  // a repeat punch by the same user inside this window BEFORE sending it —
+  // per user, regardless of punch state. Non-zero on a role=BOTH terminal can
+  // swallow an OUT and silently turn SINGLE_ENTRY into MULTI_ENTRY, so it is
+  // recorded here to be surfaced rather than assumed. Null = not yet
+  // established for this device.
+  duplicatePunchPeriodMinutes Int?       @map("duplicate_punch_period_minutes")
+  // Empty lists disable automatic classification. Ambiguous IDs are never
+  // adopted: configuration decides category, not a client-specific branch.
+  employeeIdPatterns          String[]   @default([]) @map("employee_id_patterns")
+  visitorIdPatterns           String[]   @default([]) @map("visitor_id_patterns")
+  firmwareVersion             String?    @map("firmware_version")
+  algorithmVersion            String?    @map("algorithm_version")
+  lastSeenAt                  DateTime?  @map("last_seen_at")
+  online                      Boolean    @default(false)
+  // The device's last INFO response, verbatim, as key/value pairs.
+  //
+  // Only three keys are acted on (firmware, face count, capacity). The rest
+  // are kept because the device is the only authority on what it can report,
+  // and three printed specifications have already proven wrong. Storing the
+  // whole reply means a question like "does it tell us how many transactions
+  // it holds?" is answered by looking, not by guessing at a key name.
+  lastInfo                    Json?      @map("last_info")
+  lastInfoAt                  DateTime?  @map("last_info_at")
+  // Baseline for punch-loss detection.
+  //
+  // `INFO` reports `TransactionCount` — how many attendance records the device
+  // holds. That number is NOT comparable to our punch count on its own: the
+  // device's log survives everything, including the master database being
+  // wiped, so it counts history this installation never saw. (Observed: 97 on
+  // the device against 58 stored, entirely explained by pre-install testing.)
+  //
+  // What IS comparable is growth. From a fixed baseline, the device's count
+  // and ours must rise together; if the device gains records we did not, the
+  // difference is punches that never reached us.
+  punchBaselineAt             DateTime?  @map("punch_baseline_at")
+  punchBaselineDeviceCount    Int?       @map("punch_baseline_device_count")
+  punchBaselineLocalCount     Int?       @map("punch_baseline_local_count")
+  // Device-local date (YYYY-MM-DD) the SINGLE_ENTRY daily reset last ran for.
+  // Stored per device because "a new day" is a fact about where the barrier
+  // stands, not about where the server does, and two sites can be in
+  // different zones. Comparing against it rather than trusting a schedule to
+  // fire makes the reset self-healing: if the service was down at midnight,
+  // the next run still sees an unreset day and catches up.
+  lastDayResetOn              String?    @map("last_day_reset_on")
+  // Incremental-sync markers; mishandling risks replayed or dropped punches.
+  lastStamp                   String?    @map("last_stamp")
+  lastOpStamp                 String?    @map("last_op_stamp")
+  createdAt                   DateTime   @default(now()) @map("created_at")
+  updatedAt                   DateTime   @updatedAt @map("updated_at")
+
+  syncCommands   SyncCommand[]
+  punchEvents    PunchEvent[]
+  employeeAccess EmployeeDeviceAccess[]
+
+  @@map("device")
+}
+
+model EmployeeDeviceAccess {
+  id            String    @id @default(cuid())
+  personId      String    @map("person_id")
+  deviceId      String    @map("device_id")
+  desiredAccess Boolean   @default(true) @map("desired_access")
+  provisioned   Boolean   @default(false)
+  assignedAt    DateTime  @default(now()) @map("assigned_at")
+  assignedById  String?   @map("assigned_by")
+  removedAt     DateTime? @map("removed_at")
+  removedById   String?   @map("removed_by")
+  removalReason String?   @map("removal_reason")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  person     Person   @relation(fields: [personId], references: [id])
+  device     Device   @relation(fields: [deviceId], references: [id])
+  assignedBy AppUser? @relation("EmployeeAccessAssignedBy", fields: [assignedById], references: [id])
+  removedBy  AppUser? @relation("EmployeeAccessRemovedBy", fields: [removedById], references: [id])
+
+  @@unique([personId, deviceId])
+  @@index([deviceId, desiredAccess])
+  @@map("employee_device_access")
+}
+
+// ---------------------------------------------------------------------------
+// Command queue — every device write goes through here
+// ---------------------------------------------------------------------------
+
+model SyncCommand {
+  id             String        @id @default(cuid())
+  // Monotonic insertion order — the queue's FIFO key. created_at cannot serve
+  // this: it is CURRENT_TIMESTAMP, which is fixed for a whole transaction, so
+  // the PROVISION and PUSH_PHOTO rows written together would tie and could be
+  // dispatched in either order. The photo must never reach the device before
+  // the user it attaches to exists.
+  seq            Int           @default(autoincrement())
+  entryId        String?       @map("entry_id")
+  personId       String?       @map("person_id")
+  type           CommandType
+  targetDeviceId String        @map("target_device_id")
+  status         CommandStatus @default(PENDING)
+  // The numeric id sent on the wire as C:<id>: — the protocol's native
+  // correlation key, matched back on the devicecmd reply.
+  deviceCmdId    Int?          @map("device_cmd_id")
+  // The operator who triggered this command; null = system-initiated by a
+  // scheduled job (expiry sweeper, daily reset, reconciliation). Gives
+  // command-level attribution directly on the row, without reconstructing
+  // it from audit_log JSON.
+  initiatedById  String?       @map("initiated_by")
+  attempts       Int           @default(0)
+  lastError      String?       @map("last_error")
+  payload        Json?
+  idempotencyKey String        @unique @map("idempotency_key")
+  createdAt      DateTime      @default(now()) @map("created_at")
+  sentAt         DateTime?     @map("sent_at")
+  completedAt    DateTime?     @map("completed_at")
+
+  entry       Entry?   @relation(fields: [entryId], references: [id])
+  person      Person?  @relation(fields: [personId], references: [id])
+  device      Device   @relation(fields: [targetDeviceId], references: [id])
+  initiatedBy AppUser? @relation(fields: [initiatedById], references: [id])
+
+  // The getrequest hot path claims the oldest PENDING for a device; this
+  // composite index keeps that a single indexed lookup on a remote DB, with
+  // seq supplying the ordering so no sort is needed.
+  @@index([targetDeviceId, status, seq])
+  @@index([targetDeviceId, status])
+  @@index([status])
+  @@index([initiatedById])
+  @@map("sync_command")
+}
+
+// ---------------------------------------------------------------------------
+// Punch events — raw device telemetry, deduped, then processed
+// ---------------------------------------------------------------------------
+
+model PunchEvent {
+  id              String          @id @default(cuid())
+  // Not a FK: punches can arrive for PINs not yet matched to a person, and
+  // ingestion must never fail on an unknown user.
+  esslUserId      String          @map("essl_user_id")
+  deviceId        String          @map("device_id")
+  punchedAtDevice DateTime        @map("punched_at_device") // as reported (device-local)
+  punchedAtUtc    DateTime        @map("punched_at_utc") // normalised on ingest
+  statusCode      Int?            @map("status_code") // ATTLOG field 3
+  direction       PunchDirection?
+  verifyMode      Int?            @map("verify_mode") // 15 = face
+  workCode        Int?            @map("work_code")
+  raw             String          @map("raw_line") // original, for debugging
+  rawRecordHash   String          @unique @map("raw_record_hash") // dedup
+  processed       Boolean         @default(false)
+  entryId         String?         @map("entry_id")
+  createdAt       DateTime        @default(now()) @map("created_at")
+
+  device Device @relation(fields: [deviceId], references: [id])
+  entry  Entry? @relation(fields: [entryId], references: [id])
+
+  @@index([esslUserId])
+  @@index([processed])
+  @@map("punch_event")
+}
+
+// ---------------------------------------------------------------------------
+// Retention: what survives when raw punches are pruned
+// ---------------------------------------------------------------------------
+
+// A complete device-local day across every terminal, written before its raw
+// punches are pruned. Only complete IN/OUT pairs contribute worked seconds.
+model AttendanceDaySummary {
+  id                String            @id @default(cuid())
+  esslUserId        String            @map("essl_user_id")
+  personId          String?           @map("person_id")
+  localDate         String            @map("local_date")
+  deviceIds         String[]          @map("device_ids")
+  devicePunchCounts Json              @default("{}") @map("device_punch_counts")
+  firstInUtc        DateTime?         @map("first_in_utc")
+  lastOutUtc        DateTime?         @map("last_out_utc")
+  workedSeconds     Int               @default(0) @map("worked_seconds")
+  punchCount        Int               @map("punch_count")
+  inCount           Int               @map("in_count")
+  outCount          Int               @map("out_count")
+  unmatchedIn       Int               @default(0) @map("unmatched_in")
+  unmatchedOut      Int               @default(0) @map("unmatched_out")
+  quality           AttendanceQuality @default(EXACT)
+  createdAt         DateTime          @default(now()) @map("created_at")
+  updatedAt         DateTime          @updatedAt @map("updated_at")
+
+  person Person? @relation(fields: [personId], references: [id])
+
+  @@unique([esslUserId, localDate])
+  @@index([localDate])
+  @@index([personId])
+  @@map("attendance_day_summary")
+}
+
+// ---------------------------------------------------------------------------
+// Operators, audit, config, licensing, safety valve
+// ---------------------------------------------------------------------------
+
+model AppUser {
+  id                 String    @id @default(cuid())
+  email              String    @unique
+  name               String?
+  phone              String?
+  passwordHash       String    @map("password_hash")
+  role               UserRole  @default(AUTHORIZED_PERSON)
+  isActive           Boolean   @default(true) @map("is_active")
+  // Set when an admin issues a temporary password. While true the account can
+  // do nothing but change it — otherwise a password one other person knows
+  // stays valid indefinitely, which is what "temporary" is supposed to rule
+  // out. There is no email on-premise, so an admin-set password is the only
+  // reset mechanism available (many sites have no outbound internet at all).
+  mustChangePassword Boolean   @default(false) @map("must_change_password")
+  // Cleared on every password change, so "when did this credential last
+  // change" is answerable without reading the audit log.
+  passwordChangedAt  DateTime? @map("password_changed_at")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+
+  authorizedEntries      Entry[]                @relation("EntryAuthorizedBy")
+  hostedEntries          Entry[]                @relation("EntryPersonToMeet")
+  auditLogs              AuditLog[]
+  initiatedCommands      SyncCommand[]
+  assignedEmployeeAccess EmployeeDeviceAccess[] @relation("EmployeeAccessAssignedBy")
+  removedEmployeeAccess  EmployeeDeviceAccess[] @relation("EmployeeAccessRemovedBy")
+  resignedEmployees      Person[]               @relation("EmployeeResignedBy")
+
+  @@map("app_user")
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?  @map("actor_id") // null = system action
+  action     String
+  entityType String?  @map("entity_type")
+  entityId   String?  @map("entity_id")
+  detail     Json?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  actor AppUser? @relation(fields: [actorId], references: [id])
+
+  @@index([actorId])
+  @@index([entityType, entityId])
+  @@map("audit_log")
+}
+
+model AppConfig {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt @map("updated_at")
+  updatedBy String?  @map("updated_by")
+
+  @@map("app_config")
+}
+
+model License {
+  id                 String    @id @default(cuid())
+  licenseKey         String    @unique @map("license_key")
+  licenseId          String?   @map("license_id")
+  machineFingerprint String?   @map("machine_fingerprint")
+  plan               String?
+  expiresAt          DateTime? @map("expires_at")
+  lastHeartbeatAt    DateTime? @map("last_heartbeat_at")
+  gracePeriodState   String?   @map("grace_period_state")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+
+  @@map("license")
+}
+
+// Dormant safety valve (PRD §7). Expected empty; anything here is a signal.
+model AdmissionQueue {
+  id             String   @id @default(cuid())
+  personId       String?  @map("person_id")
+  entryId        String?  @map("entry_id")
+  targetDeviceId String?  @map("target_device_id")
+  reason         String?
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@map("admission_queue")
+}

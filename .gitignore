@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.next/
+*.log
+
+# environment — real secrets never committed
+.env
+.env.local
+.env.*.local
+
+# runtime data (photos live on local disk, never in the repo)
+backend/data/
+backend/.tmp*
+
+.dev

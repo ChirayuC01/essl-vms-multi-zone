@@ -1,0 +1,12 @@
+{
+  "name": "vms-adms-test-server",
+  "version": "1.0.0",
+  "description": "Throwaway ADMS/PUSH protocol test server for eSSL AiFace-Arion (Phase 0 verification)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "fastify": "^4.28.1"
+  }
+}

@@ -1,0 +1,1837 @@
+{
+  "info": {
+    "name": "VMS — Vendor Management System",
+    "description": "Complete API surface for the VMS backend (Phase 1, Milestones 0-5).\n\n## Setup\n1. Start the backend: `cd backend && npm run dev`\n2. **Run `Auth > Login` first.** Every `/api/*` request needs a bearer token; the login request captures it into the `token` collection variable and the collection sends it automatically.\n3. Set the `baseUrl` collection variable if you are not on `http://localhost:8080`.\n4. Then run requests roughly top to bottom — several capture ids (`vendorId`, `entryId`, `commandId`, `deviceId`) into collection variables, so later requests just work.\n\n## Three things to know\n- **Device operations are asynchronous.** The server never contacts the device; it queues a command and the device collects it on its next poll (1-3 s after activity, ~30 s when idle). These endpoints answer `202` with the queued command. Watch `GET /api/commands` for the result.\n- **The `/iclock/*` device endpoints are never authenticated.** A terminal cannot present a token, and gating them would take the barrier down.\n- **Never set `Content-Type: application/json` with an empty body.** Fastify rejects that with a 400 before your request is ever routed. For requests with no body, send no body and no content-type at all — every such request in this collection is already set up that way.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080",
+      "type": "string"
+    },
+    {
+      "key": "token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "vendorId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "entryId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "commandId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "deviceId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "serialNo",
+      "value": "NCD8252500406",
+      "type": "string"
+    },
+    {
+      "key": "expiryMinutes",
+      "value": "2",
+      "type": "string"
+    },
+    {
+      "key": "shortExpiry",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "operatorId",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "0. Auth",
+      "item": [
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  pm.collectionVariables.set('token', pm.response.json().token);",
+                  "  console.log('signed in as', pm.response.json().user.email);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"admin@vms.local\",\n  \"password\": \"admin\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "login"
+              ]
+            },
+            "description": "**Run this first.** Returns a bearer token (12 h) and captures it into the `token` collection variable; every other request inherits it.\n\nSeeded development credentials are `admin@vms.local` / `admin` — change them before any real deployment.\n\nA wrong password and an unknown email return the identical `401 invalid email or password`: distinguishing them would hand out a list of valid operator accounts."
+          }
+        },
+        {
+          "name": "Who am I",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "me"
+              ]
+            },
+            "description": "Returns the operator and the permissions their role grants.\n\n**Authorization is re-checked from the database on every request.** Disabling an account invalidates the token it already holds immediately, and a role change applies without signing in again — verifying only the token signature would leave a disabled operator working for up to 12 hours.\n\nA route the role may not call answers `403` naming the permission, and the attempt is recorded in the audit log as `PERMISSION_DENIED`."
+          }
+        },
+        {
+          "name": "Health (no auth)",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/health",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
+            "description": "Liveness + database reachability. Public — it is what a service monitor polls. Packaged releases 0.4.12+ include the running VMS version.\n\n200 -> `{ \"status\": \"ok\", \"version\": \"0.4.12\", \"database\": \"reachable\", \"postgres\": \"17.10\" }`"
+          }
+        }
+      ]
+    },
+    {
+      "name": "1. Vendors",
+      "item": [
+        {
+          "name": "Create vendor",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  pm.collectionVariables.set('vendorId', pm.response.json().id);",
+                  "  console.log('vendorId ->', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Ramesh Kumar\",\n  \"company\": \"Acme Services\",\n  \"mobile\": \"+91 9876543210\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/vendors",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "vendors"
+              ]
+            },
+            "description": "Register a vendor. Their PIN (`esslUserId`) is the forever join key between the database and the device.\n\n**Body**\n| field | required | notes |\n|---|---|---|\n| `name` | yes | 1-100 chars |\n| `company` | yes | 1-100 chars |\n| `mobile` | yes | 6-20 chars, digits/`+`/`-`/space |\n| `aadharNumber` | yes | 12 digits, never starting 0 or 1. Spaces and hyphens are stripped before storing, so one number cannot become two rows. **Unique.** |\n| `esslUserId` | yes | the PIN typed on the terminal (device-first), or one the operator picks. Never auto-allocated. **Immutable after creation.** |\n\n**Responses**\n- `201` vendor summary. If a device already pushed a photo for this PIN, it is attached here and `hasPhoto` is true.\n- `409` that `esslUserId`, or that aadhar number, is already registered."
+          }
+        },
+        {
+          "name": "Create vendor (device-first, explicit PIN)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Enrolled On Device\",\n  \"company\": \"Acme Services\",\n  \"mobile\": \"+91 9876543210\",\n  \"aadharNumber\": \"234567890123\",\n  \"esslUserId\": \"10008\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/vendors",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "vendors"
+              ]
+            },
+            "description": "Use this after enrolling someone directly on the terminal. Pass the PIN you typed there; if the backend already pulled that PIN's photo, it is attached automatically and `hasPhoto` comes back true."
+          }
+        },
+        {
+          "name": "List vendors",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/vendors?page=1&pageSize=20&q=&active=true",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "vendors"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "pageSize",
+                  "value": "20",
+                  "description": "max 100"
+                },
+                {
+                  "key": "q",
+                  "value": "",
+                  "description": "search across name, company, mobile and PIN",
+                  "disabled": true
+                },
+                {
+                  "key": "active",
+                  "value": "true",
+                  "description": "true | false",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Paginated list. Returns `{ total, page, pageSize, items[] }`; each item includes `hasPhoto`."
+          }
+        },
+        {
+          "name": "Find a vendor by PIN",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/vendors/by-pin/1001",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "vendors",
+                "by-pin",
+                "1001"
+              ]
+            },
+            "description": "Exact lookup by device PIN, for the returning-visitor desk flow — someone reads the number off their vendor card and the operator provisions them without searching by name.\n\n**Deliberately not `?q=`**, which also matches a mobile number CONTAINING those digits: a spoken PIN could return several people, and an ambiguous match is the last thing a flow ending in site access should produce.\n\nMatched case-insensitively. `404` if no vendor holds that ID; `400` if it is not letters and digits, 1-20 characters.\n\n> The PIN is a lookup key, not a credential. What authorizes the visit is the operator comparing the stored photo with the person in front of them."
+          }
+        },
+        {
+          "name": "Get vendor detail",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/vendors/{{vendorId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "vendors",
+                "{{vendorId}}"
+              ]
+            },
+            "description": "Full record: identity, biometric metadata (`photoUrl`, size, algorithm version, whether a template is cached) and the 20 most recent entries."
+          }
+        },
+        {
+          "name": "Update vendor",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"company\": \"Acme Services Pvt Ltd\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/vendors/{{vendorId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "vendors",
+                "{{vendorId}}"
+              ]
+            },
+            "description": "Patch `name`, `company`, `mobile` or `aadharNumber`. None of them can be cleared - all are mandatory at registration, and a field that could be nulled one request later would not be mandatory at all. `aadharNumber` is patchable so vendors registered before it existed can acquire one.\n\n`esslUserId` is **not** patchable — it is the permanent join key to the device.\n\nAn omitted field means \"leave unchanged\"; sending no fields at all is a `400`."
+          }
+        },
+        {
+          "name": "Upload / replace photo",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "image/jpeg"
+              }
+            ],
+            "body": {
+              "mode": "file",
+              "file": {
+                "src": ""
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/vendors/{{vendorId}}/photo",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "vendors",
+                "{{vendorId}}",
+                "photo"
+              ]
+            },
+            "description": "**In Postman: Body -> binary -> select a .jpg file.** This is a raw JPEG body, not multipart.\n\nValidation: JPEG magic bytes, <= 5 MB, 100-5000 px per side. The file is written to `photos/<pin>.jpg` and any cached face template is discarded (it no longer matches the new image).\n\n- `201` `{ photoUrl, photoSizeBytes, width, height }`\n- `400` not a JPEG / bad dimensions · `413` too large · `404` no such vendor"
+          }
+        },
+        {
+          "name": "Get photo",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/vendors/{{vendorId}}/photo",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "vendors",
+                "{{vendorId}}",
+                "photo"
+              ]
+            },
+            "description": "Streams the JPEG from disk. `404` if the vendor has no photo, or if the row exists but the file is gone (which is logged as an error — it means the photo directory has drifted from the database)."
+          }
+        },
+        {
+          "name": "Deactivate vendor (soft delete)",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/vendors/{{vendorId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "vendors",
+                "{{vendorId}}"
+              ]
+            },
+            "description": "Sets `isActive = false`. **Vendors are never hard-deleted** — the record and photo are the whole point of the product.\n\n`409` if the vendor still has an active entry: deactivating them would strand a live credential on the barrier. De-provision first."
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Provisioning & Entries",
+      "item": [
+        {
+          "name": "Provision vendor onto device",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 202) {",
+                  "  pm.collectionVariables.set('entryId', pm.response.json().entry.id);",
+                  "  console.log('entryId ->', pm.response.json().entry.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"retentionPolicy\": \"ONE_DAY\",\n  \"entryMode\": \"MULTI_ENTRY\",\n  \"purposeOfVisit\": \"Lift maintenance, Block C\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/vendors/{{vendorId}}/provision",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "vendors",
+                "{{vendorId}}",
+                "provision"
+              ]
+            },
+            "description": "**Authorizing a vendor IS provisioning them.** Creates an entry in `PENDING_PROVISION` and queues two commands, in this order:\n1. `PROVISION` — create the user in the normal access group\n2. `PUSH_PHOTO` — send the stored JPEG; the device regenerates the face template\n\nThe entry becomes `PROVISIONED` only when **both** are acknowledged by the device.\n\n**Body**\n| field | default | notes |\n|---|---|---|\n| `deviceId` | the only device | required once more than one device is registered |\n| `retentionPolicy` | `ONE_DAY` | `ONE_DAY` · `ONE_WEEK` · `ONE_MONTH` · `QUARTERLY` · `CUSTOM` |\n| `retentionExpiresAt` | derived | ISO date. **Only** with `CUSTOM`, and required with it |\n| `entryMode` | `MULTI_ENTRY` | `MULTI_ENTRY` · `SINGLE_ENTRY` |\n| `purposeOfVisit` | **required** | 1-200 chars, free text. Why this visit was authorized. |\n| `expectedInAt` | null | ISO date, informational |\n\n> Retention and entry mode are enforced by **server-side jobs, not the terminal** - the expiry sweeper removes a lapsed vendor and the daily reset releases a single-entry one. The device enforces neither.\n\n**Responses**\n- `202` `{ entry, device, commands[] }`\n- `409` no photo · already has an active entry · vendor deactivated · device at face capacity\n- `400` bad retention combination, or a name the device would reject (>40 chars, control characters)"
+          }
+        },
+        {
+          "name": "Provision — CUSTOM retention window",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"retentionPolicy\": \"CUSTOM\",\n  \"retentionExpiresAt\": \"2026-12-31T18:00:00.000Z\",\n  \"entryMode\": \"SINGLE_ENTRY\",\n  \"purposeOfVisit\": \"Lift maintenance, Block C\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/vendors/{{vendorId}}/provision",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "vendors",
+                "{{vendorId}}",
+                "provision"
+              ]
+            },
+            "description": "A CUSTOM retention window with an explicit end date, and SINGLE_ENTRY.\n\n**SINGLE_ENTRY is refused (409) on a bidirectional terminal whose duplicate-punch window is non-zero or unrecorded.** The mode is enforced on the OUT punch, and the device drops repeat punches by the same user inside that window before sending them — so the OUT can be lost and the vendor would keep re-entering with nothing logged. Set `Menu > System > Attendance > Duplicate Punch Period(m)` to 0 on the terminal and record it with `PATCH /api/devices/:id`."
+          }
+        },
+        {
+          "name": "Provision — 2-minute window (expiry test)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A window that closes while you are still watching. The scheduled",
+                  "// sweep runs every 5 minutes, so either wait for it or fire",
+                  "// 'Run the expiry sweep now' once the clock passes.",
+                  "const mins = Number(pm.collectionVariables.get('expiryMinutes') || 2);",
+                  "pm.collectionVariables.set('shortExpiry', new Date(Date.now() + mins*60000).toISOString());",
+                  "console.log('window closes at', pm.collectionVariables.get('shortExpiry'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 202) {",
+                  "  pm.collectionVariables.set('entryId', pm.response.json().entry.id);",
+                  "  console.log('entryId ->', pm.response.json().entry.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"retentionPolicy\": \"CUSTOM\",\n  \"retentionExpiresAt\": \"{{shortExpiry}}\",\n  \"entryMode\": \"MULTI_ENTRY\",\n  \"purposeOfVisit\": \"Lift maintenance, Block C\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/vendors/{{vendorId}}/provision",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "vendors",
+                "{{vendorId}}",
+                "provision"
+              ]
+            },
+            "description": "Provisions with a retention window that closes in `expiryMinutes` (default 2), computed at send time by the pre-request script — so the expiry sweeper can actually be watched without waiting a day.\n\nCaptures `entryId`. Set the `expiryMinutes` collection variable to change the window."
+          }
+        },
+        {
+          "name": "Block (deny at barrier)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/entries/{{entryId}}/block",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "entries",
+                "{{entryId}}",
+                "block"
+              ]
+            },
+            "description": "Moves the user to the device's blocked group (`Grp=100` by default — per-device config, never a constant).\n\nThe biometric is untouched: the device still recognises the face, then denies with **`Invalid time period`**. Note that denied attempts are *not* pushed to the server, so a blocked vendor's attempt leaves no trace.\n\n`day_blocked` flips only once the **device acknowledges** — not when you send this.\n\n- `202` queued\n- `409` already blocked · entry not `PROVISIONED`/`INSIDE` · a block/unblock is already in flight"
+          }
+        },
+        {
+          "name": "Unblock (restore access)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/entries/{{entryId}}/unblock",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "entries",
+                "{{entryId}}",
+                "unblock"
+              ]
+            },
+            "description": "Moves the user back to the normal access group (`Grp=1` by default). `409` if the entry is not currently blocked."
+          }
+        },
+        {
+          "name": "De-provision (remove from device)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/entries/{{entryId}}/deprovision",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "entries",
+                "{{entryId}}",
+                "deprovision"
+              ]
+            },
+            "description": "Queues `DATA DELETE USERINFO`. **Removes from the device only** — the vendor record, photo and history stay in the database forever, which is what makes re-provisioning need no re-enrollment.\n\nOn acknowledgement the entry returns to `REGISTERED` and the device's `facesUsed` is given back.\n\n- `202` queued\n- `409` **the vendor is `INSIDE`** — de-provisioning is deferred until they punch OUT; also if already de-provisioning or already closed"
+          }
+        },
+        {
+          "name": "List entries",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/entries?page=1&pageSize=20&active=true",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "entries"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "pageSize",
+                  "value": "20",
+                  "description": "max 100"
+                },
+                {
+                  "key": "active",
+                  "value": "true",
+                  "description": "true = on/heading to a device; false = closed"
+                },
+                {
+                  "key": "vendorId",
+                  "value": "{{vendorId}}",
+                  "disabled": true
+                },
+                {
+                  "key": "state",
+                  "value": "PROVISIONED",
+                  "description": "REGISTERED | PENDING_PROVISION | PROVISIONED | INSIDE | PENDING_DEPROVISION",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Authorization cycles, newest first, each with a vendor summary."
+          }
+        },
+        {
+          "name": "Get entry detail (+ its commands)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/entries/{{entryId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "entries",
+                "{{entryId}}"
+              ]
+            },
+            "description": "The entry plus its 50 most recent commands — the quickest way to see why a provision has not completed."
+          }
+        },
+        {
+          "name": "Query device for a vendor",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/vendors/{{vendorId}}/query-device",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "vendors",
+                "{{vendorId}}",
+                "query-device"
+              ]
+            },
+            "description": "Queues `DATA QUERY USERINFO`, asking the device to push back its own view of this PIN (USER + BIODATA + BIOPHOTO). The reply arrives asynchronously on the `cdata` endpoint and is ingested normally.\n\nThe debugging tool for \"is this person actually on the device?\", and the seed of Phase 3 reconciliation. Also how a device-first enrollment photo gets pulled.\n\nOptional body: `{ \"deviceId\": \"...\" }`. Repeated calls within a minute collapse onto one command."
+          }
+        },
+        {
+          "name": "Overdue — inside past their window",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/entries/overdue",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "entries",
+                "overdue"
+              ]
+            },
+            "description": "Vendors whose retention window closed while they were still on site.\n\nThe sweeper cannot act on these — removing a credential mid-visit strands someone at the exit barrier — so it defers to their OUT punch. If that punch never arrives they stay loaded on the device indefinitely.\n\n**This list is the only thing separating \"correctly deferred\" from \"quietly forgotten.\"** `overdueByMinutes` is how long the window has been closed."
+          }
+        },
+        {
+          "name": "Run the expiry sweep now",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/entries/sweep-expiry",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "entries",
+                "sweep-expiry"
+              ]
+            },
+            "description": "Runs the expiry sweeper immediately instead of waiting for `EXPIRY_SWEEP_CRON` (default every 5 minutes).\n\nReturns `{ deprovisioned, deferredInside }`. Idempotent and safe to call at any time — an entry already on its way off a device is not a candidate.\n\nThis job is the ONLY thing that removes a lapsed vendor from a terminal: Phase 0 established that the device stores validity dates and ignores them entirely."
+          }
+        },
+        {
+          "name": "Day-blocked — used today's single entry",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/entries/day-blocked",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "entries",
+                "day-blocked"
+              ]
+            },
+            "description": "SINGLE_ENTRY vendors who have already used today's visit and are waiting for the daily reset.\n\nThey are **still loaded on the device and still recognized by it** — the terminal identifies them and then denies with `Invalid time period`. Blocking is a group swap that never disturbs the biometric, which is why the reset is instant and re-enrollment is never involved."
+          }
+        },
+        {
+          "name": "Run the daily reset now",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/entries/daily-reset",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "entries",
+                "daily-reset"
+              ]
+            },
+            "description": "Releases SINGLE_ENTRY vendors for a new day, immediately instead of waiting for the schedule.\n\nActs **once per device-local day**, decided from each device's own stored `lastDayResetOn` rather than from a schedule firing. Calling it twice in a day returns `devicesReset: 0` — the correct answer, not a failure — and a midnight missed to downtime is caught up on the next run.\n\nA vendor whose retention window has already closed is deliberately NOT un-blocked: the expiry sweeper is about to remove them, and restoring access first would hand a lapsed authorization a few minutes of working entry."
+          }
+        },
+        {
+          "name": "Inside-now board",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/entries/board",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "entries",
+                "board"
+              ]
+            },
+            "description": "Everything the inside-now screen needs, in one request and one database round trip: who is on site (`inside`, longest-present first) and who has used up today's single entry (`dayBlocked`).\n\n**`serverTime` is the reference clock.** \"Overdue\" and \"here for 3h\" are judged against it rather than the browser's clock, so a gate PC whose time has drifted cannot invent or hide an expiry.\n\nThere is no separate `overdue` array — it is `retentionExpiresAt` in the past on a row already returned, so the client derives it and the two can never disagree."
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Command Queue",
+      "item": [
+        {
+          "name": "List commands",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const items = pm.response.json().items || [];",
+                  "if (items.length) pm.collectionVariables.set('commandId', items[0].id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/commands?page=1&pageSize=50&openOnly=true",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "commands"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "pageSize",
+                  "value": "50",
+                  "description": "max 100"
+                },
+                {
+                  "key": "openOnly",
+                  "value": "true",
+                  "description": "unfinished + failed only"
+                },
+                {
+                  "key": "status",
+                  "value": "FAILED",
+                  "description": "PENDING | SENT | SUCCESS | FAILED | RETRY",
+                  "disabled": true
+                },
+                {
+                  "key": "type",
+                  "value": "PROVISION",
+                  "description": "PROVISION | PUSH_PHOTO | DEPROVISION | BLOCK | UNBLOCK | QUERY_USER | DEVICE_INFO | CLEAR_LOGS",
+                  "disabled": true
+                },
+                {
+                  "key": "deviceId",
+                  "value": "{{deviceId}}",
+                  "disabled": true
+                },
+                {
+                  "key": "vendorId",
+                  "value": "{{vendorId}}",
+                  "disabled": true
+                },
+                {
+                  "key": "entryId",
+                  "value": "{{entryId}}",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "**The primary debugging surface for the whole product.** When a vendor is not recognised at the barrier, the answer is nearly always here.\n\nEach row carries `deviceCmdId` — the protocol's own correlation number, sent on the wire as `C:<id>:` and echoed back by the device. Invaluable when reading device-side logs.\n\nStatus meanings: `PENDING` waiting to be collected · `SENT` handed to the device, awaiting its reply · `SUCCESS` device answered `Return=0` · `FAILED` non-zero return, or no reply after 5 attempts · `RETRY` timed out, will be re-sent.\n\n> `SUCCESS` means the device **processed** the command, not that the result is correct — `Return=0` is delivery-level truth only. Verifying the roster actually matches is reconciliation's job (Phase 3)."
+          }
+        },
+        {
+          "name": "Get command detail",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/commands/{{commandId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "commands",
+                "{{commandId}}"
+              ]
+            },
+            "description": "One command with its payload, error text, attempt count and timestamps. The `PUSH_PHOTO` payload carries a *path*, never the JPEG — the photo is read from disk at send time."
+          }
+        },
+        {
+          "name": "Retry a failed command",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/commands/{{commandId}}/retry",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "commands",
+                "{{commandId}}",
+                "retry"
+              ]
+            },
+            "description": "Puts a `FAILED` command back on the queue with a fresh attempt budget and a cleared wire id.\n\n`409` for any other status: a `PENDING` command is already queued, and re-queueing a `SENT` one would race the reply still in flight."
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Devices",
+      "item": [
+        {
+          "name": "Alerts (what is wrong, worst first)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/alerts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "alerts"
+              ]
+            },
+            "description": "Everything currently wrong, ordered by what can hurt.\n\n**Computed on every call, never stored.** No acknowledge flag, no alert table — an alert exists exactly as long as its condition does. A stored alert has to be cleared by something, and the failure mode of every such system is a stale warning nobody trusts.\n\nEvery alert carries an `action`, because an alert an operator cannot act on teaches them to ignore the panel.\n\nA health view, not a notification system — nothing is emailed or pushed. Who should be told, and how, needs client input."
+          }
+        },
+        {
+          "name": "List devices",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const items = pm.response.json().items || [];",
+                  "if (items.length) {",
+                  "  pm.collectionVariables.set('deviceId', items[0].id);",
+                  "  pm.collectionVariables.set('serialNo', items[0].serialNo);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/devices",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "devices"
+              ]
+            },
+            "description": "Every registered device with live status, capacity and queue depth.\n\n`online` is **derived** from `lastSeenAt` (quiet for more than 150 s), because a device going silent produces no request that could clear a stored flag.\n\n`maxFaces`, `facesUsed`, `firmwareVersion` and `algorithmVersion` all come from the device's own `INFO` response — never from a spec sheet.\n\n`unregistered[]` lists serial numbers seen on the wire that no device record claims. They are **never adopted automatically**: two masters on one roster cause mystery deletions."
+          }
+        },
+        {
+          "name": "Configure device (punch direction)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Main gate\",\n  \"role\": \"BOTH\",\n  \"inStatusCodes\": [0],\n  \"outStatusCodes\": [1],\n  \"duplicatePunchPeriodMinutes\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/devices/{{deviceId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "devices",
+                "{{deviceId}}"
+              ]
+            },
+            "description": "How this terminal's punches are read. All fields optional.\n\n`role` is `IN`, `OUT` or `BOTH`. A dedicated gate decides direction by role and the punch state only corroborates it — a disagreement is audited as `PUNCH_DIRECTION_CONFLICT` and the role wins, because the barrier's physical position outranks a field in a record. A `BOTH` terminal reads direction from the status code, falling back to alternating from the entry's current state when the code is absent or unmapped (in Manual Mode the operator picks the state with F1/F2 before presenting their face, and forgetting to is ordinary).\n\nObserved on this firmware: **0 = Check-In, 1 = Check-Out, 255 = Undefined**.\n\n**Do not map `255`.** The device sends it when no punch state was selected — no F-key pressed, or the selection lapsed before the face matched. It is the absence of an answer, and mapping it to a direction would make a departing vendor look like an arriving one. Leaving it unmapped routes it to the alternation fallback. Per-device rather than constants, because the punch-state list is firmware configuration. A code in both lists is a `400`.\n\n`duplicatePunchPeriodMinutes` records `Menu > System > Attendance > Duplicate Punch Period(m)`. Non-zero on a `BOTH` terminal can swallow an OUT punch before it is ever sent, so `GET /api/devices` returns a warning for that combination. Null means nobody has established it — distinct from known-to-be-zero."
+          }
+        },
+        {
+          "name": "Refresh device info",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/devices/{{deviceId}}/refresh",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "devices",
+                "{{deviceId}}",
+                "refresh"
+              ]
+            },
+            "description": "Queues an `INFO` command. When the device replies, its capacity, face count and firmware version are written back to the device record — the authoritative correction for a drifted `facesUsed`.\n\nRepeated calls within a minute collapse onto one command."
+          }
+        },
+        {
+          "name": "Roster drift (face count)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/devices/drift",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "devices",
+                "drift"
+              ]
+            },
+            "description": "Devices whose face count disagrees with how many vendors we believe are loaded.\n\n**A positive `excess` is the dangerous direction** — something is on the terminal that we did not put there, or a removal was missed, and either way it can open the barrier. A negative excess only means vendors get turned away, which someone notices.\n\nReported as a count rather than a list because no \"enumerate the roster\" command has been established on this firmware. `facesUsed` is only current as of the last INFO — run *Refresh device info* first."
+          }
+        },
+        {
+          "name": "Reconcile the roster now",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/devices/reconcile",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "devices",
+                "reconcile"
+              ]
+            },
+            "description": "Queues roster checks for a slice of vendors now, instead of waiting for `RECONCILE_CRON` (hourly).\n\nEach check is a `QUERY_USER` the device collects on its next poll. The reply is compared against what we believe and corrected automatically where the correction is unambiguous: a vendor with no active authorization is removed, a wrong access group is re-issued. A PIN it cannot identify is reported and never deleted — on a shared terminal that could be an employee.\n\nRate-limited by `RECONCILE_BATCH` so reconciliation never starves a provision an operator is waiting on."
+          }
+        },
+        {
+          "name": "Punch gaps (records the device logged, we never got)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/devices/punch-gaps",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "devices",
+                "punch-gaps"
+              ]
+            },
+            "description": "Punches the terminal recorded that never reached the server.\n\n**Measured as growth from a baseline, never as a raw difference.** The device's transaction log outlives a wiped database — on this installation it reported 97 records against 58 stored, entirely explained by pre-install testing. Comparing absolutes would cry loss on a healthy system, and an alarm that is wrong on day one gets ignored by day two.\n\nOnly as fresh as the last `INFO` — run *Refresh device info* first.\n\nLimits: the device log wraps at capacity; clearing it, or restoring the database, invalidates the baseline and it must be re-taken deliberately. It counts records, not identities — it says punches were lost, never whose."
+          }
+        },
+        {
+          "name": "Re-take the punch baseline",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/devices/{{deviceId}}/punch-baseline",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "devices",
+                "{{deviceId}}",
+                "punch-baseline"
+              ]
+            },
+            "description": "Re-fixes the point from which punch growth is compared.\n\nTaken automatically the first time a device reports a `TransactionCount`. Re-take it by hand **after clearing the device log or restoring the database** — both make the previous baseline a lie.\n\n`409` if the device has never reported a count; refresh it first."
+          }
+        },
+        {
+          "name": "Device INFO (verbatim, 74 keys)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/devices/{{deviceId}}/info",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "devices",
+                "{{deviceId}}",
+                "info"
+              ]
+            },
+            "description": "The device's own account of itself, verbatim — 74 key/value pairs on this firmware. Kept off `GET /api/devices` because that is polled every 15 s by the dashboard.\n\n`409` if the device has never reported INFO — run *Refresh device info* first.\n\n**Tilde-prefixed maxima are not in consistent units.** `~MaxFaceCount` is exact (3000, corroborated by testing); `~MaxAttLogCount` reports `15` for a ~150,000-record log and `~MaxUserCount` reports `30` for 3,000 users. Do not derive capacity from them."
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Device simulation (ADMS wire protocol)",
+      "description": "The device's own endpoints. You never call these in normal operation — the terminal does. They are here so you can drive a full cycle with no hardware, and to reproduce what the device sees.\n\nAll four are served in **both** plain and `.aspx` forms (this firmware uses `.aspx`) and accept GET and POST.",
+      "item": [
+        {
+          "name": "Poll for a command (getrequest)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/iclock/getrequest.aspx?SN={{serialNo}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "iclock",
+                "getrequest.aspx"
+              ],
+              "query": [
+                {
+                  "key": "SN",
+                  "value": "{{serialNo}}"
+                }
+              ]
+            },
+            "description": "What the terminal calls every 1-3 s after activity (~30 s idle).\n\nReturns `OK` when there is nothing to do, otherwise the next command as **`C:<id>:<COMMAND>`**. The `C:<id>:` prefix is mandatory — a bare command is silently discarded by the device, with no error and no acknowledgement.\n\nFields inside a command are TAB-separated. Note the response for a photo push is large (~59 KB of base64)."
+          }
+        },
+        {
+          "name": "Acknowledge a command (devicecmd)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "ID=1&Return=0&CMD=DATA"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/iclock/devicecmd.aspx?SN={{serialNo}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "iclock",
+                "devicecmd.aspx"
+              ],
+              "query": [
+                {
+                  "key": "SN",
+                  "value": "{{serialNo}}"
+                }
+              ]
+            },
+            "description": "How the device reports a result. Put the `<id>` you received from `getrequest` into `ID=`.\n\n`Return=0` marks the command `SUCCESS`; anything else marks it `FAILED` with the code recorded in `lastError`. **This acknowledgement is what advances the entry lifecycle** — send it for both the `PROVISION` and the `PUSH_PHOTO` and the entry becomes `PROVISIONED`.\n\nSend no `Content-Type` header, exactly as the device does."
+          }
+        },
+        {
+          "name": "Push a punch — Check-In (cdata / ATTLOG)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "9001\t2026-08-03 09:05:00\t0\t15\t0\t0"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/iclock/cdata.aspx?SN={{serialNo}}&table=ATTLOG&Stamp=9999",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "iclock",
+                "cdata.aspx"
+              ],
+              "query": [
+                {
+                  "key": "SN",
+                  "value": "{{serialNo}}"
+                },
+                {
+                  "key": "table",
+                  "value": "ATTLOG"
+                },
+                {
+                  "key": "Stamp",
+                  "value": "9999"
+                }
+              ]
+            },
+            "description": "The same record with field 3 = `0` (Check-In). On a bidirectional terminal this is what moves an entry PROVISIONED → INSIDE.\n\nSend this, then the Check-Out variant, to walk a vendor through a full cycle without touching the database directly."
+          }
+        },
+        {
+          "name": "Push a punch — Check-Out (cdata / ATTLOG)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "9001\t2026-08-03 14:22:10\t1\t15\t0\t0"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/iclock/cdata.aspx?SN={{serialNo}}&table=ATTLOG&Stamp=9999",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "iclock",
+                "cdata.aspx"
+              ],
+              "query": [
+                {
+                  "key": "SN",
+                  "value": "{{serialNo}}"
+                },
+                {
+                  "key": "table",
+                  "value": "ATTLOG"
+                },
+                {
+                  "key": "Stamp",
+                  "value": "9999"
+                }
+              ]
+            },
+            "description": "A face match at the barrier. **Fields are TAB-separated** — Postman's raw body preserves real tabs, so keep them.\n\n`PIN <TAB> timestamp (device-local) <TAB> status <TAB> verify (15 = face) <TAB> workcode ...`\n\nTimestamps are device-local and normalised to UTC on ingest using the device's stored offset; both are kept. Re-sending an identical line is deduplicated, so a replay cannot double-count a punch.\n\n**Field 3 is the punch state, and it is the direction.** `0` = Check-In, `1` = Check-Out, observed on real hardware. On a `role=BOTH` device this is what moves the entry between PROVISIONED and INSIDE; on a dedicated gate the device's role decides and this field only corroborates it."
+          }
+        },
+        {
+          "name": "Push a punch — Undefined state (cdata / ATTLOG)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "9001\t2026-08-03 12:40:00\t255\t15\t0\t0"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/iclock/cdata.aspx?SN={{serialNo}}&table=ATTLOG&Stamp=9999",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "iclock",
+                "cdata.aspx"
+              ],
+              "query": [
+                {
+                  "key": "SN",
+                  "value": "{{serialNo}}"
+                },
+                {
+                  "key": "table",
+                  "value": "ATTLOG"
+                },
+                {
+                  "key": "Stamp",
+                  "value": "9999"
+                }
+              ]
+            },
+            "description": "Field 3 = `255` (`Undefined`) — what the terminal actually sends when no F-key was pressed, or the selection lapsed before the face matched. Common in Manual Mode, not an edge case.\n\nThe VMS does not guess a fixed direction from this; it alternates from the entry's current state. Send it twice and the entry goes INSIDE then back out."
+          }
+        },
+        {
+          "name": "Push a user record (cdata / OPERLOG)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "USER PIN=10008 Name=ENROLLED ON DEVICE Pri=0 Passwd= Card= Grp=1 TZ=0000000100000000 Verify=-1 ViceCard= StartDatetime=0 EndDatetime=0"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/iclock/cdata.aspx?SN={{serialNo}}&table=OPERLOG",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "iclock",
+                "cdata.aspx"
+              ],
+              "query": [
+                {
+                  "key": "SN",
+                  "value": "{{serialNo}}"
+                },
+                {
+                  "key": "table",
+                  "value": "OPERLOG"
+                }
+              ]
+            },
+            "description": "What the terminal sends when someone is enrolled on it directly.\n\nThis firmware pushes the USER record and the BIODATA template but **not** the photo. So when a USER record names a PIN with no photo on disk, the backend automatically queues a `QUERY_USER` to pull it — which is what makes device-first registration hands-free. Watch `GET /api/commands` right after sending this."
+          }
+        },
+        {
+          "name": "Biometric upload (fdata)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": ""
+            },
+            "url": {
+              "raw": "{{baseUrl}}/iclock/fdata.aspx?SN={{serialNo}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "iclock",
+                "fdata.aspx"
+              ],
+              "query": [
+                {
+                  "key": "SN",
+                  "value": "{{serialNo}}"
+                }
+              ]
+            },
+            "description": "Biometric/photo payload endpoint. Same record grammar as `cdata` — a `BIOPHOTO PIN=... Content=<base64>` line here is ingested identically, because the record grammar is the contract and the envelope is not.\n\n`Size` in a BIOPHOTO record is the **base64 character count**, not the decoded byte count."
+          }
+        }
+      ]
+    },
+    {
+      "name": "6. Live data",
+      "item": [
+        {
+          "name": "Recent punches",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/punches?page=1&pageSize=50",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "punches"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "pageSize",
+                  "value": "50",
+                  "description": "max 200"
+                },
+                {
+                  "key": "deviceId",
+                  "value": "{{deviceId}}",
+                  "disabled": true
+                },
+                {
+                  "key": "esslUserId",
+                  "value": "9001",
+                  "description": "filter to one PIN",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Punch history, newest first. The SSE stream carries new punches live; this is what the dashboard loads first so a freshly opened page is not blank.\n\nBoth timestamps are returned: `punchedAtDevice` as the terminal reported it (device-local) and `punchedAtUtc` normalised on ingest. Keeping both is what makes a timezone bug debuggable rather than mysterious.\n\n`vendor` is null when no vendor claims that PIN — punches ingest regardless, and that is deliberate."
+          }
+        },
+        {
+          "name": "Event stream (SSE)",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/events?token={{token}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "events"
+              ],
+              "query": [
+                {
+                  "key": "token",
+                  "value": "{{token}}"
+                }
+              ]
+            },
+            "description": "Server-Sent Events: `punch`, `command` and `entry` frames as they happen, plus a `ready` frame on connect and a comment heartbeat every 25 s.\n\nThe token goes in the **query string**, not a header — `EventSource` in the browser cannot set request headers. This is the only endpoint that accepts it that way.\n\n> Postman shows SSE responses in its own stream view; `curl -N` also works. Note this is an in-process broadcast: with more than one backend process, a client connected to one would not see events raised on another."
+          }
+        }
+      ]
+    },
+    {
+      "name": "7. Unclaimed enrollments",
+      "item": [
+        {
+          "name": "List unclaimed enrollments",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/enrollments/unclaimed",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "enrollments",
+                "unclaimed"
+              ]
+            },
+            "description": "Photos the device pushed for PINs no vendor has registered yet.\n\nWhen someone is enrolled on the terminal the device sends a USER record and the backend auto-pulls the photo to `photos/<pin>.jpg` — before any vendor exists to own it. This lists that waiting state, so claiming a photo never depends on remembering the PIN typed on the device.\n\nTo claim one: register a vendor with that `esslUserId`. The photo attaches in the same transaction — **no upload call**."
+          }
+        },
+        {
+          "name": "Unclaimed enrollment photo",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/enrollments/unclaimed/10005/photo",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "enrollments",
+                "unclaimed",
+                "10005",
+                "photo"
+              ]
+            },
+            "description": "Thumbnail for a waiting enrollment.\n\nThe PIN must be 1-9 digits; it is parsed to a number and the filename rebuilt from it, so caller input never reaches the filesystem. Path-traversal attempts are refused with 400/404."
+          }
+        }
+      ]
+    },
+    {
+      "name": "8. Maintenance",
+      "item": [
+        {
+          "name": "Retention status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/maintenance/retention",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "maintenance",
+                "retention"
+              ]
+            },
+            "description": "The retention policy, current table sizes, and what is due to be pruned.\n\nExposed because a retention policy nobody can see is one nobody can audit — and this one deletes rows."
+          }
+        },
+        {
+          "name": "Run retention now",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/maintenance/retention",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "maintenance",
+                "retention"
+              ]
+            },
+            "description": "Runs one retention pass.\n\n**Punches are rolled into day summaries BEFORE being deleted, in the same transaction.** The movement record survives — only its granularity is lost. \"Was this vendor on site last March\" has to stay answerable, which is what makes deleting raw rows defensible at all.\n\nBounded by `RETENTION_BATCH` × `RETENTION_PASSES_PER_RUN`, so a large backlog clears over successive runs rather than one statement holding locks for minutes.\n\nNever pruned: live commands, **FAILED commands at any age** (evidence something never reached a barrier), punches on a still-active entry, and the audit log unless `AUDIT_RETENTION_DAYS` is set."
+          }
+        }
+      ]
+    },
+    {
+      "name": "9. Operators",
+      "item": [
+        {
+          "name": "List operators",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/operators",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "operators"
+              ]
+            },
+            "description": "Every operator, with role, status and when their password last changed. Requires `operator:manage`."
+          }
+        },
+        {
+          "name": "Create an operator",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/operators",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "operators"
+              ]
+            },
+            "description": "Creates an operator with a temporary password they must change at first sign-in.\n\nThere is no email on-premise — many sites have no outbound internet — so an admin sets the password and tells them. Email is lower-cased so an account cannot be duplicated by case.\n\nCaptures nothing; copy the `id` for the requests below.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"gate@site.local\",\n  \"role\": \"AUTHORIZED_PERSON\",\n  \"temporaryPassword\": \"at-least-ten-chars\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Change role / enable / disable",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/operators/{{operatorId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "operators",
+                "{{operatorId}}"
+              ]
+            },
+            "description": "`role` and/or `isActive`.\n\n**Refused (409) if you target yourself** — an admin who disables or demotes their own account has no way back in, and on an on-premise install that means editing the database by hand. Also refused if it would remove the last active administrator.\n\nDisabling takes effect on the target's very next request, including sessions already open.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"isActive\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Reset someone's password",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/operators/{{operatorId}}/reset-password",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "operators",
+                "{{operatorId}}",
+                "reset-password"
+              ]
+            },
+            "description": "Sets a temporary password and forces a change at next sign-in. Somebody else now knows it, so that flag is never optional.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"temporaryPassword\": \"another-ten-chars\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Change your own password",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/change-password",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "change-password"
+              ]
+            },
+            "description": "Not behind `operator:manage` — changing your own password is not an administrative act, and an account under a forced change could not otherwise escape it.\n\nThe current password is required **even under a forced change**: an unattended browser would otherwise be enough to take the account over permanently.\n\nWhile `mustChangePassword` is set, every other route answers `403 { mustChangePassword: true }`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"currentPassword\": \"temporary-one\",\n  \"newPassword\": \"a-better-password\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "10. Reports",
+      "item": [
+        {
+          "name": "Report catalogue",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/reports",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "reports"
+              ]
+            },
+            "description": "Every report your role may run. Reports the role cannot run are omitted rather than listed and refused.\n\nA report is a definition in `backend/src/reports/registry.ts` — adding one costs a definition, not a route and not a page."
+          }
+        },
+        {
+          "name": "Run a report",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/reports/daily-movement?from=2026-08-01&to=2026-08-31&page=1&pageSize=50",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "reports",
+                "daily-movement"
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": "2026-08-01"
+                },
+                {
+                  "key": "to",
+                  "value": "2026-08-31"
+                },
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "pageSize",
+                  "value": "50"
+                }
+              ]
+            },
+            "description": "Swap `daily-movement` for any key from the catalogue.\n\n**Movement reports survive retention.** Raw punches are summarised and deleted after `PUNCH_RETENTION_DAYS`; these read both tables and ADD them, because a retention batch can summarise half a day and leave the rest raw."
+          }
+        },
+        {
+          "name": "Export a report as CSV",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/reports/vendor-register?format=csv",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "reports",
+                "vendor-register"
+              ],
+              "query": [
+                {
+                  "key": "format",
+                  "value": "csv"
+                }
+              ]
+            },
+            "description": "`text/csv` with a filename and a UTF-8 BOM, so Excel on Windows does not mangle non-ASCII names.\n\n`X-Report-Truncated` says whether the export hit `REPORT_EXPORT_MAX_ROWS` — an export that quietly truncates is worse than one that says so.\n\nCells beginning `=` or `@` are neutralised against formula injection. `+`/`-` are only escaped when followed by a letter, so phone numbers survive intact."
+          }
+        },
+        {
+          "name": "Audit filter options",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/reports/meta/audit-facets",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "reports",
+                "meta",
+                "audit-facets"
+              ]
+            },
+            "description": "The values the `actorId` and `action` filters accept, taken from the log itself rather than a hardcoded list — an action that has never happened is not worth offering, and a new one appears the first time it occurs.\n\n`system` is offered as an actor: a scheduled job has a NULL actor, not a row in `app_user`."
+          }
+        },
+        {
+          "name": "Audit trail, filtered",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/reports/audit-trail?actorId=system&pageSize=50",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "reports",
+                "audit-trail"
+              ],
+              "query": [
+                {
+                  "key": "actorId",
+                  "value": "system"
+                },
+                {
+                  "key": "pageSize",
+                  "value": "50"
+                }
+              ]
+            },
+            "description": "`actorId=system` isolates what ran unattended — expiry sweeps, daily resets, reconciliation self-heals. Swap for an operator id, or add `action=ENTRY_PROVISION_REQUESTED`."
+          }
+        },
+        {
+          "name": "One vendor's history",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/vendors/{{vendorId}}/audit",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "vendors",
+                "{{vendorId}}",
+                "audit"
+              ]
+            },
+            "description": "Everything recorded about one vendor, newest first.\n\n**Spans the vendor row AND every entry belonging to them.** A provision, block or de-provision is recorded against the entry, not the vendor, so filtering on `entity_id` alone would show registration and nothing else.\n\n`audit:read` — ADMIN only, because these rows name the operators who acted."
+          }
+        }
+      ]
+    }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{token}}",
+        "type": "string"
+      }
+    ]
+  }
+}

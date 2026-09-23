@@ -1,0 +1,18 @@
+﻿<service>
+  <id>VmsPostgres</id>
+  <name>VMS Bundled Postgres</name>
+  <description>Bundled PostgreSQL instance for the Vendor Management System.</description>
+  <executable>C:\Program Files\nodejs\node.exe</executable>
+  <arguments>"C:\Work\essl-vms-main\backend\scripts\bundled-postgres.mjs" start</arguments>
+  <workingdirectory>C:\Work\essl-vms-main\backend</workingdirectory>
+  <env name="VMS_APP_ROOT" value="C:\Work\essl-vms-main\backend"/>
+  <startmode>Automatic</startmode>
+  <onfailure action="restart" delay="5 sec"/>
+  <onfailure action="restart" delay="30 sec"/>
+  <resetfailure>1 hour</resetfailure>
+  <stoptimeout>30 sec</stoptimeout>
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>8</keepFiles>
+  </log>
+</service>

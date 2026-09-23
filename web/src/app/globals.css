@@ -1,0 +1,87 @@
+@import "tailwindcss";
+
+/*
+ * Every colour and radius the UI uses is a CSS variable defined here and
+ * nowhere else. Per-client branding in Phase 6 (logo, palette, product name
+ * from app_config) then becomes an override of these variables — a stylesheet
+ * the installer writes, or a style block injected from config. Because no
+ * component hardcodes a colour, that stays a config change rather than a
+ * refactor.
+ */
+:root {
+  --brand: #2563eb;
+  --brand-hover: #1d4ed8;
+  --brand-contrast: #ffffff;
+
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --surface-muted: #f1f3f5;
+  --border: #e2e5ea;
+  --text: #14171f;
+  --text-muted: #646b7a;
+
+  --ok: #15803d;
+  --ok-bg: #dcfce7;
+  --warn: #b45309;
+  --warn-bg: #fef3c7;
+  --danger: #b91c1c;
+  --danger-bg: #fee2e2;
+  --info: #1d4ed8;
+  --info-bg: #dbeafe;
+  --neutral-bg: #eef0f3;
+
+  --radius: 10px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --brand: #3b82f6;
+    --brand-hover: #60a5fa;
+    --brand-contrast: #0b0d12;
+
+    --bg: #0b0d12;
+    --surface: #14171f;
+    --surface-muted: #1b1f29;
+    --border: #262b36;
+    --text: #e8eaee;
+    --text-muted: #949cad;
+
+    --ok: #4ade80;
+    --ok-bg: #052e16;
+    --warn: #fbbf24;
+    --warn-bg: #3a2a05;
+    --danger: #f87171;
+    --danger-bg: #3d0d0d;
+    --info: #93c5fd;
+    --info-bg: #0c1e3d;
+    --neutral-bg: #1b1f29;
+  }
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-border: var(--border);
+  --color-text: var(--text);
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+/* The live feed briefly highlights a row as it arrives, so an operator
+   watching the gate sees movement without having to diff the list. */
+@keyframes flash-in {
+  from {
+    background-color: var(--info-bg);
+  }
+  to {
+    background-color: transparent;
+  }
+}
+.flash-in {
+  animation: flash-in 1.8s ease-out;
+}

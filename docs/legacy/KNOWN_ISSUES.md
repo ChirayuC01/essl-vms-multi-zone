@@ -1,7 +1,5 @@
 # Known Issues — People Upgrade Release Candidate
 
-> **Carried forward from `legacy/KNOWN_ISSUES.md` on 2 October 2026** at the start of the two-zone rebuild. Content below is unchanged from 0.4.19; rebuild-era entries are added as phases land.
-
 ## Open acceptance items
 
 > **Source/installer boundary (17 September 2026):** `vms-setup.exe` 0.4.19 is the current packaged artifact. The earlier 0.4.14 artifact is known-bad and must not be deployed: its compiled frontend targets `localhost:48102` even though the installed backend uses `47102`.

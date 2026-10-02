@@ -1,7 +1,5 @@
 # Release register
 
-> **Carried forward from `legacy/VERSIONS.md` on 2 October 2026** at the start of the two-zone rebuild. Content below is unchanged from 0.4.19; rebuild-era entries are added as phases land.
-
 What each shipped installer contains, and which commit it was built from.
 
 This exists because an installer is an opaque 200 MB binary. Six months from

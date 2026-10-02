@@ -1,0 +1,222 @@
+# Product — Two-Zone Visitor Access
+
+> **Status:** target specification. Each section notes the rebuild phase that
+> delivers it (`PLAN.md`). Until that phase is accepted, the 0.4.19 behaviour
+> described in `legacy/` is what actually runs.
+
+## 1. What the product is
+
+An on-premise system that controls who can pass the face-recognition
+barriers of a site. Every person is registered **once** with a durable face
+photograph. The system loads that face onto the right terminals at the right
+time and removes it again. **Loading a face is the authorization** — the
+terminal opens its own barrier on a face match; the system decides only who
+is loaded.
+
+Records are never deleted. Photographs and documents stay on the site's own
+server.
+
+## 2. Site topology (Phase 1)
+
+A site is a tree of **zones**. Each zone has its own IN and OUT terminals.
+Access to a zone implies access to every zone above it.
+
+The first two-zone deployment:
+
+```
+                  ┌──────────── PREMISE (office zone) ─────────────┐
+ outside ──[Outer IN]──►                          ┌──── YARD ────┐  │
+ outside ◄─[Outer OUT]──                ──[Yard IN]──►           │  │
+                                        ◄─[Yard OUT]──           │  │
+                  └────────────────────────────────┴─────────────┴──┘
+```
+
+- **Office pass** → Outer IN + Outer OUT.
+- **Yard pass** → all four terminals.
+
+Zone names, the tree and which terminal belongs to which zone are
+configuration. Nothing in code names a zone.
+
+## 3. People
+
+| Kind | How access works |
+|---|---|
+| **Employee** | Permanent access to the terminals of their zones until an Admin removes it. Restored automatically if a terminal loses them. No exit code. Attendance from punches. *(Exists today; zone selection added in Phase 1.)* |
+| **Visitor** | Time-bounded **pass**. Loaded and unloaded per the rules in §6. |
+| **Operator** | A console login (`AppUser`), not a Person. Hosts are operators. |
+
+The terminal's user ID is text (`[A-Za-z0-9]{1,20}`), unique case-insensitively.
+Each terminal has non-overlapping Employee and Visitor ID patterns. An ID
+matching neither is never touched — this is how the terminal's own admin card
+holder stays outside the system.
+
+A **returning visitor** is recognised by their OTP-verified mobile number and
+reuses the same Person, photograph and terminal ID.
+
+## 4. Pass types (Phase 3)
+
+Pass types are configuration, seeded per site. Each defines: short- or
+long-term, allowed entry modes (single/multi), whether a host must Clear it,
+maximum validity, which profile fields are required / optional / hidden, and
+optionally an external credential (number + expiry) whose expiry caps the
+pass.
+
+The first two-zone site's seed:
+
+| Pass type | Kind | Details collected | Approved by | Valid for |
+|---|---|---|---|---|
+| Planned visitor | short-term | name, mobile, company, purpose, Govt ID, vehicle no., selfie, optional documents | host (in system) | one day, single or multi entry |
+| Walk-in | short-term | same, captured at the gate by Security | host Clear (setting) | one day |
+| Sub-contractor staff | long-term | name, contact, email, company, Govt ID, police clearance yes/no, zone | outside the system (list to Security) | up to 3 months |
+| CHA / customer rep | long-term | as above + credential (BCBA) number and expiry | outside the system | 3 months or credential expiry, whichever first |
+| Customs official | long-term | name and designation only | — | set by Security |
+
+Daily sub-contractor passes stay outside the system.
+
+## 5. Flows
+
+### 5.1 Planned visitor (Phases 5–7)
+
+1. **Host** raises a request: visitor name, mobile, company, purpose, zone(s),
+   pass type, entry mode, date and time, and for a single-entry yard pass,
+   whether the yard exit also needs the exit code.
+2. **System** sends the visitor a link (SMS + email).
+3. **Visitor** opens it, verifies mobile by OTP, reads and accepts the privacy
+   notice, enters Govt ID and vehicle number, takes a live selfie with a face
+   guide, optionally uploads documents.
+4. **Host** reviews and chooses:
+   - **Clear** — Person registered (or matched as returning), unique visitor ID
+     issued, pass created.
+   - **Query** — host must write what is wrong; visitor gets a new link
+     showing it and resubmits. Repeatable.
+   - **Reject** — request closed, visitor informed.
+5. **System** loads the face on the entry gates of the pass's zones at the
+   scheduled time (§6).
+6. **Visitor** looks at the entry gate and walks in.
+7. On entry, for **single entry**, the host receives an arrival message with the
+   **exit code**; the visitor receives an out-pass link.
+8. When the visit ends, the host shares the code; the visitor enters it.
+9. Only then is the face loaded on the code-gated exit gate(s).
+10. Faces are removed per §6. Details, photo and history are kept.
+
+Every request, every query (with its text), every rejection and every
+decision is kept with full history.
+
+### 5.2 Walk-in (Phase 6)
+
+Security enters the same details at the gate, sends and types the mobile OTP,
+captures the face, and names a host. With `walkInRequiresHostClear` on
+(default) the host must Clear before anything is loaded; switched off, the
+pass is issued immediately. Steps 7–10 above then apply.
+
+### 5.3 Long-term passes (Phase 4)
+
+Security registers the person once and issues the pass. Faces stay loaded for
+the validity period and are removed automatically when it ends. A **single
+entry** long-term pass has no host, so its exit code goes to the **Security
+desk**. A multi-entry one has no exit code.
+
+## 6. Gate-loading rules (Phases 4 and 7)
+
+Defaults shown; minutes are settings.
+
+| Event | Single entry | Multi entry |
+|---|---|---|
+| Pass issued | Entry-gate faces for its zones scheduled to load **5 min** before the expected time | Same, **and** all its exit gates load at the same time |
+| No-show | Entry faces stay until the pass ends | Same |
+| IN punch on a terminal | That terminal drops the face **10 min** later (Outer IN and Yard IN each on their own punch) | Nothing — faces stay until the pass ends |
+| Exit | **Exit code required.** A verified code loads the code-gated exit gate(s) | **No exit code.** Exit gates are already loaded |
+| OUT punch on a terminal | That terminal drops the face **10 min** later | Nothing |
+| Pass ends | Entry faces removed; a visitor still inside is listed **overstayed** for Security | Faces removed; a visitor still inside keeps exit access until they leave |
+
+**Which exits need the code** is chosen per pass: the office (outer) exit
+always, by default; the yard exit only if ticked on a yard pass. An exit not
+covered by the code is loaded with the entry gates.
+
+## 7. Controls
+
+- **Blacklist** (Security In-charge) — removes the person from every terminal
+  at once and blocks any new pass until lifted. Phase 4.
+- **Zone widening** (host) — add a zone (e.g. Yard) during a visit; recorded
+  against the host. Phase 4.
+- **Exit override** (Security) — when the code route fails, Security releases
+  a single-entry visitor at the exit. Reason mandatory; logged with operator,
+  visitor, time and reason; shown in a report. Phase 4.
+- **Security photo retake** — replace a poor selfie at the gate; re-pushed to
+  the loaded terminals. Phase 6.
+- **Outage procedure** — while the system is down, site staff release people
+  physically with the terminal's admin card and note them in a manual
+  register. When the system comes back, passes affected by the outage are
+  released automatically and the release is recorded, for reconciling against
+  the register. Phase 7.
+
+## 8. Roles (Phase 2)
+
+| Role | Can |
+|---|---|
+| Admin | Everything, including settings, zones, pass types, devices, operators, licence |
+| Host | Raise visit requests, review (Clear / Query / Reject) their own, widen zones on their visitors |
+| Security | Register walk-ins, issue long-term passes, exit override, photo retake, live board |
+| Security In-charge | Security + blacklist / lift blacklist |
+| HR | *Proposed:* view and report on sub-contractor passes (their approval happens outside the system) |
+| HOD | *Proposed:* view and report on credential-holder passes (their approval happens outside the system) |
+| Authorized Person | The 0.4.19 operator role, kept for continuity |
+
+HR and HOD are named roles but their in-system duties are not yet confirmed;
+Security registers long-term pass holders. The exact permission matrix is fixed
+in Phase 2 and recorded here.
+
+## 9. Settings (Phase 2)
+
+All site-adjustable behaviour is a setting, changed by an Admin, audited with
+old and new values:
+
+`entryLoadLeadMinutes` (5), `unloadAfterPunchMinutes` (10),
+`walkInRequiresHostClear` (true), `outageGapMinutes` (10), `visitorIdPrefix`,
+link and OTP expiry/attempt limits, document limits (JPEG/PNG/WebP/PDF, 10 MB
+each, 5 per visit), privacy notice text and version.
+
+The single/multi exit-code rule is **not** a setting — it is the client's
+confirmed rule.
+
+## 10. Privacy (Phases 3 and 5)
+
+- India's DPDP Act 2023: the site (data fiduciary) supplies a notice stating
+  what is collected, why, for how long, and how to seek correction/erasure or
+  complain. Every visitor must accept it before submitting anything; the
+  acceptance time and notice version are recorded.
+- **ID numbers are redacted after saving.** Govt ID, Aadhaar, PAN and
+  credential numbers are stored in full (uniqueness and returning-visitor
+  checks need them) but every screen, report, export and print shows only the
+  first two and last two characters, e.g. `CI******7b`. The vehicle number
+  stays visible for Security.
+- Aadhaar card copies: visitors are asked to upload masked Aadhaar.
+- Documents are optional until the site confirms requirements. Stored on
+  local disk, always downloaded as files, never rendered inline.
+- Retention periods for photos, documents and history await the site's
+  answer; until then nothing is deleted.
+- Terminals shared with employees: only IDs matching a configured pattern are
+  ever collected (carried over from the 0.4.x shared-terminal analysis in
+  `legacy/DPDP_SHARED_TERMINAL_RISK.md`).
+
+## 11. Messaging and the visitor portal (Phases 5 and 9)
+
+Links and OTPs go by SMS and email. Until the site confirms a provider (MSG91
+and an SMTP account are expected), messages go to an **outbox** readable by an
+Admin in the console, which is how the flows are tested locally.
+
+The visitor portal (link, OTP, form, selfie, documents, out-pass) is the only
+part reachable from the internet, published through a Cloudflare Tunnel on the
+site's own domain. The operator console and the terminal endpoints stay on the
+LAN.
+
+## 12. Known limits
+
+- A terminal does **not** report a person it recognised but refused (expired,
+  blacklisted, wrong zone). Attempted entries cannot be reported.
+- Govt ID and vehicle numbers are recorded as entered, not verified.
+- The selfie becomes the face the gate matches; a poor selfie passes review
+  and fails at the gate — hence live capture with a face guide and the
+  Security retake.
+- During an outage the system cannot release anyone; the admin card is the
+  fallback (§7).

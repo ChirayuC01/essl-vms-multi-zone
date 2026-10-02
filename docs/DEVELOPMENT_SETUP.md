@@ -1,5 +1,7 @@
 # VMS Development Setup — Fresh Clone on Windows
 
+> **Carried forward from `legacy/DEVELOPMENT_SETUP.md` on 2 October 2026** at the start of the two-zone rebuild. Content below is unchanged from 0.4.19; rebuild-era entries are added as phases land.
+
 This guide starts the source project on a new Windows development machine. It runs three long-lived services directly from IDE terminals:
 
 1. Bundled PostgreSQL on `localhost:48103`

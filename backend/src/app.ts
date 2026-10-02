@@ -22,6 +22,7 @@ import { punchRoutes } from "./api/punches.js";
 import { reportRoutes } from "./api/reports.js";
 import { setupRoutes } from "./api/setup.js";
 import { personRoutes } from "./api/people.js";
+import { zoneRoutes } from "./api/zones.js";
 import { ServiceError } from "./services/errors.js";
 import { getLicenseStatus } from "./services/license.js";
 import { VMS_VERSION } from "./version.js";
@@ -146,6 +147,7 @@ export async function buildApp(): Promise<FastifyInstance> {
       await api.register(entryRoutes);
       await api.register(commandRoutes);
       await api.register(deviceRoutes);
+      await api.register(zoneRoutes);
       await api.register(punchRoutes);
       await api.register(enrollmentRoutes);
       await api.register(operatorRoutes);

@@ -184,6 +184,17 @@ export interface DirectoryItem {
 
 export interface DirectoryList { items: DirectoryItem[] }
 
+export interface Zone extends DirectoryItem {
+  parentZoneId: string | null;
+  /** Whether this zone's exit is code-gated by default on a single-entry pass. */
+  exitCodeDefault: boolean;
+  gates: { IN: number; OUT: number; BOTH: number };
+  /** Set while the zone lacks an entry or exit terminal. */
+  warning: string | null;
+}
+
+export interface ZoneList { items: Zone[] }
+
 export interface EmployeeDeviceAccess {
   id: string;
   desiredAccess: boolean;
@@ -265,6 +276,7 @@ export interface Device {
   serialNo: string;
   ip: string | null;
   role: string;
+  zoneId: string | null;
   timezoneOffsetMinutes: number;
   firmwareVersion: string | null;
   algorithmVersion: string | null;

@@ -243,6 +243,34 @@ model Entry {
 }
 
 // ---------------------------------------------------------------------------
+// Zones — the site topology. Configuration, never code: no zone is named
+// anywhere in source.
+// ---------------------------------------------------------------------------
+
+// A tree. Access to a zone implies access to every zone above it: a yard
+// inside a premise is reached through the premise's own gates, so a yard
+// pass must also load the premise terminals.
+model Zone {
+  id              String   @id @default(cuid())
+  name            String
+  parentZoneId    String?  @map("parent_zone_id")
+  isActive        Boolean  @default(true) @map("is_active")
+  // Whether this zone's exit gates are code-gated by default on a
+  // single-entry pass. The per-pass choice starts from this value; it is a
+  // site decision (the office exit by default, the yard exit optional).
+  exitCodeDefault Boolean  @default(false) @map("exit_code_default")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  parent   Zone?    @relation("ZoneTree", fields: [parentZoneId], references: [id])
+  children Zone[]   @relation("ZoneTree")
+  devices  Device[]
+
+  @@index([parentZoneId])
+  @@map("zone")
+}
+
+// ---------------------------------------------------------------------------
 // Devices — the working set. Identity fields come from the INFO response.
 // ---------------------------------------------------------------------------
 
@@ -252,6 +280,9 @@ model Device {
   serialNo                    String     @unique @map("serial_no")
   ip                          String?
   role                        DeviceRole @default(BOTH)
+  // The zone whose gate this terminal is. Null = not yet placed; such a
+  // terminal is never selected by zone-based access.
+  zoneId                      String?    @map("zone_id")
   // Timestamps arrive device-local; store the offset and normalise on ingest.
   timezoneOffsetMinutes       Int        @default(330) @map("timezone_offset_minutes")
   // Populated from INFO — never hardcoded, never typed from a label.
@@ -320,10 +351,12 @@ model Device {
   createdAt                   DateTime   @default(now()) @map("created_at")
   updatedAt                   DateTime   @updatedAt @map("updated_at")
 
+  zone           Zone?                  @relation(fields: [zoneId], references: [id])
   syncCommands   SyncCommand[]
   punchEvents    PunchEvent[]
   employeeAccess EmployeeDeviceAccess[]
 
+  @@index([zoneId])
   @@map("device")
 }
 

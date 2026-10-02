@@ -26,6 +26,8 @@ phase by phase (`PLAN.md`).
 | `KNOWN_ISSUES.md` | Defects and unproven assumptions, with impact and checks |
 | `VERSIONS.md` | Release register: what each installer contains and was built from |
 | `DEVELOPMENT_SETUP.md` | Running the source tree on a Windows dev machine (ports `48101–48103`) |
+| `VERIFICATION.md` | Manual verification steps for each phase, and their results |
+| `TESTING_WITH_TWO_TERMINALS.md` | How to test both zones with only two physical terminals (plus virtual ones) |
 
 Installation, licensing and people-transfer runbooks are still the 0.4.19
 versions in `legacy/` until a phase changes them (see `legacy/README.md`).

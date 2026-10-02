@@ -58,6 +58,8 @@ const createDeviceSchema = z.object({
 const deviceSettingsSchema = z.object({
   name: z.string().min(1).max(80).optional(),
   role: z.nativeEnum(DeviceRole).optional(),
+  // null takes the terminal out of every zone.
+  zoneId: z.string().min(1).nullable().optional(),
   timezoneOffsetMinutes: z.number().int().min(-720).max(840).optional(),
   inStatusCodes: statusCodes.optional(),
   outStatusCodes: statusCodes.optional(),
@@ -114,6 +116,7 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
           serialNo: d.serialNo,
           ip: d.ip,
           role: d.role,
+          zoneId: d.zoneId,
           timezoneOffsetMinutes: d.timezoneOffsetMinutes,
           firmwareVersion: d.firmwareVersion,
           algorithmVersion: d.algorithmVersion,
@@ -241,6 +244,13 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
     const data: Prisma.DeviceUpdateInput = {};
     if (body.name !== undefined) data.name = body.name;
     if (body.role !== undefined) data.role = body.role;
+    const zoneChanged = body.zoneId !== undefined && body.zoneId !== device.zoneId;
+    if (zoneChanged) {
+      if (body.zoneId && !(await prisma.zone.findUnique({ where: { id: body.zoneId } }))) {
+        return reply.code(404).send({ error: "zone not found" });
+      }
+      data.zone = body.zoneId ? { connect: { id: body.zoneId } } : { disconnect: true };
+    }
     if (body.timezoneOffsetMinutes !== undefined) {
       data.timezoneOffsetMinutes = body.timezoneOffsetMinutes;
     }
@@ -253,6 +263,17 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
     }
 
     const updated = await prisma.device.update({ where: { id }, data });
+    if (zoneChanged) {
+      await prisma.auditLog.create({
+        data: auditRow({
+          action: AuditAction.DEVICE_ZONE_CHANGED,
+          entityType: "device",
+          entityId: id,
+          detail: { from: device.zoneId, to: updated.zoneId },
+          actorId: actorId(request),
+        }),
+      });
+    }
 
     // The ADMS layer serves device lookups from a 60 s cache so the
     // getrequest hot path keeps its single-query budget. Everything changed
@@ -268,6 +289,7 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
       serialNo: updated.serialNo,
       name: updated.name,
       role: updated.role,
+      zoneId: updated.zoneId,
       timezoneOffsetMinutes: updated.timezoneOffsetMinutes,
       inStatusCodes: updated.inStatusCodes,
       outStatusCodes: updated.outStatusCodes,

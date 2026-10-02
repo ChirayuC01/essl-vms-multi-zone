@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { ServiceError } from "../services/errors.js";
 import { actorId } from "./auth.js";
 import { Permission, requirePermission } from "./permissions.js";
 import {
@@ -9,8 +10,24 @@ import {
   rehireEmployee,
   resignEmployee,
 } from "../services/employee-access.js";
+import { zoneDevices } from "../services/zones.js";
 
-const assignSchema = z.object({ deviceIds: z.array(z.string().min(1)).min(1).max(50) });
+// Access can be granted by terminal or by zone. A zone expands to its own and
+// its ancestors' terminals at the moment of assignment; the stored grant stays
+// per device, so reconciliation and removal work exactly as before.
+const assignSchema = z
+  .object({
+    deviceIds: z.array(z.string().min(1)).max(50).optional(),
+    zoneIds: z.array(z.string().min(1)).max(50).optional(),
+  })
+  .refine((b) => (b.deviceIds?.length ?? 0) + (b.zoneIds?.length ?? 0) > 0, "select at least one device or zone");
+
+async function resolveDeviceIds(body: z.infer<typeof assignSchema>): Promise<string[]> {
+  const fromZones = body.zoneIds?.length ? (await zoneDevices(body.zoneIds)).map((d) => d.id) : [];
+  const ids = [...new Set([...(body.deviceIds ?? []), ...fromZones])];
+  if (ids.length === 0) throw new ServiceError(409, "the selected zones have no terminals placed in them yet");
+  return ids;
+}
 const removeSchema = z.object({ reason: z.string().trim().max(500).optional() });
 
 export async function employeeAccessRoutes(app: FastifyInstance): Promise<void> {
@@ -20,7 +37,7 @@ export async function employeeAccessRoutes(app: FastifyInstance): Promise<void> 
   app.post("/people/:id/device-access", { preHandler: requirePermission(Permission.EMPLOYEE_ACCESS_MANAGE) }, async (request, reply) => {
     const parsed = assignSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: "validation", issues: parsed.error.issues });
-    const items = await assignEmployeeDevices((request.params as { id: string }).id, parsed.data.deviceIds, actorId(request));
+    const items = await assignEmployeeDevices((request.params as { id: string }).id, await resolveDeviceIds(parsed.data), actorId(request));
     return reply.code(202).send({ items });
   });
   app.delete("/people/:id/device-access/:deviceId", { preHandler: requirePermission(Permission.EMPLOYEE_ACCESS_MANAGE) }, async (request, reply) => {
@@ -42,6 +59,6 @@ export async function employeeAccessRoutes(app: FastifyInstance): Promise<void> 
   app.post("/people/:id/rehire", { preHandler: requirePermission(Permission.EMPLOYEE_ACCESS_MANAGE) }, async (request, reply) => {
     const parsed = assignSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: "validation", issues: parsed.error.issues });
-    return reply.code(202).send(await rehireEmployee((request.params as { id: string }).id, parsed.data.deviceIds, actorId(request)));
+    return reply.code(202).send(await rehireEmployee((request.params as { id: string }).id, await resolveDeviceIds(parsed.data), actorId(request)));
   });
 }

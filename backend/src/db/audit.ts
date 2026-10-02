@@ -58,6 +58,11 @@ export const AuditAction = {
   // scan commits the command queue for a long time, so who started one over
   // which range is a thing to be able to answer afterwards.
   DEVICE_SCAN_STARTED: "DEVICE_SCAN_STARTED",
+  // Site topology (two-zone rebuild). Moving a terminal between zones changes
+  // who it admits, so it is recorded with before/after like any access change.
+  ZONE_CREATED: "ZONE_CREATED",
+  ZONE_UPDATED: "ZONE_UPDATED",
+  DEVICE_ZONE_CHANGED: "DEVICE_ZONE_CHANGED",
 } as const;
 export type AuditActionName = (typeof AuditAction)[keyof typeof AuditAction];
 

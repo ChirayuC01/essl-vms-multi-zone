@@ -245,6 +245,17 @@ cd C:\Work\essl-vms-main\backend
 npm run verify:e2e
 ```
 
+Isolate the run from this machine's real state (added 2 October 2026). The licence trial lives in Windows ProgramData, outside the database, so an expired trial on the dev machine makes every operator call return `LICENSE_EXPIRED`. The photo directory is shared with the dev install, and the harness refuses to overwrite photos it did not create. Run it against scratch locations:
+
+```powershell
+cd C:\Work\essl-vms-two-zones\backend
+$env:PROGRAMDATA = "$env:TEMP\vms-e2e-programdata"
+$env:PHOTO_STORAGE_PATH = "./data/photos-e2e"
+$env:DATABASE_URL = "postgresql://vms_app:devpassword@localhost:48103/vms_test"
+npx prisma migrate deploy
+npm run verify:e2e
+```
+
 ## 9. Stop and restart
 
 Use `Ctrl+C` in the web and backend terminals, then in the PostgreSQL terminal. Stop PostgreSQL last so backend shutdown can finish cleanly.

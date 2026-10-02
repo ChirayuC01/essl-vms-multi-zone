@@ -73,7 +73,7 @@ Delivered phase by phase; see `PLAN.md` for the exact fields.
 
 | New | Purpose | Phase |
 |---|---|---|
-| `Zone`, `Device.zoneId` | Site topology, access by zone | 1 |
+| `Zone`, `Device.zoneId` | Site topology, access by zone (`services/zones.ts`, `api/zones.ts`) — **done** | 1 |
 | typed settings over `app_config` | Every site toggle | 2 |
 | `PassType`, Person fields, `PersonDocument` | Per-type validation, documents | 3 |
 | `Entry` extended into a pass, `PassGate` | Per-terminal load/unload schedule | 4 |

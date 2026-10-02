@@ -16,7 +16,7 @@ is loaded.
 Records are never deleted. Photographs and documents stay on the site's own
 server.
 
-## 2. Site topology (Phase 1)
+## 2. Site topology (Phase 1 — implemented)
 
 A site is a tree of **zones**. Each zone has its own IN and OUT terminals.
 Access to a zone implies access to every zone above it.
@@ -35,7 +35,13 @@ The first two-zone deployment:
 - **Yard pass** → all four terminals.
 
 Zone names, the tree and which terminal belongs to which zone are
-configuration. Nothing in code names a zone.
+configuration. Nothing in code names a zone. An Admin manages zones on the
+**Devices** page: create a zone (optionally inside another), place each
+terminal into a zone, and set whether the zone's exit is code-gated by
+default. A zone lacking an entry or an exit terminal shows a warning.
+Employee access can be granted by zone; it expands to the terminals of that
+zone and every zone above it at the moment of granting, and is stored per
+terminal as before.
 
 ## 3. People
 

@@ -50,6 +50,10 @@ carried at the top; their full history is in `legacy/`.
 | 2026-10-02 | Rebuild delivered phase by phase, stopping after each for owner verification | Owner's delivery rule | Owner |
 | 2026-10-02 | Admin card holder's terminal ID must match neither ID pattern | Keeps the VMS from managing or deleting it | Plan |
 | 2026-10-02 | Pass types, zones and their exit-code defaults are configuration/seed data; no site-specific strings in code | Hard rules #1–2 | Plan |
+| 2026-10-02 | **0.5.0 upgrades an existing single-zone 0.4.19 site in place**, keeping all data; a one-zone site is a normal configuration, not a legacy mode | Existing sites must take the new product without reinstalling or re-enrolling | Owner |
+| 2026-10-02 | Upgrade migrations are additive, backfill in SQL, and change no behaviour until an Admin opts in; upgraded sites default to 0.4.19 behaviour (`exitCodeDefault` false, so single-entry IN and OUT load together) | No surprise at the gate after an upgrade | Owner |
+| 2026-10-02 | Active passes at upgrade time are converted to `LOADED` gate rows, so no face is lost or re-pushed; fallback precondition is "no visitors inside" | Upgrades must not strand anyone at a barrier | Owner |
+| 2026-10-02 | Phase 9 release gate: trial upgrade of a copy of a real 0.4.19 database + photos on disposable Windows; back up DB and photos before any site upgrade | Every past upgrade note says "untested"; this one must be tested | Owner |
 
 ## Open (awaiting client)
 

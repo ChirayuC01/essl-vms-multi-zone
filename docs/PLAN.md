@@ -8,9 +8,9 @@
 
 | Phase | Scope | State |
 |---|---|---|
-| 0 | Docs baseline and legacy split | `IMPLEMENTED_AWAITING_VERIFICATION` |
-| 1 | Zones and gates | `NOT_STARTED` |
-| 2 | Roles and settings | `NOT_STARTED` |
+| 0 | Docs baseline and legacy split | `ACCEPTED` (commit `33da17e`) |
+| 1 | Zones and gates | `ACCEPTED` (owner, 2026-10-02) |
+| 2 | Roles and settings | `IN_PROGRESS` |
 | 3 | Pass types, visitor profile, documents, ID redaction | `NOT_STARTED` |
 | 4 | Gate-load engine | `NOT_STARTED` |
 | 5 | Messaging outbox and visitor portal | `NOT_STARTED` |
@@ -99,6 +99,30 @@ No CHA/BCBA/customs strings in code. The client's pass types are seed data.
   - webcam capture in `web/src/components/webcam-capture.tsx`
 - Report registry: `reports/registry.ts`. The e2e harness: `backend/scripts/verify-e2e.ts` (simulated terminal via `app.inject`).
 - Hand-rolled UI kit: `web/src/components/ui.tsx`. API client and SWR: `web/src/lib/api.ts`, `web/src/lib/swr.ts`.
+
+## Upgrade from 0.4.19 (applies to every phase)
+
+The 0.5.0 installer must upgrade an existing single-zone 0.4.19 site in place, keeping all its data, and that site must keep working the way it did. A one-zone site is a zone tree with a single node, and the product supports that as a normal case, not a legacy mode.
+
+**Rules every phase follows:**
+- **Migrations are additive and backfill in SQL.** Nothing is dropped while old rows still need reading. Every migration header says what an upgraded site sees afterwards.
+- **No behaviour change until an Admin opts in.** Phase 1 already does this: an existing device keeps `zone_id` NULL, which zone-based access never selects.
+- **Upgraded sites get 0.4.19-compatible defaults:**
+  - `Zone.exitCodeDefault` defaults to false. A single-entry pass at a site whose zones are all false loads its OUT gates together with its IN gates, which is the 0.4.19 behaviour.
+  - Passing through a gate never starts to need an exit code just because the site upgraded.
+
+**Per phase:**
+
+| Phase | Upgrade obligation |
+|---|---|
+| 1 | Existing devices start with no zone (done). After the upgrade, an Admin creates one zone and places both terminals in it before issuing passes (Phase 4 refuses a pass with no placed gates). |
+| 2 | Existing `ADMIN` / `AUTHORIZED_PERSON` accounts keep their roles and their exact permissions. New roles are additions. `visitorIdPrefix` must default to a value that existing visitor IDs already match. Check this against the site's `visitorIdPatterns`, or reconciliation will treat existing visitors as foreign. |
+| 3 | Existing Persons with no pass type remain valid. A seeded default pass type covers rows migrated from `Entry`. Existing ID numbers are masked on display, and no stored value changes. |
+| 4 | `Entry` → `Pass` is extended in place. The migration backfills `validFrom` from the entry start and `validUntil` from `retentionExpiresAt`. **Active passes:** a migration creates `PassGate` rows for every live entry on the devices it is currently provisioned to, in state `LOADED`, so no loaded face is lost or re-pushed. If that cannot be made exact, the upgrade precondition is "no visitors inside, no active passes" and the installer runbook says so. |
+| 5–8 | New tables only. Existing reports keep their columns, and new columns are appended. |
+| 9 | Upgrade acceptance (below). |
+
+**Before any upgrade at a site:** back up the database (`pg_dump`) and the photo/document folders. The installer does not do this today.
 
 ---
 
@@ -420,6 +444,13 @@ A returning visitor (matched by mobile) is prefilled from their existing Person.
   - ingress exposes only `^/(v/|_next/|public-api/)` on the web port; the console and `/iclock` are never exposed
 - **Hardening:** public-route rate limits, token/OTP brute-force checks, upload fuzzing, and a CORS/Host header check.
 - **Installer:** version bump (0.5.0), the new env keys, and the updated `VERSIONS.md`.
+- **Upgrade acceptance from 0.4.19,** on a disposable Windows machine:
+  1. Install 0.4.19 and restore a copy of a real 0.4.19 database plus its photo folder, with at least one active visitor pass and one Employee.
+  2. Install 0.5.0 over it. It must upgrade in place (same `AppId`), and migrations apply on service start.
+  3. Check that Persons, photos, Employees and their device access, punches, attendance, audit history, operators and settings are all intact.
+  4. The active pass's face is neither deleted nor re-pushed. Reconciliation removes nothing it shouldn't.
+  5. Create one zone, place both terminals, and issue a single-entry pass. It behaves like 0.4.19: IN and OUT load together, with no exit code.
+  6. Record the result and the upgrade runbook in `VERSIONS.md` (0.5.0 upgrade notes) and `INSTALL_GUIDE.md`.
 - **Real-terminal acceptance on all 4 devices:** firmware identity, blocked-group existence, PUSH_PHOTO of phone selfies, and the timings. Also:
   - the admin card opens each barrier during an outage
   - the card holder's user ID matches neither ID pattern and is never touched by reconciliation

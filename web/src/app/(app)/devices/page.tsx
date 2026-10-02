@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { api, type DeviceList } from "@/lib/api";
+import { api, type DeviceList, type ZoneList } from "@/lib/api";
+import { ZonesCard } from "@/components/zones-card";
 import { useAuth } from "@/lib/auth";
 import { useApi, refresh } from "@/lib/swr";
 import { formatDateTime, formatRelative } from "@/lib/format";
@@ -72,6 +73,8 @@ export default function DevicesPage() {
   const [patternDrafts, setPatternDrafts] = useState<Record<string, string>>({});
   const [savingPatterns, setSavingPatterns] = useState<string | null>(null);
   const [savingRole, setSavingRole] = useState<string | null>(null);
+  const [savingZone, setSavingZone] = useState<string | null>(null);
+  const { data: zones } = useApi<ZoneList>("/api/zones");
   const [timezoneDrafts, setTimezoneDrafts] = useState<Record<string, string>>({});
   const [savingTimezone, setSavingTimezone] = useState<string | null>(null);
   const [scanDrafts, setScanDrafts] = useState<Record<string, ScanDraft>>({});
@@ -211,6 +214,23 @@ export default function DevicesPage() {
       setActionError(e instanceof Error ? e.message : "save failed");
     } finally {
       setSavingRole(null);
+    }
+  }
+
+  // Which zone's gate this terminal is. Zone-based access only ever selects
+  // placed terminals, so an unplaced one is invisible to zone grants.
+  async function saveZone(id: string, zoneId: string) {
+    setActionError(null);
+    setNotice(null);
+    setSavingZone(id);
+    try {
+      await api(`/api/devices/${id}`, { method: "PATCH", body: { zoneId: zoneId || null } });
+      setNotice("Zone saved. Zone-based access granted from now on includes this terminal.");
+      await Promise.all([refresh("/api/devices"), refresh("/api/zones")]);
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : "save failed");
+    } finally {
+      setSavingZone(null);
     }
   }
 
@@ -368,6 +388,8 @@ export default function DevicesPage() {
             </div>
           )}
 
+          <ZonesCard />
+
           {data.items.length === 0 && (
             <Card title="Devices">
               <Empty>No device registered.</Empty>
@@ -419,6 +441,27 @@ export default function DevicesPage() {
                   />
                 ) : (
                   <Stat label="Role" value={device.role} />
+                )}
+                {can("device:configure") ? (
+                  <Stat
+                    label="Zone"
+                    value={
+                      <Select
+                        className="mt-1 py-1 text-sm"
+                        value={device.zoneId ?? ""}
+                        disabled={savingZone === device.id}
+                        onChange={(e) => saveZone(device.id, e.target.value)}
+                      >
+                        <option value="">Not placed</option>
+                        {zones?.items.filter((z) => z.isActive || z.id === device.zoneId).map((z) => (
+                          <option key={z.id} value={z.id}>{z.name}</option>
+                        ))}
+                      </Select>
+                    }
+                    sub="the zone whose gate this terminal is"
+                  />
+                ) : (
+                  <Stat label="Zone" value={zones?.items.find((z) => z.id === device.zoneId)?.name ?? "Not placed"} />
                 )}
                 {can("device:configure") ? (
                   <Stat

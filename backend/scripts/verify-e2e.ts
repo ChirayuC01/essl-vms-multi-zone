@@ -259,6 +259,7 @@ async function resetDatabase(): Promise<void> {
     prisma.auditLog.deleteMany({}),
     prisma.admissionQueue.deleteMany({}),
     prisma.device.deleteMany({}),
+    prisma.zone.deleteMany({}),
     prisma.appUser.deleteMany({}),
     prisma.company.deleteMany({}),
     prisma.department.deleteMany({}),
@@ -3533,6 +3534,117 @@ async function main() {
     ]);
     check("rehire activates the employee and clears resignation", rehiredPerson.isActive && rehiredPerson.resignedAt === null && rehiredPerson.resignedReason === null);
     check("rehire restores permanent desired access on selected devices", rehiredAccess.some((access) => access.deviceId === resignationDevice.id && access.desiredAccess));
+  }
+
+  // ======================================================================
+  section("26. Zones — two-zone topology and employee access by zone");
+  // ======================================================================
+  {
+    const zoneCreate = async (payload: object) =>
+      app.inject({ method: "POST", url: "/api/zones", headers: auth(token), payload });
+    const premiseRes = await zoneCreate({ name: "E2E Premise", exitCodeDefault: true });
+    check("a root zone can be created", premiseRes.statusCode === 201, premiseRes.body);
+    const premiseZone = JSON.parse(premiseRes.body) as { id: string; exitCodeDefault: boolean };
+    const yardRes = await zoneCreate({ name: "E2E Yard", parentZoneId: premiseZone.id });
+    check("a child zone can be created under it", yardRes.statusCode === 201, yardRes.body);
+    const yardZone = JSON.parse(yardRes.body) as { id: string; exitCodeDefault: boolean };
+    check("each zone keeps its own exit-code default", premiseZone.exitCodeDefault && !yardZone.exitCodeDefault);
+    const zoneDuplicate = await zoneCreate({ name: "e2e premise" });
+    check("zone names are unique case-insensitively", zoneDuplicate.statusCode === 409, zoneDuplicate.body);
+    const zoneCycle = await app.inject({
+      method: "PATCH",
+      url: `/api/zones/${premiseZone.id}`,
+      headers: auth(token),
+      payload: { parentZoneId: yardZone.id },
+    });
+    check("a zone cannot be moved inside its own child", zoneCycle.statusCode === 400, zoneCycle.body);
+
+    // Four terminals: outer IN/OUT on the premise, yard IN/OUT on the yard.
+    const zoneGates: Record<string, string> = {};
+    for (const [key, role, zoneId] of [
+      ["outerIn", "IN", premiseZone.id],
+      ["outerOut", "OUT", premiseZone.id],
+      ["yardIn", "IN", yardZone.id],
+      ["yardOut", "OUT", yardZone.id],
+    ] as const) {
+      const created = await app.inject({
+        method: "POST",
+        url: "/api/devices",
+        headers: auth(token),
+        payload: { serialNo: `E2EZONE${key.toUpperCase()}`, name: `E2E ${key}`, role },
+      });
+      const gateId = JSON.parse(created.body).id as string;
+      const placed = await app.inject({ method: "PATCH", url: `/api/devices/${gateId}`, headers: auth(token), payload: { zoneId } });
+      check(`terminal ${key} is registered and placed in its zone`, created.statusCode === 201 && placed.statusCode === 200 && JSON.parse(placed.body).zoneId === zoneId, placed.body);
+      zoneGates[key] = gateId;
+    }
+    const zoneMoves = await prisma.auditLog.count({
+      where: { action: "DEVICE_ZONE_CHANGED", entityId: { in: Object.values(zoneGates) } },
+    });
+    check("every terminal placement is audited", zoneMoves === 4, `audited ${zoneMoves}`);
+
+    const emptyZoneRes = await zoneCreate({ name: "E2E Empty" });
+    const emptyZoneId = JSON.parse(emptyZoneRes.body).id as string;
+    const zoneList = JSON.parse((await app.inject({ method: "GET", url: "/api/zones", headers: auth(token) })).body).items as {
+      id: string;
+      gates: { IN: number; OUT: number };
+      warning: string | null;
+    }[];
+    const listedYard = zoneList.find((z) => z.id === yardZone.id);
+    check("a zone reports its entry and exit terminals", listedYard?.gates.IN === 1 && listedYard.gates.OUT === 1 && listedYard.warning === null);
+    check("a zone without terminals carries a warning", zoneList.find((z) => z.id === emptyZoneId)?.warning !== null);
+
+    const zoneEmployee = async (name: string, pin: string) => {
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/people",
+        headers: auth(token),
+        payload: { ...registration(name, pin), category: "EMPLOYEE", deviceIds: [zoneGates.outerIn] },
+      });
+      check(`employee ${pin} is created`, res.statusCode === 201, res.body);
+      return JSON.parse(res.body).id as string;
+    };
+    const desiredGates = async (personId: string) =>
+      (await prisma.employeeDeviceAccess.findMany({ where: { personId, desiredAccess: true } }))
+        .map((a) => a.deviceId)
+        .filter((id) => Object.values(zoneGates).includes(id))
+        .sort();
+
+    const officeEmployeeId = await zoneEmployee("Office Zone Employee", "EMPZONEOFF");
+    const officeGrant = await app.inject({
+      method: "POST",
+      url: `/api/people/${officeEmployeeId}/device-access`,
+      headers: auth(token),
+      payload: { zoneIds: [premiseZone.id] },
+    });
+    check("access can be granted by zone", officeGrant.statusCode === 202, officeGrant.body);
+    check(
+      "an office-zone employee lands on the outer IN and OUT terminals only",
+      JSON.stringify(await desiredGates(officeEmployeeId)) === JSON.stringify([zoneGates.outerIn, zoneGates.outerOut].sort()),
+    );
+
+    const yardEmployeeId = await zoneEmployee("Yard Zone Employee", "EMPZONEYRD");
+    await app.inject({
+      method: "POST",
+      url: `/api/people/${yardEmployeeId}/device-access`,
+      headers: auth(token),
+      payload: { zoneIds: [yardZone.id] },
+    });
+    check(
+      "a yard-zone employee also gets the premise terminals they must pass first",
+      JSON.stringify(await desiredGates(yardEmployeeId)) === JSON.stringify(Object.values(zoneGates).sort()),
+    );
+
+    await app.inject({ method: "PATCH", url: `/api/zones/${emptyZoneId}`, headers: auth(token), payload: { isActive: false } });
+    const inactiveGrant = await app.inject({
+      method: "POST",
+      url: `/api/people/${officeEmployeeId}/device-access`,
+      headers: auth(token),
+      payload: { zoneIds: [emptyZoneId] },
+    });
+    check("an inactive zone cannot be granted", inactiveGrant.statusCode === 409, inactiveGrant.body);
+    const zoneAudits = await prisma.auditLog.count({ where: { action: { in: ["ZONE_CREATED", "ZONE_UPDATED"] } } });
+    check("zone creation and changes are audited", zoneAudits >= 4, `audited ${zoneAudits}`);
   }
 
   // --- teardown ---------------------------------------------------------

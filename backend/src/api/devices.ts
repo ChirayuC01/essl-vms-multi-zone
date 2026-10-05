@@ -12,7 +12,7 @@ import { parseUserId, patternsOverlap, userIdKey } from "../user-id.js";
 import { parseIdList } from "./id-list.js";
 import { faceCountDrift, punchGaps, reconcileSweep, setPunchBaseline } from "../services/reconcile.js";
 import { actorId } from "./auth.js";
-import { Permission, requirePermission } from "./permissions.js";
+import { requirePermission } from "./permissions.js";
 
 // Device status for operators (and the Milestone 5 UI).
 //
@@ -90,7 +90,7 @@ const scanSchema = z.union([
 ]);
 
 export async function deviceRoutes(app: FastifyInstance): Promise<void> {
-  app.get("/devices", { preHandler: requirePermission(Permission.READ) }, async (_request, reply) => {
+  app.get("/devices", { preHandler: requirePermission("devices:view") }, async (_request, reply) => {
     const devices = await prisma.device.findMany({ orderBy: { createdAt: "asc" } });
 
     // One grouped query for all devices rather than a count per device —
@@ -173,7 +173,7 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
   // owner per device roster, two masters cause mystery deletions), which is
   // exactly why this exists as a deliberate operator action rather than the
   // registry silently upgrading an unknown serial the moment it is seen.
-  app.post("/devices", { preHandler: requirePermission(Permission.DEVICE_CONFIGURE) }, async (request, reply) => {
+  app.post("/devices", { preHandler: requirePermission("devices:create") }, async (request, reply) => {
     const parsed = createDeviceSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? "invalid body" });
@@ -215,7 +215,7 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
   // terminal guards, and the codes its firmware stamps, are site facts that
   // cannot be known at build time (CLAUDE.md #2 — differences are config,
   // never conditionals).
-  app.patch("/devices/:id", { preHandler: requirePermission(Permission.DEVICE_CONFIGURE) }, async (request, reply) => {
+  app.patch("/devices/:id", { preHandler: requirePermission("devices:update") }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const parsed = deviceSettingsSchema.safeParse(request.body);
     if (!parsed.success) {
@@ -304,7 +304,7 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
   // stored: an alert exists exactly as long as its condition does, so there
   // is no acknowledge flag to go stale and no resolved alert left lying
   // around for somebody to distrust.
-  app.get("/alerts", { preHandler: requirePermission(Permission.READ) }, async (_request, reply) => {
+  app.get("/alerts", { preHandler: requirePermission("dashboard:view") }, async (_request, reply) => {
     const items = await collectAlerts();
     return reply.send({
       total: items.length,
@@ -323,7 +323,7 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
   //
   // `facesUsed` is only current as of the last INFO, so this reads best right
   // after POST /devices/:id/refresh.
-  app.get("/devices/drift", { preHandler: requirePermission(Permission.READ) }, async (_request, reply) => {
+  app.get("/devices/drift", { preHandler: requirePermission("devices:view") }, async (_request, reply) => {
     const items = await faceCountDrift();
     return reply.send({
       total: items.length,
@@ -341,7 +341,7 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
   // The device's own account of itself, verbatim. Kept off the list endpoint
   // because that one is polled every 15 s and 74 keys per device is a lot of
   // payload for something read occasionally and deliberately.
-  app.get("/devices/:id/info", { preHandler: requirePermission(Permission.READ) }, async (request, reply) => {
+  app.get("/devices/:id/info", { preHandler: requirePermission("devices:view") }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const device = await prisma.device.findUnique({
       where: { id },
@@ -369,7 +369,7 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
   // a baseline, never as a raw difference: the device's log outlives a wiped
   // database, so its absolute count includes history this installation never
   // saw. Only as fresh as the last INFO.
-  app.get("/devices/punch-gaps", { preHandler: requirePermission(Permission.READ) }, async (_request, reply) => {
+  app.get("/devices/punch-gaps", { preHandler: requirePermission("devices:view") }, async (_request, reply) => {
     const items = await punchGaps();
     return reply.send({
       total: items.length,
@@ -382,7 +382,7 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
 
   // Re-fix the comparison point. Required after clearing the device log or
   // restoring the database, because both make the previous baseline a lie.
-  app.post("/devices/:id/punch-baseline", { preHandler: requirePermission(Permission.MAINTENANCE_RUN) }, async (request, reply) => {
+  app.post("/devices/:id/punch-baseline", { preHandler: requirePermission("maintenance:update") }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const result = await setPunchBaseline(id);
     if (!result) {
@@ -396,7 +396,7 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // Run the roster check now instead of waiting for the schedule.
-  app.post("/devices/reconcile", { preHandler: requirePermission(Permission.MAINTENANCE_RUN) }, async (request, reply) => {
+  app.post("/devices/reconcile", { preHandler: requirePermission("maintenance:update") }, async (request, reply) => {
     const result = await reconcileSweep(request.log, config.reconcileBatch);
     return reply.send(result);
   });
@@ -405,11 +405,11 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
   // was installed. Nothing else finds those people: this firmware cannot list
   // its users, and a person enrolled two years ago generates no traffic to
   // notice. See services/backfill.ts for why it is paced rather than bulk.
-  app.get("/devices/scans", { preHandler: requirePermission(Permission.READ) }, async (_request, reply) => {
+  app.get("/devices/scans", { preHandler: requirePermission("devices:view") }, async (_request, reply) => {
     return reply.send({ items: await listScans() });
   });
 
-  app.post("/devices/:id/scan", { preHandler: requirePermission(Permission.MAINTENANCE_RUN) }, async (request, reply) => {
+  app.post("/devices/:id/scan", { preHandler: requirePermission("maintenance:update") }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const parsed = scanSchema.safeParse(request.body);
     if (!parsed.success) {
@@ -468,7 +468,7 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
   //
   // Raw body, not multipart: the same pattern the photo upload uses, and it
   // needs no dependency to accept a file.
-  app.post("/devices/scan/parse-ids", { preHandler: requirePermission(Permission.MAINTENANCE_RUN) }, async (request, reply) => {
+  app.post("/devices/scan/parse-ids", { preHandler: requirePermission("maintenance:update") }, async (request, reply) => {
     const { filename } = request.query as { filename?: string };
     const body = request.body;
     if (!Buffer.isBuffer(body) || body.length === 0) {
@@ -488,14 +488,14 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
-  app.delete("/devices/:id/scan", { preHandler: requirePermission(Permission.MAINTENANCE_RUN) }, async (request, reply) => {
+  app.delete("/devices/:id/scan", { preHandler: requirePermission("maintenance:update") }, async (request, reply) => {
     const { id } = request.params as { id: string };
     if (!(await stopScan(id))) return reply.code(404).send({ error: "no scan is running on this device" });
     return reply.send({ stopped: true });
   });
 
   // Refresh capacity/firmware from the hardware itself.
-  app.post("/devices/:id/refresh", { preHandler: requirePermission(Permission.DEVICE_REFRESH) }, async (request, reply) => {
+  app.post("/devices/:id/refresh", { preHandler: requirePermission("device_refresh:update") }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const device = await prisma.device.findUnique({ where: { id } });
     if (!device) return reply.code(404).send({ error: "device not found" });

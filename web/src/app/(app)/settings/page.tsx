@@ -5,8 +5,11 @@ import { useState } from "react";
 import { api, getApiBase, type Branding } from "@/lib/api";
 import { refresh, useApi } from "@/lib/swr";
 import { Alert, Button, Card, Field, Input } from "@/components/ui";
+import { SiteSettingsCard } from "@/components/site-settings-card";
+import { useAuth } from "@/lib/auth";
 
 export default function SettingsPage() {
+  const { can } = useAuth();
   const { data } = useApi<Branding>("/api/branding");
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -18,7 +21,7 @@ export default function SettingsPage() {
     try { await api("/api/branding/logo", { method: "PUT", blob: { data: file, contentType: file.type } }); await refresh("/api/branding"); }
     catch (err) { setError(err instanceof Error ? err.message : "upload failed"); }
   }
-  return <Card title="Organization branding">
+  return <div className="space-y-4">{can("settings:view") && <SiteSettingsCard editable={can("settings:update")} />}{can("branding:update") && <Card title="Organization branding">
     {error && <Alert>{error}</Alert>}
     {data?.logoUrl && <img src={`${getApiBase()}${data.logoUrl}`} alt="Organization logo" className="mb-4 h-24 max-w-xs object-contain" />}
     <div className="space-y-4">
@@ -26,5 +29,5 @@ export default function SettingsPage() {
       <Button variant="primary" onClick={saveName}>Save name</Button>
       <Field label="Logo" hint="PNG, JPEG, or WebP; maximum 2 MB"><Input type="file" accept="image/png,image/jpeg,image/webp" onChange={(e) => { const file = e.target.files?.[0]; if (file) void saveLogo(file); }} /></Field>
     </div>
-  </Card>;
+  </Card>}</div>;
 }

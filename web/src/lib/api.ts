@@ -434,3 +434,55 @@ export interface Punch {
   statusCode: number | null;
   person: { id: string; name: string } | null;
 }
+
+/** Site settings (GET/PATCH /api/settings). Changing them is Admin-only and audited. */
+export interface SiteSettings {
+  entryLoadLeadMinutes: number;
+  unloadAfterPunchMinutes: number;
+  walkInRequiresHostClear: boolean;
+  outageGapMinutes: number;
+  visitorIdPrefix: string;
+  linkExpiryHours: number;
+  otpTtlMinutes: number;
+  otpMaxAttempts: number;
+  documentMaxMb: number;
+  documentMaxCount: number;
+  documentTypes: string[];
+  privacyNoticeText: string;
+  /** Server-set when the notice text changes; read-only. */
+  privacyNoticeVersion: string | null;
+}
+
+/** An operator role (GET /api/roles). `key` is immutable; `name` is editable. */
+export interface Role {
+  id: string;
+  key: string;
+  name: string;
+  description: string | null;
+  /** The Administrator role: always holds everything, never edited. */
+  isSystem: boolean;
+  isActive: boolean;
+  activeUsers: number;
+}
+export interface RoleList { items: Role[] }
+
+export type AccessAction = "view" | "create" | "update" | "delete";
+/** One feature row of the access grid (GET /api/access/catalogue). */
+export interface AccessResource {
+  key: string;
+  label: string;
+  group: string;
+  actions: AccessAction[];
+  notes?: Partial<Record<AccessAction, string>>;
+}
+export interface AccessCatalogue { items: AccessResource[] }
+
+export interface RoleAccess { role: string; editable: boolean; permissions: string[] }
+export interface PermissionOverride { permission: string; effect: "ALLOW" | "DENY" }
+export interface OperatorAccess {
+  role: string;
+  editable: boolean;
+  roleGrants: string[];
+  overrides: PermissionOverride[];
+  effective: string[];
+}

@@ -70,9 +70,10 @@ enum CommandType {
   CLEAR_LOGS
 }
 
-enum UserRole {
-  ADMIN
-  AUTHORIZED_PERSON
+// How a per-operator override changes their role's grant for one cell.
+enum OverrideEffect {
+  ALLOW
+  DENY
 }
 
 enum DeviceRole {
@@ -504,7 +505,9 @@ model AppUser {
   name               String?
   phone              String?
   passwordHash       String    @map("password_hash")
-  role               UserRole  @default(AUTHORIZED_PERSON)
+  // The role's immutable key (Role.key). What the role may do is data, not
+  // code: see Role / RolePermission and services/access.ts.
+  role               String    @map("role_key")
   isActive           Boolean   @default(true) @map("is_active")
   // Set when an admin issues a temporary password. While true the account can
   // do nothing but change it — otherwise a password one other person knows
@@ -525,8 +528,57 @@ model AppUser {
   assignedEmployeeAccess EmployeeDeviceAccess[] @relation("EmployeeAccessAssignedBy")
   removedEmployeeAccess  EmployeeDeviceAccess[] @relation("EmployeeAccessRemovedBy")
   resignedEmployees      Person[]               @relation("EmployeeResignedBy")
+  roleDef                Role                   @relation(fields: [role], references: [key], onDelete: Restrict)
+  permissionOverrides    UserPermissionOverride[]
 
+  @@index([role])
   @@map("app_user")
+}
+
+// ---------------------------------------------------------------------------
+// Configurable access (Phase 2b). Admin-defined roles, each with a grid of
+// "resource:action" grants, and per-operator ALLOW/DENY overrides. The
+// catalogue of cells is code (services/access.ts); grants are data.
+// ---------------------------------------------------------------------------
+
+model Role {
+  id          String   @id @default(cuid())
+  // Immutable identifier operators reference. Generated from the name for a
+  // custom role; never changed afterwards, so renaming is free.
+  key         String   @unique
+  name        String
+  description String?
+  // The Admin system role always holds everything; it is never edited.
+  isSystem    Boolean  @default(false) @map("is_system")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  users       AppUser[]
+  permissions RolePermission[]
+
+  @@map("role")
+}
+
+model RolePermission {
+  roleId     String @map("role_id")
+  // "resource:action", e.g. "people:view".
+  permission String
+  role       Role   @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permission])
+  @@map("role_permission")
+}
+
+model UserPermissionOverride {
+  userId     String         @map("user_id")
+  permission String
+  effect     OverrideEffect
+  createdAt  DateTime       @default(now()) @map("created_at")
+  user       AppUser        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, permission])
+  @@map("user_permission_override")
 }
 
 model AuditLog {

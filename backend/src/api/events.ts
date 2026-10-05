@@ -2,7 +2,7 @@ import type { OutgoingHttpHeaders } from "node:http";
 import type { FastifyInstance } from "fastify";
 import { prisma } from "../db/index.js";
 import { requireAuth } from "./auth.js";
-import { Permission, requirePermission } from "./permissions.js";
+import { requirePermission } from "./permissions.js";
 import { subscribe, type VmsEventName } from "../events/bus.js";
 import { getLicenseStatus } from "../services/license.js";
 
@@ -21,7 +21,7 @@ export async function eventRoutes(app: FastifyInstance): Promise<void> {
     "/events",
     { preHandler: [
       requireAuth,
-      requirePermission(Permission.READ),
+      requirePermission("dashboard:view"),
       async (_request, reply) => {
         const license = await getLicenseStatus(new Date(), true);
         if (license.expired) return reply.code(402).send({ error: "LICENSE_EXPIRED", expiresAt: license.expiresAt });

@@ -261,6 +261,7 @@ async function resetDatabase(): Promise<void> {
     prisma.device.deleteMany({}),
     prisma.zone.deleteMany({}),
     prisma.appUser.deleteMany({}),
+    prisma.role.deleteMany({ where: { NOT: { id: { startsWith: "role_" } } } }),
     prisma.company.deleteMany({}),
     prisma.department.deleteMany({}),
     prisma.license.deleteMany({}),
@@ -2566,7 +2567,7 @@ async function main() {
     check("reconfiguring a device is refused", cfg.statusCode === 403, `${cfg.statusCode} ${cfg.body}`);
     check(
       "...with a message naming the role and the permission",
-      /AUTHORIZED_PERSON/.test(cfg.body) && /device:configure/.test(cfg.body),
+      /AUTHORIZED_PERSON/.test(cfg.body) && /devices:update/.test(cfg.body),
       cfg.body,
     );
 
@@ -3435,8 +3436,8 @@ async function main() {
     );
     check(
       "a refusal is recorded against the operator who tried, naming what they wanted",
-      refusedPermissions.includes("device:configure") &&
-        refusedPermissions.includes("maintenance:run"),
+      refusedPermissions.includes("devices:update") &&
+        refusedPermissions.includes("maintenance:update"),
       refusedPermissions.join(", "),
     );
     const disabled = await app.inject({
@@ -3645,6 +3646,156 @@ async function main() {
     check("an inactive zone cannot be granted", inactiveGrant.statusCode === 409, inactiveGrant.body);
     const zoneAudits = await prisma.auditLog.count({ where: { action: { in: ["ZONE_CREATED", "ZONE_UPDATED"] } } });
     check("zone creation and changes are audited", zoneAudits >= 4, `audited ${zoneAudits}`);
+  }
+
+  // ======================================================================
+  section("27. Roles and site settings");
+  // ======================================================================
+  {
+    const settingsGet = await app.inject({ method: "GET", url: "/api/settings", headers: auth(token) });
+    const settingsDefaults = JSON.parse(settingsGet.body);
+    check(
+      "settings start at the client-confirmed defaults",
+      settingsGet.statusCode === 200 &&
+        settingsDefaults.entryLoadLeadMinutes === 5 &&
+        settingsDefaults.unloadAfterPunchMinutes === 10 &&
+        settingsDefaults.walkInRequiresHostClear === true,
+      settingsGet.body,
+    );
+    const settingsPatch = await app.inject({
+      method: "PATCH",
+      url: "/api/settings",
+      headers: auth(token),
+      payload: { entryLoadLeadMinutes: 7, privacyNoticeText: "E2E notice v1" },
+    });
+    const settingsAfter = JSON.parse(settingsPatch.body);
+    check("an admin can change settings", settingsPatch.statusCode === 200 && settingsAfter.entryLoadLeadMinutes === 7, settingsPatch.body);
+    check("changing the privacy notice stamps a server-set version", typeof settingsAfter.privacyNoticeVersion === "string");
+    const settingsAudit = await prisma.auditLog.findFirst({ where: { action: "SETTINGS_CHANGED" }, orderBy: { createdAt: "desc" } });
+    const settingsDetail = settingsAudit?.detail as Record<string, { from: unknown; to: unknown }> | undefined;
+    check(
+      "the change is audited with old and new values, changed keys only",
+      settingsDetail?.entryLoadLeadMinutes?.from === 5 &&
+        settingsDetail.entryLoadLeadMinutes.to === 7 &&
+        settingsDetail.unloadAfterPunchMinutes === undefined,
+      JSON.stringify(settingsDetail),
+    );
+    await app.inject({ method: "PATCH", url: "/api/settings", headers: auth(token), payload: { entryLoadLeadMinutes: 7 } });
+    const settingsAuditCount = await prisma.auditLog.count({ where: { action: "SETTINGS_CHANGED" } });
+    check("an unchanged patch writes no audit row", settingsAuditCount === 1, `rows ${settingsAuditCount}`);
+    const settingsBad = await app.inject({ method: "PATCH", url: "/api/settings", headers: auth(token), payload: { visitorIdPrefix: "V-1" } });
+    check("an invalid setting is refused", settingsBad.statusCode === 400, settingsBad.body);
+    const settingsUnknown = await app.inject({ method: "PATCH", url: "/api/settings", headers: auth(token), payload: { madeUp: 1 } });
+    check("an unknown setting is refused", settingsUnknown.statusCode === 400, settingsUnknown.body);
+
+    // Sign in as each new role. Created directly so no temporary-password
+    // change gets in the way; the login and permission path is the real one.
+    const roleToken = async (role: "HOST" | "SECURITY" | "SECURITY_INCHARGE" | "HR" | "HOD") => {
+      const salt = randomBytes(16);
+      const email = `${role.toLowerCase()}@vms.local`;
+      await prisma.appUser.create({
+        data: { email, role, passwordHash: `scrypt$${salt.toString("hex")}$${scryptSync("role-password", salt, 64).toString("hex")}` },
+      });
+      const res = await app.inject({ method: "POST", url: "/api/auth/login", payload: { email, password: "role-password" } });
+      return JSON.parse(res.body).token as string;
+    };
+    const hostToken = await roleToken("HOST");
+    const securityToken = await roleToken("SECURITY");
+    const inchargeToken = await roleToken("SECURITY_INCHARGE");
+    const hrToken = await roleToken("HR");
+
+    const hostMe = JSON.parse((await app.inject({ method: "GET", url: "/api/auth/me", headers: auth(hostToken) })).body);
+    check("a host signs in and is told what they may do", Array.isArray(hostMe.permissions) && hostMe.permissions.includes("visit_requests:create") && !hostMe.permissions.includes("people:view"));
+    const hostRead = await app.inject({ method: "GET", url: "/api/people", headers: auth(hostToken) });
+    check("a host cannot browse people", hostRead.statusCode === 403, hostRead.body);
+    const securityRead = await app.inject({ method: "GET", url: "/api/settings", headers: auth(securityToken) });
+    const securityWrite = await app.inject({ method: "PATCH", url: "/api/settings", headers: auth(securityToken), payload: { entryLoadLeadMinutes: 1 } });
+    check("settings are Administrator-only by default: security can neither read nor change them", securityRead.statusCode === 403 && securityWrite.statusCode === 403);
+    const inchargeMe = JSON.parse((await app.inject({ method: "GET", url: "/api/auth/me", headers: auth(inchargeToken) })).body);
+    check("the security in-charge holds the blacklist and exit override", inchargeMe.permissions.includes("blacklist:update") && inchargeMe.permissions.includes("exit_override:update"));
+    const hrWrite = await app.inject({ method: "PATCH", url: "/api/zones/none", headers: auth(hrToken), payload: { name: "x" } });
+    check("HR can look but not configure", hrWrite.statusCode === 403, hrWrite.body);
+    const deniedAudits = await prisma.auditLog.count({ where: { action: "PERMISSION_DENIED" } });
+    check("refusals are audited", deniedAudits >= 3, `rows ${deniedAudits}`);
+
+    // ======================================================================
+    section("28. Configurable access — custom roles, grids, user overrides");
+    // ======================================================================
+    const acc = (method: "GET" | "POST" | "PATCH" | "PUT", url: string, as: string, payload?: object) =>
+      app.inject({ method, url, headers: auth(as), ...(payload ? { payload } : {}) });
+
+    const accCatalogue = JSON.parse((await acc("GET", "/api/access/catalogue", token)).body).items as { key: string; actions: string[] }[];
+    check("the catalogue lists features with their applicable actions", accCatalogue.find((r) => r.key === "people")?.actions.length === 4 && accCatalogue.find((r) => r.key === "audit")?.actions.join() === "view");
+    const accRoles = JSON.parse((await acc("GET", "/api/roles", token)).body).items as { key: string; isSystem: boolean }[];
+    check("the seven seeded roles exist and only Administrator is a system role", accRoles.length === 7 && accRoles.filter((r) => r.isSystem).map((r) => r.key).join() === "ADMIN");
+
+    const accCreate = await acc("POST", "/api/roles", token, { name: "Gate Supervisor", description: "E2E custom role" });
+    check("an admin can add a custom role", accCreate.statusCode === 201 && JSON.parse(accCreate.body).key === "GATE_SUPERVISOR", accCreate.body);
+    const accDup = await acc("POST", "/api/roles", token, { name: "gate supervisor" });
+    check("role names are unique case-insensitively", accDup.statusCode === 409, accDup.body);
+    const accCopy = await acc("POST", "/api/roles", token, { name: "Security Copy", copyFrom: "SECURITY" });
+    const accCopyGrid = JSON.parse((await acc("GET", "/api/roles/SECURITY_COPY/permissions", token)).body).permissions as string[];
+    const accSecurityGrid = JSON.parse((await acc("GET", "/api/roles/SECURITY/permissions", token)).body).permissions as string[];
+    check("a role can start as a copy of another's grid", accCopy.statusCode === 201 && JSON.stringify(accCopyGrid) === JSON.stringify(accSecurityGrid));
+
+    const accGrid = await acc("PUT", "/api/roles/GATE_SUPERVISOR/permissions", token, { permissions: ["people:view", "devices:view"] });
+    check("a role's grid can be set", accGrid.statusCode === 200, accGrid.body);
+    const accBadKey = await acc("PUT", "/api/roles/GATE_SUPERVISOR/permissions", token, { permissions: ["people:fly"] });
+    check("an unknown cell is refused", accBadKey.statusCode === 400, accBadKey.body);
+    const accAdminGrid = await acc("PUT", "/api/roles/ADMIN/permissions", token, { permissions: [] });
+    check("the Administrator grid cannot be edited", accAdminGrid.statusCode === 409, accAdminGrid.body);
+
+    const accSalt = randomBytes(16);
+    const accUser = await prisma.appUser.create({
+      data: { email: "supervisor@vms.local", role: "GATE_SUPERVISOR", passwordHash: `scrypt$${accSalt.toString("hex")}$${scryptSync("role-password", accSalt, 64).toString("hex")}` },
+    });
+    const supToken = JSON.parse((await app.inject({ method: "POST", url: "/api/auth/login", payload: { email: "supervisor@vms.local", password: "role-password" } })).body).token as string;
+    check("a custom-role operator gets exactly their grid",
+      (await acc("GET", "/api/people", supToken)).statusCode === 200 && (await acc("GET", "/api/commands", supToken)).statusCode === 403);
+
+    const accAddZones = await acc("PUT", "/api/roles/GATE_SUPERVISOR/permissions", token, { permissions: ["people:view", "devices:view", "zones:view"] });
+    check("a grid change applies on the operator's next request, no re-login",
+      accAddZones.statusCode === 200 && (await acc("GET", "/api/zones", supToken)).statusCode === 200);
+
+    const accOverride = await acc("PUT", `/api/operators/${accUser.id}/permissions`, token, {
+      overrides: [
+        { permission: "commands:view", effect: "ALLOW" },
+        { permission: "people:view", effect: "DENY" },
+      ],
+    });
+    check("per-operator overrides can be saved", accOverride.statusCode === 200, accOverride.body);
+    check("an ALLOW override grants a cell the role lacks", (await acc("GET", "/api/commands", supToken)).statusCode === 200);
+    check("a DENY override revokes a cell the role grants", (await acc("GET", "/api/people", supToken)).statusCode === 403);
+    const accView = JSON.parse((await acc("GET", `/api/operators/${accUser.id}/permissions`, token)).body) as { effective: string[]; roleGrants: string[] };
+    check("the operator's effective access is reported", accView.effective.includes("commands:view") && !accView.effective.includes("people:view") && accView.roleGrants.includes("people:view"));
+    const accMe = JSON.parse((await acc("GET", "/api/auth/me", supToken)).body) as { permissions: string[] };
+    check("the console is told the effective cells", accMe.permissions.includes("commands:view") && !accMe.permissions.includes("people:view"));
+
+    const accAdminUser = await prisma.appUser.findUniqueOrThrow({ where: { email: "e2e@vms.local" } });
+    const accAdminOverride = await acc("PUT", `/api/operators/${accAdminUser.id}/permissions`, token, { overrides: [{ permission: "people:view", effect: "DENY" }] });
+    check("an Administrator cannot be overridden", accAdminOverride.statusCode === 409, accAdminOverride.body);
+
+    const accDeactivateBusy = await acc("PATCH", "/api/roles/GATE_SUPERVISOR", token, { isActive: false });
+    check("a role with active operators cannot be deactivated", accDeactivateBusy.statusCode === 409, accDeactivateBusy.body);
+    const accDeactivateFree = await acc("PATCH", "/api/roles/SECURITY_COPY", token, { isActive: false });
+    check("an unused role can be deactivated", accDeactivateFree.statusCode === 200, accDeactivateFree.body);
+    const accAssignInactive = await acc("PATCH", `/api/operators/${accUser.id}`, token, { role: "SECURITY_COPY" });
+    const accAssignUnknown = await acc("PATCH", `/api/operators/${accUser.id}`, token, { role: "NO_SUCH_ROLE" });
+    check("operators can only be given an existing, active role", accAssignInactive.statusCode === 400 && accAssignUnknown.statusCode === 400);
+    const accAdminSystem = await acc("PATCH", "/api/roles/ADMIN", token, { name: "Boss" });
+    check("the Administrator role cannot be renamed", accAdminSystem.statusCode === 409, accAdminSystem.body);
+
+    const accSecurityToken = securityToken;
+    check("access screens need the access permission", (await acc("GET", "/api/access/catalogue", accSecurityToken)).statusCode === 403);
+
+    const accGridAudit = await prisma.auditLog.findFirst({ where: { action: "ROLE_PERMISSIONS_CHANGED" }, orderBy: { createdAt: "desc" } });
+    const accGridDetail = accGridAudit?.detail as { added?: string[]; removed?: string[] } | undefined;
+    check("grid changes are audited with cells added and removed", accGridDetail?.added?.join() === "zones:view" && accGridDetail.removed?.length === 0, JSON.stringify(accGridDetail));
+    const accUserAudit = await prisma.auditLog.findFirst({ where: { action: "USER_PERMISSIONS_CHANGED", entityId: accUser.id } });
+    const accUserDetail = accUserAudit?.detail as { changes?: Record<string, { from: string; to: string }> } | undefined;
+    check("override changes are audited per cell, before and after",
+      accUserDetail?.changes?.["commands:view"]?.from === "INHERIT" && accUserDetail.changes["people:view"]?.to === "DENY", JSON.stringify(accUserDetail));
+    check("role creation and changes are audited", (await prisma.auditLog.count({ where: { action: { in: ["ROLE_CREATED", "ROLE_UPDATED"] } } })) >= 3);
   }
 
   // --- teardown ---------------------------------------------------------

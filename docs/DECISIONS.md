@@ -50,6 +50,18 @@ carried at the top; their full history is in `legacy/`.
 | 2026-10-02 | Rebuild delivered phase by phase, stopping after each for owner verification | Owner's delivery rule | Owner |
 | 2026-10-02 | Admin card holder's terminal ID must match neither ID pattern | Keeps the VMS from managing or deleting it | Plan |
 | 2026-10-02 | Pass types, zones and their exit-code defaults are configuration/seed data; no site-specific strings in code | Hard rules #1–2 | Plan |
+| 2026-10-02 | Zone management uses the existing `device:configure` permission | Topology is gate configuration; no new permission needed | Phase 1 |
+| 2026-10-02 | Hosts get **no** site-wide read; only their own requests (Phase 6) | Least privilege: a host has no reason to browse every person, punch and report | Phase 2 |
+| 2026-10-02 | HR and HOD are read-only until the client confirms their duties | Their approvals happen outside the system | Phase 2 |
+| 2026-10-02 | Security in-charge = Security + blacklist + audit trail | Blacklist authority proposed to the client as Security In-charge only | Phase 2 |
+| 2026-10-02 | Settings live in one `app_config` row, each field with its own default; a corrupt field falls back alone | New settings appear on upgrade without a migration | Phase 2 |
+| 2026-10-02 | **Access becomes configurable (Phase 2b): Admin-defined custom roles; a feature × action (View/Create/Update/Delete) grid per role; per-user overrides that can allow or deny** | Owner wants role defaults and user-specific access changeable without code, like their existing product | Owner |
+| 2026-10-02 | Admin system role is always full and cannot be edited or overridden; a save that leaves nobody able to manage access is refused | Prevents locking the site out | Plan |
+| 2026-10-02 | "Delete" in the access grid means deactivate / remove from terminals, never data deletion; record-ownership rules (e.g. host sees only own requests) stay in code | Hard rule #3; a grid cannot express which records | Plan |
+| 2026-10-02 | Operators reference roles by an immutable key; a custom role's key is generated from its first name and never changes | Renaming a role is then free and nothing referencing it breaks | Phase 2b |
+| 2026-10-02 | Effective access is cached per user+role and cleared on every grid/override/operator change | Avoids extra round trips per request on a remote DB (rule #4) while revocation still lands on the next request | Phase 2b |
+| 2026-10-05 | **Settings are Administrator-only by default** (no seeded role gets System settings: View); grantable per role from the Access page | Owner | Owner |
+| 2026-10-02 | Privacy notice version is server-set (timestamp of the last text change), not typed | Consent must always be tied to the exact wording shown | Phase 2 |
 | 2026-10-02 | **0.5.0 upgrades an existing single-zone 0.4.19 site in place**, keeping all data; a one-zone site is a normal configuration, not a legacy mode | Existing sites must take the new product without reinstalling or re-enrolling | Owner |
 | 2026-10-02 | Upgrade migrations are additive, backfill in SQL, and change no behaviour until an Admin opts in; upgraded sites default to 0.4.19 behaviour (`exitCodeDefault` false, so single-entry IN and OUT load together) | No surprise at the gate after an upgrade | Owner |
 | 2026-10-02 | Active passes at upgrade time are converted to `LOADED` gate rows, so no face is lost or re-pushed; fallback precondition is "no visitors inside" | Upgrades must not strand anyone at a barrier | Owner |

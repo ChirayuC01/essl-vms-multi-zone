@@ -23,6 +23,6 @@ export default function LicensePage() {
       {data && <div className="grid gap-3 sm:grid-cols-2"><Stat label="Type" value={data.kind ?? "Not started"} /><Stat label="Plan" value={data.plan ?? "—"} /><Stat label="Expires" value={formatDateTime(data.expiresAt)} /><Stat label="Days remaining" value={String(data.daysRemaining ?? "—")} /></div>}
       <div className="mt-4"><Badge tone={data?.expired ? "danger" : "ok"}>{data?.expired ? "expired" : "active"}</Badge></div>
     </Card>
-    {can("license:manage") && <Card title="Install or renew"><Field label="License key"><Input value={key} onChange={(e) => setKey(e.target.value)} /></Field><Button className="mt-3" variant="primary" disabled={!key.trim()} onClick={install}>Install key</Button></Card>}
+    {can("license:update") && <Card title="Install or renew"><Field label="License key"><Input value={key} onChange={(e) => setKey(e.target.value)} /></Field><Button className="mt-3" variant="primary" disabled={!key.trim()} onClick={install}>Install key</Button></Card>}
   </div>;
 }

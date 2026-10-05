@@ -63,6 +63,14 @@ export const AuditAction = {
   ZONE_CREATED: "ZONE_CREATED",
   ZONE_UPDATED: "ZONE_UPDATED",
   DEVICE_ZONE_CHANGED: "DEVICE_ZONE_CHANGED",
+  // Site settings: detail carries each changed key with its old and new value.
+  SETTINGS_CHANGED: "SETTINGS_CHANGED",
+  // Configurable access (Phase 2b). Grid changes record cells added/removed;
+  // user overrides record each cell's before/after effect.
+  ROLE_CREATED: "ROLE_CREATED",
+  ROLE_UPDATED: "ROLE_UPDATED",
+  ROLE_PERMISSIONS_CHANGED: "ROLE_PERMISSIONS_CHANGED",
+  USER_PERMISSIONS_CHANGED: "USER_PERMISSIONS_CHANGED",
 } as const;
 export type AuditActionName = (typeof AuditAction)[keyof typeof AuditAction];
 

@@ -4,7 +4,7 @@ import { AuditAction, auditRow } from "../db/audit.js";
 import { prisma } from "../db/index.js";
 import { getLicenseStatus, installLicenseKey } from "../services/license.js";
 import { actorId } from "./auth.js";
-import { Permission, requirePermission } from "./permissions.js";
+import { requirePermission } from "./permissions.js";
 
 // License status and installation remain available after expiry so an admin
 // can renew without touching the device-facing ADMS service.
@@ -19,11 +19,11 @@ export function publicLicenseStatus(status: Awaited<ReturnType<typeof getLicense
 }
 
 export async function licenseRoutes(app: FastifyInstance): Promise<void> {
-  app.get("/license", { preHandler: requirePermission(Permission.READ) }, async (_request, reply) => {
+  app.get("/license", { preHandler: requirePermission("license:view") }, async (_request, reply) => {
     return reply.send(publicLicenseStatus(await getLicenseStatus()));
   });
 
-  app.post("/license", { preHandler: requirePermission(Permission.LICENSE_MANAGE) }, async (request, reply) => {
+  app.post("/license", { preHandler: requirePermission("license:update") }, async (request, reply) => {
     const parsed = installSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? "invalid body" });

@@ -15,7 +15,8 @@ export function ZonesCard() {
   const [name, setName] = useState("");
   const [parentZoneId, setParentZoneId] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const editable = can("device:configure");
+  const editable = can("zones:update");
+  const creatable = can("zones:create");
   const zones = data?.items ?? [];
   const nameOf = (id: string | null) => zones.find((z) => z.id === id)?.name ?? "—";
 
@@ -33,7 +34,7 @@ export function ZonesCard() {
   return (
     <Card title="Zones">
       {error && <Alert>{error}</Alert>}
-      {editable && (
+      {creatable && (
         <div className="mb-3 flex flex-wrap gap-2">
           <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="New zone name" />
           <Select value={parentZoneId} onChange={(e) => setParentZoneId(e.target.value)}>

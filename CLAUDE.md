@@ -49,7 +49,7 @@ These are non-negotiable and cheap now, expensive to retrofit.
 | Database | PostgreSQL + Prisma |
 | Jobs/queue | **pg-boss** (Postgres-backed; no Redis, minimal on-prem footprint) |
 | Live updates | SSE |
-| Auth | JWT + RBAC. Routes declare permissions; roles map to permissions in one table (`api/permissions.ts`) |
+| Auth | JWT + configurable access. Each route declares one grid cell (`requirePermission("people:view")`); which roles and operators hold which cells is data an Admin edits (custom roles, per-user allow/deny). Catalogue and resolution: `services/access.ts`. Only the system Administrator role is special-cased |
 | Messaging | Outbox table + console transport until the SMS/email provider is confirmed |
 | Public access | Cloudflare Tunnel exposing only the visitor portal routes |
 
@@ -65,7 +65,7 @@ These are non-negotiable and cheap now, expensive to retrofit.
 backend/          Fastify service
   src/
     adms/         device protocol layer (endpoints, parsers, command queue)
-    api/          operator REST API (every route declares a permission)
+    api/          operator REST API (every route declares one access-grid cell)
     services/     lifecycle rules shared by api/ and jobs/
     jobs/         scheduled jobs (pg-boss)
     reports/      report definitions (one registry, not one route per report)

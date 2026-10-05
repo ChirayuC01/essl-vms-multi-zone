@@ -32,7 +32,7 @@ published to the internet only through a Cloudflare Tunnel whose ingress allows
 | Folder | Holds |
 |---|---|
 | `adms/` | Terminal protocol: routes for the four `/iclock` endpoints, parsers, command builders (validate-before-send), the command queue, record ingestion |
-| `api/` | Operator REST API. Every route declares a permission (`api/permissions.ts`) |
+| `api/` | Operator REST API. Every route declares one access-grid cell (`requirePermission("people:view")`); grants are data, resolved by `services/access.ts` |
 | `services/` | Lifecycle rules shared by API and jobs: entries/provisioning, punches → state, entry modes, employee access, reconciliation, backfill scan, alerts, attendance, licence, branding |
 | `jobs/` | pg-boss scheduling: expiry sweep, daily reset, reconcile, retention, roster scan |
 | `reports/` | One report registry; no route per report |
@@ -74,7 +74,8 @@ Delivered phase by phase; see `PLAN.md` for the exact fields.
 | New | Purpose | Phase |
 |---|---|---|
 | `Zone`, `Device.zoneId` | Site topology, access by zone (`services/zones.ts`, `api/zones.ts`) — **done** | 1 |
-| typed settings over `app_config` | Every site toggle | 2 |
+| typed settings over `app_config` | Every site toggle (`services/settings.ts`, `api/settings.ts`) — **done** | 2 |
+| `Role`, `RolePermission`, `UserPermissionOverride` | Configurable access grid (`services/access.ts`, `api/access.ts`) — **done** | 2b |
 | `PassType`, Person fields, `PersonDocument` | Per-type validation, documents | 3 |
 | `Entry` extended into a pass, `PassGate` | Per-terminal load/unload schedule | 4 |
 | `Message`, `Otp`, link tokens, `ConsentRecord` | Outbox, OTPs, portal | 5 |

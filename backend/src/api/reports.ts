@@ -3,7 +3,7 @@ import { z } from "zod";
 import { config } from "../config/index.js";
 import { REPORTS, findReport, runReport, runReportAll, type ReportFilters } from "../reports/registry.js";
 import { prisma } from "../db/index.js";
-import { Permission, can } from "./permissions.js";
+import { hasPermission } from "./permissions.js";
 import { getBranding } from "../services/branding.js";
 
 // Reporting endpoints (Phase 4 Milestone 20).
@@ -135,8 +135,8 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
   // The catalogue, filtered to what this operator may actually run. Listing a
   // report they cannot open would be an invitation to a 403.
   app.get("/reports", async (request, reply) => {
-    const role = request.operator?.role;
-    const items = REPORTS.filter((r) => role !== undefined && can(role, r.permission)).map((r) => ({
+    const allowed = await Promise.all(REPORTS.map((r) => hasPermission(request, r.permission)));
+    const items = REPORTS.filter((_r, i) => allowed[i]).map((r) => ({
       key: r.key,
       title: r.title,
       description: r.description,
@@ -152,8 +152,7 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
   // recorded is not worth offering, and a new one appears here the first time
   // it happens without anyone remembering to add it.
   app.get("/reports/meta/audit-facets", async (request, reply) => {
-    const role = request.operator?.role;
-    if (role === undefined || !can(role, Permission.AUDIT_READ)) {
+    if (!(await hasPermission(request, "audit:view"))) {
       return reply.code(403).send({ error: "your role is not permitted to read the audit log" });
     }
     const [actions, actors] = await Promise.all([
@@ -181,8 +180,7 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
     const def = findReport(key);
     if (!def) return reply.code(404).send({ error: "no such report" });
 
-    const role = request.operator?.role;
-    if (role === undefined || !can(role, def.permission)) {
+    if (!(await hasPermission(request, def.permission))) {
       return reply.code(403).send({
         error: `your role is not permitted to run this report (${def.permission})`,
       });

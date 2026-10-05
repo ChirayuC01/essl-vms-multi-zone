@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../db/index.js";
-import { Permission, requirePermission } from "./permissions.js";
+import { requirePermission } from "./permissions.js";
 import { userIdKey } from "../user-id.js";
 
 // Recent punch history. The SSE stream carries new punches live; this is what
@@ -17,7 +17,7 @@ const listSchema = z.object({
 });
 
 export async function punchRoutes(app: FastifyInstance): Promise<void> {
-  app.get("/punches", { preHandler: requirePermission(Permission.READ) }, async (request, reply) => {
+  app.get("/punches", { preHandler: requirePermission("punches:view") }, async (request, reply) => {
     const parsed = listSchema.safeParse(request.query);
     if (!parsed.success) {
       return reply.code(400).send({ error: "validation", issues: parsed.error.issues });

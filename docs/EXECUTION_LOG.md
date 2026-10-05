@@ -156,3 +156,176 @@ result) · issues · next action.
   `docs/VERIFICATION.md` (new: the per-phase manual verification tracker).
   Individual step results were not reported, and the status table there says
   so.
+
+### 2026-10-02 — Phase 2 — Roles and settings
+
+- **Status:** `IMPLEMENTED_AWAITING_VERIFICATION`.
+- **Change:**
+  - **Roles:** `UserRole` gains `HOST`, `SECURITY`, `SECURITY_INCHARGE`, `HR`
+    and `HOD`. Migration `20261002130000_access_roles` is additive (`ALTER TYPE
+    … ADD VALUE`).
+  - **Permissions:** eight new ones in `api/permissions.ts`: `visit:request`,
+    `visit:review`, `walkin:register`, `longterm:issue`, `exit:override`,
+    `blacklist:manage`, `zone:widen`, `settings:manage`. Matrix:
+    - Admin: everything.
+    - Security: the existing operator set, plus walk-in, long-term and exit
+      override.
+    - Security in-charge: Security, plus blacklist and audit read.
+    - Host: request, review and widen only, with **no READ**.
+    - HR and HOD: READ only.
+    - Authorized Person: unchanged.
+  - **Settings:** `services/settings.ts` stores one `app_config` row
+    (`site_settings`); each field has a zod default and a corrupt field falls
+    back alone. `PATCH` is strict: unknown keys are refused and the notice
+    version is server-set. Only changed keys are written to the
+    `SETTINGS_CHANGED` audit row, old → new, and an unchanged patch writes
+    nothing. `GET /api/settings` needs `read`; `PATCH` needs `settings:manage`.
+  - **Web:**
+    - Operators page: role picker with every role (`ROLE_LABELS` in
+      `lib/format.ts`); your own role isn't editable. The old Make
+      admin/operator toggle is replaced.
+    - Navigation: pages are now gated by `read` / `entry:manage`. A role
+      without `read` (Host) gets a welcome card instead of the dashboard,
+      which would otherwise fail with 403s.
+    - Settings page: new System settings card
+      (`components/site-settings-card.tsx`).
+- **Verification (2026-10-02):**
+  - Backend typecheck PASS. Unit tests **97/97 PASS**, of which 9 are new:
+    settings defaults, per-field fallback, patch validation, plus the role
+    matrix (host, security, in-charge, HR/HOD, settings admin-only).
+  - `verify:e2e` against `vms_test`: **297 passed, 0 failed**. New section 27
+    (13 checks) covers:
+    - defaults
+    - admin change, with the audit holding old/new and changed keys only
+    - an unchanged patch is not audited
+    - invalid and unknown keys refused
+    - notice version stamped
+    - real sign-in as Host, Security, Security in-charge and HR: the host
+      can't browse people, Security reads but can't change settings, the
+      in-charge holds blacklist and exit override, HR can't configure
+    - refusals audited
+  - Web lint and production build PASS.
+  - The migration was applied to dev `vms` and to `vms_test`.
+- **Next action:** owner walk-through, `VERIFICATION.md` § Phase 2.
+
+### 2026-10-02 — Phase 1 — verified
+
+- Owner confirmed the Phase 1 manual verification. `VERIFICATION.md` and
+  `PLAN.md` are updated. Phase 2 is still awaiting verification; the owner is
+  considering a configurable permission model before verifying it.
+
+### 2026-10-02 — Plan — Phase 2b added (configurable access)
+
+- Owner asked for Admin-configurable access, like their existing product.
+  Decisions: **custom roles**, and **per-user overrides that both allow and
+  deny**.
+- Added **Phase 2b** to `PLAN.md`, between Phase 2 and Phase 3. It covers:
+  - a Role table replacing the enum
+  - a role × feature × action grid
+  - per-user ALLOW/DENY overrides
+  - a resource catalogue in code
+  - lock-out protection (Admin immutable)
+  - `resource:action` route keys
+  - Admin screens for role defaults, roles and per-operator access
+- Phase 2 will be verified together with 2b.
+- Upgrade obligation recorded: existing operators keep exactly their current
+  access.
+- **No code changed yet.** Awaiting owner go-ahead.
+
+### 2026-10-02 — Phase 2b — Configurable access
+
+- **Status:** `IMPLEMENTED_AWAITING_VERIFICATION` (to be verified together with
+  Phase 2).
+- **Change:**
+  - **Schema / migration `20261002140000_configurable_access`:**
+    - new tables `role`, `role_permission` (role + `resource:action` cell) and
+      `user_permission_override` (user + cell + `ALLOW`/`DENY`)
+    - `app_user.role` enum becomes `role_key`, a foreign key to `role.key`;
+      the `UserRole` enum is dropped
+    - seed: seven roles (Administrator is the only system role, with no grant
+      rows because it always holds everything). Each other role's cells were
+      generated from the Phase 2 matrix through an explicit old→new mapping.
+  - **`services/access.ts`:**
+    - the feature catalogue: 26 features, each listing only its applicable
+      actions, with notes such as "delete = deactivate"
+    - `resolvePermissions`: (role grants ∪ ALLOW) − DENY; Admin always has all
+    - a per user+role cache, cleared on every access-affecting write
+  - **Route guards:** every `requirePermission` moved to a typed cell key. The
+    old `READ` was split per feature (people, devices, commands, reports, …).
+    A route-by-route mapping script reported no unmapped route. The compiler
+    now rejects any unknown key.
+  - **`api/access.ts`** (all audited):
+    - `GET /access/catalogue`
+    - `GET /roles` (access or operators view), `POST /roles` (with
+      copy-from), `PATCH /roles/:key` (system role refused; deactivation
+      refused while active operators remain)
+    - `GET/PUT /roles/:key/permissions` (cells validated)
+    - `GET/PUT /operators/:id/permissions` (Admins refused)
+    - new audit actions: `ROLE_CREATED`, `ROLE_UPDATED`,
+      `ROLE_PERMISSIONS_CHANGED`, `USER_PERMISSIONS_CHANGED`
+  - **Operators API:** a role must be an existing, active role key.
+    Role/active changes clear the access cache.
+  - **Web:**
+    - new **Access** page: role defaults grid with search, plus a Roles
+      table (add with copy-from, rename inline, deactivate)
+    - new **Operators → Access** page: per-cell Inherit/Allow/Deny,
+      overrides highlighted
+    - operator role picker loads roles from the database
+    - every `can()` and nav key moved to cells; Settings is viewable
+      read-only by `settings:view` holders, and branding is gated on
+      `branding:update`
+- **Upgrade check on the real dev database:** both existing operators kept
+  their roles (Administrator, Authorized person). The grids were seeded:
+  Authorized person 23 cells, Security 26, Security in-charge 28, Host 4,
+  HR/HOD 13.
+- **Verification (2026-10-02):**
+  - `prisma migrate diff`: no difference.
+  - Unit tests **93/93 PASS**. The old role tests were replaced by
+    `services/access.test.ts`:
+    - the seed equals the Phase 2 matrix for every role, read from the
+      migration file
+    - Admin has no rows and ignores DENY
+    - inherit, ALLOW adds, DENY removes, unknown cells ignored
+    - every `can()` / nav key in `web/src` names a real cell
+  - e2e **321 passed, 0 failed**. The new section 28 (24 checks) covers:
+    - the catalogue and seeded roles
+    - custom role creation and copy-from
+    - duplicate name refused, bad cell refused, Admin grid refused
+    - a grid change applying without re-login
+    - ALLOW and DENY overrides taking effect
+    - effective access reported in `/auth/me`
+    - Admin not overridable
+    - deactivation rules, inactive or unknown role assignment refused
+    - all audits
+  - Web lint and build PASS.
+- **Issues found by e2e and fixed:**
+  1. A role change made directly in the database (not through the API) was
+     hidden by the permission cache. The cache is now keyed by user **and**
+     role, so it is picked up immediately, because requireAuth re-reads the
+     role every request.
+  2. The refusal message had lost the operator's role name. Restored.
+- **Next action:** owner verifies Phase 2 and Phase 2b together
+  (`VERIFICATION.md`).
+
+### 2026-10-05 — Phase 2b — Settings Administrator-only by default
+
+- Owner decision: by default only an Admin sees and can open Settings.
+- Change: migration `20261005090000_settings_admin_only` removes the
+  `settings:view` cell from every seeded role. It came from the old "view
+  everything" mapping. Administrators always hold it; an Admin can still grant
+  it to a role from the Access page, in which case that role sees settings
+  read-only. No 0.4.19 operator loses anything, because settings didn't exist
+  then. Applied to dev `vms` and `vms_test`.
+- Tests:
+  - Unit **94/94**, including a new check that the migration covers every
+    seeded role.
+  - e2e **321/321**. The section 27 check now expects Security to be refused
+    both reading and changing settings.
+- Docs: `VERIFICATION.md` Phase 2 Steps 2 and 4, `PRODUCT.md` §8 and
+  `DECISIONS.md` updated.
+
+### 2026-10-05 — Phases 2 and 2b — accepted
+
+- Owner asked for the commit and for Phase 3 to start. Both phases are marked
+  `ACCEPTED`. Individual manual-verification step results were not reported;
+  `VERIFICATION.md` says so.

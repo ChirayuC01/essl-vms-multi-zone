@@ -1,6 +1,6 @@
-import { UserRole } from "@prisma/client";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { ADMIN_ROLE } from "../services/access.js";
 import { AuditAction, auditRow } from "../db/audit.js";
 import { prisma } from "../db/index.js";
 import { hashPassword } from "./auth.js";
@@ -51,7 +51,7 @@ export async function setupRoutes(app: FastifyInstance): Promise<void> {
         return tx.appUser.create({
           data: {
             email,
-            role: UserRole.ADMIN,
+            role: ADMIN_ROLE,
             passwordHash: hashPassword(rawPassword),
             // Nobody else knows this password — the operator just chose it
             // themselves — so unlike an admin-issued temporary password there

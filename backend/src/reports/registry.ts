@@ -1,5 +1,5 @@
 import { Prisma } from "@prisma/client";
-import { Permission, type PermissionName } from "../api/permissions.js";
+import type { PermissionKey } from "../services/access.js";
 import { prisma } from "../db/index.js";
 
 // The report catalogue (Phase 4 Milestone 20).
@@ -46,7 +46,7 @@ export interface ReportDef {
   title: string;
   description: string;
   group: "Movement" | "People" | "Exceptions" | "Operations";
-  permission: PermissionName;
+  permission: PermissionKey;
   filters: FilterName[];
   columns: ReportColumn[];
   /** The rows, before paging. Ordering belongs here. */
@@ -141,7 +141,7 @@ export const REPORTS: ReportDef[] = [
     title: "Attendance",
     description: "Daily attendance with paired IN/OUT work duration. Use Today, Week, Month, or a custom date range in the report screen.",
     group: "Movement",
-    permission: Permission.READ,
+    permission: "reports:view",
     filters: ["dateRange", "person", "device", "company", "department", "category"],
     columns: [
       { key: "day", label: "Date" },
@@ -237,7 +237,7 @@ export const REPORTS: ReportDef[] = [
     description:
       "Who was on site each day, when they first arrived and last left, and how many crossings in each direction. Reads pruned summaries as well as raw punches, so it keeps answering for dates whose detail has been rotated away.",
     group: "Movement",
-    permission: Permission.READ,
+    permission: "reports:view",
     filters: ["dateRange", "person", "device"],
     columns: [
       { key: "day", label: "Date" },
@@ -263,7 +263,7 @@ export const REPORTS: ReportDef[] = [
     title: "On site now",
     description: "Everyone currently inside, and since when.",
     group: "Movement",
-    permission: Permission.READ,
+    permission: "reports:view",
     filters: ["person"],
     columns: [
       ...PERSON_COLS,
@@ -287,7 +287,7 @@ export const REPORTS: ReportDef[] = [
     description:
       "How long each visit lasted, from first crossing to last on that day. A day with no OUT shows no duration rather than a guess — the terminal can suppress a repeat punch, so an absent exit is not evidence of a long stay.",
     group: "Movement",
-    permission: Permission.READ,
+    permission: "reports:view",
     filters: ["dateRange", "person", "device"],
     columns: [
       { key: "day", label: "Date" },
@@ -312,7 +312,7 @@ export const REPORTS: ReportDef[] = [
     title: "Busiest days",
     description: "Distinct people on site per day, and total crossings.",
     group: "Movement",
-    permission: Permission.READ,
+    permission: "reports:view",
     filters: ["dateRange", "device"],
     columns: [
       { key: "day", label: "Date" },
@@ -331,7 +331,7 @@ export const REPORTS: ReportDef[] = [
     title: "Person register",
     description: "Every person ever registered. The permanent record — nothing is deleted from it.",
     group: "People",
-    permission: Permission.READ,
+    permission: "reports:view",
     filters: ["person"],
     columns: [
       ...PERSON_COLS,
@@ -353,7 +353,7 @@ export const REPORTS: ReportDef[] = [
     title: "Resigned employees",
     description: "Employees who were resigned by an administrator and removed from every assigned device.",
     group: "People",
-    permission: Permission.READ,
+    permission: "reports:view",
     filters: ["dateRange", "person", "company", "department"],
     columns: [
       { key: "resigned_at", label: "Resigned" },
@@ -388,7 +388,7 @@ export const REPORTS: ReportDef[] = [
     description:
       "Who authorized whom, when, for how long, in which entry mode, and why. Provisioning IS the authorization decision, so this is the record of who let each person through — filter by person, by date range, or both. Entries are never pruned, so it answers for any date the system has been running.",
     group: "People",
-    permission: Permission.READ,
+    permission: "reports:view",
     filters: ["dateRange", "person"],
     columns: [
       { key: "created_at", label: "Authorized" },
@@ -419,7 +419,7 @@ export const REPORTS: ReportDef[] = [
     title: "Currently authorized",
     description: "People loaded on a device right now, and when their window closes.",
     group: "People",
-    permission: Permission.READ,
+    permission: "reports:view",
     filters: ["person"],
     columns: [
       ...PERSON_COLS,
@@ -443,7 +443,7 @@ export const REPORTS: ReportDef[] = [
     description:
       "Windows closing within 24 hours. The sweeper removes these automatically; the list is for anyone who wants to extend one first.",
     group: "People",
-    permission: Permission.READ,
+    permission: "reports:view",
     filters: [],
     columns: [
       ...PERSON_COLS,
@@ -466,7 +466,7 @@ export const REPORTS: ReportDef[] = [
     description:
       "People provisioned onto a device who never punched. Each one occupies a face slot on hardware that holds 3,000.",
     group: "People",
-    permission: Permission.READ,
+    permission: "reports:view",
     filters: ["dateRange"],
     columns: [
       { key: "created_at", label: "Authorized" },
@@ -488,7 +488,7 @@ export const REPORTS: ReportDef[] = [
     title: "Frequent visitors",
     description: "Days on site per person, most frequent first.",
     group: "People",
-    permission: Permission.READ,
+    permission: "reports:view",
     filters: ["dateRange", "device"],
     columns: [
       ...PERSON_COLS,
@@ -513,7 +513,7 @@ export const REPORTS: ReportDef[] = [
     description:
       "Windows that closed while the person was still on site. They are deliberately not removed — taking a credential away mid-visit would strand someone at the exit — so removal waits for their OUT punch.",
     group: "Exceptions",
-    permission: Permission.READ,
+    permission: "reports:view",
     filters: ["person"],
     columns: [
       ...PERSON_COLS,
@@ -541,7 +541,7 @@ export const REPORTS: ReportDef[] = [
     description:
       "Days with an entry and no exit. Often a genuinely missed punch-out — but the terminal also drops a repeat punch by the same person inside its duplicate window, so an absent exit is not proof anyone is still there.",
     group: "Exceptions",
-    permission: Permission.READ,
+    permission: "reports:view",
     filters: ["dateRange", "person", "device"],
     columns: [
       { key: "day", label: "Date" },
@@ -565,7 +565,7 @@ export const REPORTS: ReportDef[] = [
     description:
       "People currently blocked for the day after using their single entry. The daily reset releases them; they remain loaded on the device and recognised by it, then denied.",
     group: "Exceptions",
-    permission: Permission.READ,
+    permission: "reports:view",
     filters: ["person"],
     columns: [
       ...PERSON_COLS,
@@ -588,7 +588,7 @@ export const REPORTS: ReportDef[] = [
     description:
       "Drift between the database and a terminal — what was found, and what was corrected automatically. A person still loaded after their authorization ended is the case this exists to catch.",
     group: "Exceptions",
-    permission: Permission.READ,
+    permission: "reports:view",
     filters: ["dateRange"],
     columns: [
       { key: "created_at", label: "When" },
@@ -609,7 +609,7 @@ export const REPORTS: ReportDef[] = [
     description:
       "Punches whose status code contradicted the gate they arrived at. The gate's role wins, but a run of these means a terminal is configured as the wrong direction.",
     group: "Exceptions",
-    permission: Permission.READ,
+    permission: "reports:view",
     filters: ["dateRange"],
     columns: [
       { key: "created_at", label: "When" },
@@ -630,7 +630,7 @@ export const REPORTS: ReportDef[] = [
     description:
       "Every write sent to a terminal, with its outcome and how long it took to be collected.",
     group: "Operations",
-    permission: Permission.READ,
+    permission: "reports:view",
     filters: ["dateRange", "person", "device"],
     columns: [
       { key: "created_at", label: "Queued" },
@@ -667,7 +667,7 @@ export const REPORTS: ReportDef[] = [
     description:
       "Changes that never reached a terminal. Each one means the device and the database disagree about somebody's access until it is dealt with.",
     group: "Operations",
-    permission: Permission.READ,
+    permission: "reports:view",
     filters: ["device"],
     columns: [
       { key: "created_at", label: "Queued" },
@@ -692,7 +692,7 @@ export const REPORTS: ReportDef[] = [
     title: "Audit trail",
     description: "Every recorded action, by whom, against what.",
     group: "Operations",
-    permission: Permission.AUDIT_READ,
+    permission: "audit:view",
     filters: ["dateRange", "actor", "action"],
     columns: [
       { key: "created_at", label: "When" },
@@ -722,7 +722,7 @@ export const REPORTS: ReportDef[] = [
     description:
       "Operators attempting something their role does not allow. A misconfigured role and someone probing look identical here; both are worth knowing about.",
     group: "Operations",
-    permission: Permission.AUDIT_READ,
+    permission: "audit:view",
     filters: ["dateRange", "actor"],
     columns: [
       { key: "created_at", label: "When" },
@@ -745,7 +745,7 @@ export const REPORTS: ReportDef[] = [
     description:
       "Movement days that have been summarised and had their raw punches deleted. The DPDP answer to “what do you still hold, and for how long”.",
     group: "Operations",
-    permission: Permission.READ,
+    permission: "reports:view",
     filters: ["dateRange"],
     columns: [
       { key: "local_date", label: "Date" },

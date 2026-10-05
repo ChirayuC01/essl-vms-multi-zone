@@ -13,16 +13,17 @@ import { useApi } from "@/lib/swr";
 // the API refuses these independently, and treating a hidden link as
 // protection is how client-side checks quietly become load-bearing.
 const NAV: { href: string; label: string; permission?: string }[] = [
-  { href: "/", label: "Dashboard" },
-  { href: "/inside", label: "Inside Now" },
-  { href: "/provision", label: "Provision" },
-  { href: "/people", label: "People" },
-  { href: "/commands", label: "Command Queue" },
-  { href: "/devices", label: "Devices" },
-  { href: "/reports", label: "Reports" },
-  { href: "/directory", label: "Directory", permission: "directory:manage" },
-  { href: "/settings", label: "Settings", permission: "branding:manage" },
-  { href: "/operators", label: "Operators", permission: "operator:manage" },
+  { href: "/", label: "Dashboard", permission: "dashboard:view" },
+  { href: "/inside", label: "Inside Now", permission: "onsite:view" },
+  { href: "/provision", label: "Provision", permission: "passes:create" },
+  { href: "/people", label: "People", permission: "people:view" },
+  { href: "/commands", label: "Command Queue", permission: "commands:view" },
+  { href: "/devices", label: "Devices", permission: "devices:view" },
+  { href: "/reports", label: "Reports", permission: "reports:view" },
+  { href: "/directory", label: "Directory", permission: "directory:view" },
+  { href: "/settings", label: "Settings", permission: "settings:view" },
+  { href: "/operators", label: "Operators", permission: "operators:view" },
+  { href: "/access", label: "Access", permission: "access:view" },
 ];
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {

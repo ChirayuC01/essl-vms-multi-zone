@@ -5,7 +5,7 @@ import { requeueCommand } from "../adms/queue.js";
 import { AuditAction, auditRow } from "../db/audit.js";
 import { prisma } from "../db/index.js";
 import { actorId } from "./auth.js";
-import { Permission, requirePermission } from "./permissions.js";
+import { requirePermission } from "./permissions.js";
 
 // Command queue visibility (Milestone 4.5).
 //
@@ -76,7 +76,7 @@ function commandDto(c: CommandRow) {
 const OPEN_STATUSES = [CommandStatus.PENDING, CommandStatus.SENT, CommandStatus.RETRY];
 
 export async function commandRoutes(app: FastifyInstance): Promise<void> {
-  app.get("/commands", { preHandler: requirePermission(Permission.READ) }, async (request, reply) => {
+  app.get("/commands", { preHandler: requirePermission("commands:view") }, async (request, reply) => {
     const parsed = listSchema.safeParse(request.query);
     if (!parsed.success) {
       return reply.code(400).send({ error: "validation", issues: parsed.error.issues });
@@ -109,7 +109,7 @@ export async function commandRoutes(app: FastifyInstance): Promise<void> {
     return reply.send({ total, page, pageSize, items: items.map(commandDto) });
   });
 
-  app.get("/commands/:id", { preHandler: requirePermission(Permission.READ) }, async (request, reply) => {
+  app.get("/commands/:id", { preHandler: requirePermission("commands:view") }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const command = await prisma.syncCommand.findUnique({
       where: { id },
@@ -125,7 +125,7 @@ export async function commandRoutes(app: FastifyInstance): Promise<void> {
   // ---- retry ---------------------------------------------------------------
   // Only FAILED commands: a PENDING one is already queued, and re-queueing a
   // SENT one would race the reply that is still on its way.
-  app.post("/commands/:id/retry", { preHandler: requirePermission(Permission.ENTRY_MANAGE) }, async (request, reply) => {
+  app.post("/commands/:id/retry", { preHandler: requirePermission("commands:update") }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const command = await prisma.syncCommand.findUnique({ where: { id } });
     if (!command) return reply.code(404).send({ error: "command not found" });

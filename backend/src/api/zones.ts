@@ -5,7 +5,7 @@ import { AuditAction, auditRow } from "../db/audit.js";
 import { prisma } from "../db/index.js";
 import { wouldCreateCycle } from "../services/zones.js";
 import { actorId } from "./auth.js";
-import { Permission, requirePermission } from "./permissions.js";
+import { requirePermission } from "./permissions.js";
 
 // Site zones (two-zone rebuild, Phase 1). Topology is gate configuration, so
 // changing it needs the same permission as changing a terminal's role.
@@ -35,7 +35,7 @@ function conflict(reply: FastifyReply, err: unknown) {
 }
 
 export async function zoneRoutes(app: FastifyInstance): Promise<void> {
-  app.get("/zones", { preHandler: requirePermission(Permission.READ) }, async (_request, reply) => {
+  app.get("/zones", { preHandler: requirePermission("zones:view") }, async (_request, reply) => {
     const [zones, counts] = await Promise.all([
       prisma.zone.findMany({ orderBy: [{ isActive: "desc" }, { name: "asc" }] }),
       prisma.device.groupBy({ by: ["zoneId", "role"], where: { zoneId: { not: null } }, _count: { _all: true } }),
@@ -55,7 +55,7 @@ export async function zoneRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  app.post("/zones", { preHandler: requirePermission(Permission.DEVICE_CONFIGURE) }, async (request, reply) => {
+  app.post("/zones", { preHandler: requirePermission("zones:create") }, async (request, reply) => {
     const parsed = createSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: "validation", issues: parsed.error.issues });
     const { parentZoneId } = parsed.data;
@@ -71,7 +71,7 @@ export async function zoneRoutes(app: FastifyInstance): Promise<void> {
     } catch (err) { return conflict(reply, err); }
   });
 
-  app.patch("/zones/:id", { preHandler: requirePermission(Permission.DEVICE_CONFIGURE) }, async (request, reply) => {
+  app.patch("/zones/:id", { preHandler: requirePermission("zones:update") }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const parsed = updateSchema.safeParse(request.body);
     if (!parsed.success || Object.keys(parsed.data).length === 0) {

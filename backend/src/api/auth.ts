@@ -1,8 +1,7 @@
 import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
-import { ROLE_PERMISSIONS } from "./permissions.js";
-import type { UserRole } from "@prisma/client";
+import { effectivePermissions } from "../services/access.js";
 import { prisma } from "../db/index.js";
 import { AuditAction, auditRow } from "../db/audit.js";
 
@@ -46,7 +45,8 @@ export interface TokenPayload {
 export interface Operator {
   id: string;
   email: string;
-  role: UserRole;
+  /** Role key (Role.key). What it may do is resolved from the access grid. */
+  role: string;
 }
 
 declare module "fastify" {
@@ -181,7 +181,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       name: fresh?.name ?? null,
       phone: fresh?.phone ?? null,
       role: operator.role,
-      permissions: ROLE_PERMISSIONS[operator.role],
+      permissions: [...(await effectivePermissions(operator.id, operator.role))].sort(),
       mustChangePassword: fresh?.mustChangePassword ?? false,
       passwordChangedAt: fresh?.passwordChangedAt ?? null,
       createdAt: fresh?.createdAt ?? null,

@@ -1,10 +1,10 @@
-import { UserRole } from "@prisma/client";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { AuditAction, auditRow } from "../db/audit.js";
 import { prisma } from "../db/index.js";
+import { ADMIN_ROLE, invalidateAccess } from "../services/access.js";
 import { hashPassword, verifyPassword } from "./auth.js";
-import { Permission, requirePermission } from "./permissions.js";
+import { requirePermission } from "./permissions.js";
 
 // Operator management (Phase 4 Milestone 18).
 //
@@ -32,14 +32,15 @@ const createSchema = z.object({
   email: z.string().trim().toLowerCase().email().max(200),
   name: z.string().trim().max(100).transform((value) => value || null).nullable().optional(),
   phone: z.string().trim().max(30).transform((value) => value || null).nullable().optional(),
-  role: z.nativeEnum(UserRole),
+  // A role key (Role.key); must name an active role.
+  role: z.string().trim().min(1).max(64),
   temporaryPassword: password,
 });
 
 const updateSchema = z.object({
   name: z.string().trim().max(100).transform((value) => value || null).nullable().optional(),
   phone: z.string().trim().max(30).transform((value) => value || null).nullable().optional(),
-  role: z.nativeEnum(UserRole).optional(),
+  role: z.string().trim().min(1).max(64).optional(),
   isActive: z.boolean().optional(),
 });
 
@@ -55,7 +56,7 @@ function operatorDto(u: {
   email: string;
   name: string | null;
   phone: string | null;
-  role: UserRole;
+  role: string;
   isActive: boolean;
   mustChangePassword: boolean;
   passwordChangedAt: Date | null;
@@ -74,17 +75,22 @@ function operatorDto(u: {
   };
 }
 
+/** Refuse a role key that does not name an active role. */
+async function activeRole(key: string): Promise<boolean> {
+  return (await prisma.role.count({ where: { key, isActive: true } })) === 1;
+}
+
 /** Active admins other than the one given. Guards the last-admin rules. */
 async function otherActiveAdmins(exceptId: string): Promise<number> {
   return prisma.appUser.count({
-    where: { role: UserRole.ADMIN, isActive: true, id: { not: exceptId } },
+    where: { role: ADMIN_ROLE, isActive: true, id: { not: exceptId } },
   });
 }
 
 export async function operatorRoutes(app: FastifyInstance): Promise<void> {
   app.get(
     "/operators/active",
-    { preHandler: requirePermission(Permission.READ) },
+    { preHandler: requirePermission("people:view") },
     async (_request, reply) => {
       const items = await prisma.appUser.findMany({
         where: { isActive: true },
@@ -97,7 +103,7 @@ export async function operatorRoutes(app: FastifyInstance): Promise<void> {
 
   app.get(
     "/operators",
-    { preHandler: requirePermission(Permission.OPERATOR_MANAGE) },
+    { preHandler: requirePermission("operators:view") },
     async (_request, reply) => {
       const items = await prisma.appUser.findMany({ orderBy: { createdAt: "asc" } });
       return reply.send({ total: items.length, items: items.map(operatorDto) });
@@ -106,7 +112,7 @@ export async function operatorRoutes(app: FastifyInstance): Promise<void> {
 
   app.post(
     "/operators",
-    { preHandler: requirePermission(Permission.OPERATOR_MANAGE) },
+    { preHandler: requirePermission("operators:create") },
     async (request, reply) => {
       const parsed = createSchema.safeParse(request.body);
       if (!parsed.success) {
@@ -114,6 +120,9 @@ export async function operatorRoutes(app: FastifyInstance): Promise<void> {
       }
       const { email, name, phone, role, temporaryPassword } = parsed.data;
 
+      if (!(await activeRole(role))) {
+        return reply.code(400).send({ error: `no active role "${role}"` });
+      }
       if (await prisma.appUser.findUnique({ where: { email } })) {
         return reply.code(409).send({ error: "an operator with that email already exists" });
       }
@@ -146,7 +155,7 @@ export async function operatorRoutes(app: FastifyInstance): Promise<void> {
 
   app.patch(
     "/operators/:id",
-    { preHandler: requirePermission(Permission.OPERATOR_MANAGE) },
+    { preHandler: requirePermission("operators:update") },
     async (request, reply) => {
       const { id } = request.params as { id: string };
       const parsed = updateSchema.safeParse(request.body);
@@ -160,6 +169,9 @@ export async function operatorRoutes(app: FastifyInstance): Promise<void> {
 
       const target = await prisma.appUser.findUnique({ where: { id } });
       if (!target) return reply.code(404).send({ error: "operator not found" });
+      if (body.role !== undefined && body.role !== target.role && !(await activeRole(body.role))) {
+        return reply.code(400).send({ error: `no active role "${body.role}"` });
+      }
 
       // You cannot demote or disable yourself. Not paternalism: an admin who
       // does it by accident has no way back in, and on an on-premise install
@@ -186,8 +198,8 @@ export async function operatorRoutes(app: FastifyInstance): Promise<void> {
       // day operator:manage is granted to another role, or the self-guard is
       // relaxed. Cheap now; a site visit if it is missing then.
       const losingAdmin =
-        target.role === UserRole.ADMIN &&
-        (body.isActive === false || (body.role !== undefined && body.role !== UserRole.ADMIN));
+        target.role === ADMIN_ROLE &&
+        (body.isActive === false || (body.role !== undefined && body.role !== ADMIN_ROLE));
       if (losingAdmin && (await otherActiveAdmins(target.id)) === 0) {
         return reply.code(409).send({
           error:
@@ -205,6 +217,9 @@ export async function operatorRoutes(app: FastifyInstance): Promise<void> {
           ...(body.isActive !== undefined ? { isActive: body.isActive } : {}),
         },
       });
+      // A role change or deactivation changes what this operator may do on
+      // their very next request.
+      invalidateAccess();
       await prisma.auditLog.create({
         data: auditRow({
           action: AuditAction.OPERATOR_UPDATED,
@@ -230,7 +245,7 @@ export async function operatorRoutes(app: FastifyInstance): Promise<void> {
 
   app.post(
     "/operators/:id/reset-password",
-    { preHandler: requirePermission(Permission.OPERATOR_MANAGE) },
+    { preHandler: requirePermission("operators:update") },
     async (request, reply) => {
       const { id } = request.params as { id: string };
       const parsed = resetSchema.safeParse(request.body);

@@ -12,8 +12,10 @@ Hardware assumed: **two physical terminals** plus virtual ones as needed. See
 | Phase | Manual verification | Result |
 |---|---|---|
 | 0 | Read the new docs against what the client was told | Accepted 2026-10-02 (commit `33da17e`) |
-| 1 | §Phase 1 below | Owner approved commit 2026-10-02; individual step results not recorded |
-| 2 | §Phase 2 below | Pending |
+| 1 | §Phase 1 below | **VERIFIED** by owner (confirmed 2026-10-02) |
+| 2 | §Phase 2 below | Owner approved commit 2026-10-05; step results not recorded |
+| 2b | §Phase 2b below | Owner approved commit 2026-10-05; step results not recorded |
+| 3 | §Phase 3 below | Not yet implemented |
 
 Record results here as `PASS` / `FAIL — note` per step when walking through.
 
@@ -187,3 +189,190 @@ Remove the test employees' access (or keep them for later phases). Keep the
 virtual terminals for Phase 4. Re-point the terminals to 47102 if needed.
 
 **Pass:** Steps 5, 6, 2/4, 7, 9, 10 and 11 all hold.
+
+---
+
+## Phase 2 — Roles and settings
+
+No terminal is needed for this phase. Two terminals stay connected only so
+Step 6 can confirm nothing old broke.
+
+### Step 1 — Every role can be created
+
+Operators → Add operator. The **Role** list offers: Administrator, Security
+in-charge, Security, Host, HR, HOD, Authorized person.
+
+Create one operator per new role, e.g. `host@site.local`,
+`security@site.local`, `incharge@site.local`, `hr@site.local`, each with a
+temporary password.
+
+✅ Each appears in the table with a role dropdown (your own row shows a
+badge instead and can't be changed).
+✅ Changing a role from the dropdown shows "… is now <role>" and survives a
+refresh.
+
+### Step 2 — What each role sees
+
+Sign in as each (private window; set the new password when asked). These are
+the **seeded defaults**. Phase 2b lets an Admin change them, so check them
+before changing any grid.
+
+| Role | Navigation shows | Should NOT see |
+|---|---|---|
+| Host | No site pages. Opening the console shows a "Welcome — your access does not include the site dashboard" card | Every site page |
+| Security | Dashboard, Inside Now, Provision, People, Command Queue, Devices, Reports, Directory | Settings, Operators, Access |
+| Security in-charge | Same as Security | Settings, Operators, Access |
+| HR / HOD | Dashboard, Inside Now, People, Command Queue, Devices, Reports, Directory | Provision, Settings, Operators, Access |
+
+✅ As Security, the Devices page Zones card is read-only.
+❌ As Host, typing `http://localhost:48101/people` in the address bar shows
+an error, not the list.
+
+### Step 3 — System settings (Admin)
+
+Settings → **System settings**.
+
+✅ Defaults: load before visit **5**, remove after punch **10**, walk-ins
+"Host must Clear" **ticked**, outage after **10**, visitor ID prefix **V**,
+link **72** h, code **10** min / **5** attempts, documents **10** MB / **5**
+per visit, all four types ticked, privacy notice empty ("not set yet").
+
+1. Change *Load face before visit* to 7, type a short privacy notice, then
+   **Save settings**.
+   ✅ "Settings saved". After a refresh the values remain, and the notice hint
+   shows "current version <date-time>".
+2. Click **Save settings** again without changing anything.
+   ✅ No new audit row (Step 5).
+3. Set *Visitor ID prefix* to `V-1`, then save.
+   ❌ Refused with an error mentioning visitorIdPrefix. Nothing changes.
+4. Edit the notice text and save.
+   ✅ The version date-time changes.
+5. Put *Load face before visit* back to **5** and save.
+
+### Step 4 — Only Admin can change settings
+
+Settings is **Administrator-only by default**. As Security (or any non-Admin
+role):
+
+✅ **Settings** is not in the menu.
+✅ Opening `http://localhost:48101/settings` directly shows no settings and
+no branding.
+
+(If an Admin later grants a role **System settings: View** on the Access
+page, that role sees the settings read-only; **Update** is needed to save.)
+
+### Step 5 — Audit trail
+
+As Admin: Reports → Audit trail.
+
+✅ `SETTINGS_CHANGED` rows exist for each real save, each listing only the
+changed settings with their old and new value. The no-change save in
+Step 3.2 produced no row.
+✅ `PERMISSION_DENIED` rows exist for the Host's attempt in Step 2.
+✅ `OPERATOR_CREATED` / `OPERATOR_UPDATED` rows exist for Step 1.
+
+### Step 6 — Nothing old broke
+
+As Admin (or Security), provision an existing visitor on the two real
+terminals as before.
+
+✅ They load and are recognised.
+
+**Pass:** Steps 1–5 hold as described and Step 6 still works.
+
+---
+
+## Phase 2b — Configurable access
+
+Sign in as Admin. A new **Access** menu item appears, and each operator row
+gets an **Access** link.
+
+### Step 1 — Nothing changed on upgrade
+
+Access → **Role defaults**:
+
+1. Select *Authorized person*. ✅ Ticks match what that role could do before:
+   view across the site, people create/update/deactivate, passes, command
+   retry, refresh from terminal, companies/departments create and assign.
+2. Select *Administrator*. ✅ Everything is ticked and greyed out, with the
+   note "always has full access and cannot be edited".
+
+✅ Your existing operators still have their old roles (Operators page) and
+can do exactly what they could before.
+
+### Step 2 — Grid layout
+
+✅ Features are grouped: General, Gate, People, Terminals, Reports,
+Administration.
+✅ Only meaningful actions have a box. For example, *Audit trail* has only
+View, and *Exit override* has only Update ("release without the exit code").
+✅ Small notes under boxes explain them, e.g. People → Delete = "deactivate".
+✅ Typing in **Search features** filters rows.
+
+### Step 3 — Custom role
+
+Access → **Roles** → New role name `Gate supervisor`, Start from *No access*
+→ **Add role**.
+
+✅ It's listed with key `GATE_SUPERVISOR`, 0 active operators, active.
+❌ Adding `gate supervisor` again is refused (duplicate name).
+
+Role defaults → select *Gate supervisor* → tick **People: View** and
+**Terminals: View** → **Save Gate supervisor**.
+
+Operators → add an operator with role **Gate supervisor**. Sign in as them
+(private window).
+
+✅ They see **People** and **Devices** in the menu, and nothing else (no
+Dashboard, Reports, Provision, …).
+
+### Step 4 — A grid change applies without re-login
+
+As Admin: Role defaults → *Gate supervisor* → tick **Zones: View** → save.
+As the supervisor, **refresh** the Devices page (don't sign out).
+
+✅ The Zones card now loads its zones.
+
+### Step 5 — Per-operator overrides
+
+As Admin: Operators → the supervisor's row → **Access**.
+
+1. **Command queue: View** → *Allow*. **People: View** → *Deny*. The two
+   cells turn green and red. **Save access**.
+2. As the supervisor, refresh.
+   ✅ **Command Queue** appears in the menu, and **People** is gone.
+3. Back on their Access page, set both cells to *Inherit* and save.
+   ✅ Back to role defaults.
+
+❌ Open an **Administrator's** Access page. Cells are disabled with the note
+"Administrators always have full access".
+
+### Step 6 — Role rules
+
+1. **Rename:** in Roles, click into *Gate supervisor*'s name, change it to
+   `Gate lead` and click away. ✅ The name changes everywhere; the key stays
+   `GATE_SUPERVISOR`.
+2. **Deactivate while in use:** click Deactivate on Gate lead.
+   ❌ Refused while it has active operators.
+3. **Deactivate when unused:** move the supervisor to another role (Operators
+   page), then deactivate Gate lead. ✅ It works, and Gate lead no longer
+   appears in the Operators role picker.
+4. ✅ The Administrator row has no Deactivate button and its name can't be
+   edited.
+
+### Step 7 — Audit trail
+
+Reports → Audit trail:
+
+✅ `ROLE_CREATED` · `ROLE_UPDATED` (rename, deactivate, with old values) ·
+`ROLE_PERMISSIONS_CHANGED` (cells added/removed per save) ·
+`USER_PERMISSIONS_CHANGED` (each cell's before → after, e.g. INHERIT → DENY).
+✅ `PERMISSION_DENIED` rows for anything the supervisor tried while refused.
+
+### Step 8 — Nothing old broke
+
+As a Security operator, provision a visitor on the real terminals as before.
+
+✅ It works, because Security's defaults include passes.
+
+**Pass:** Steps 1–8 hold and Phase 2's steps still hold.

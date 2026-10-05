@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { api, ApiError, type OperatorAccount, type OperatorList } from "@/lib/api";
+import Link from "next/link";
+import { api, ApiError, type OperatorAccount, type OperatorList, type RoleList } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useApi, refresh } from "@/lib/swr";
 import { formatDateTime } from "@/lib/format";
@@ -18,14 +19,21 @@ import { Alert, Badge, Button, Card, Empty, Field, Input, Modal, PasswordInput, 
 
 export default function OperatorsPage() {
   const { user, can } = useAuth();
-  const { data, error } = useApi<OperatorList>(can("operator:manage") ? "/api/operators" : null);
+  const { data, error } = useApi<OperatorList>(can("operators:view") ? "/api/operators" : null);
+  const { data: roleList } = useApi<RoleList>(can("operators:view") ? "/api/roles" : null);
+  const roles = roleList?.items ?? [];
+  const roleName = (key: string) => roles.find((r) => r.key === key)?.name ?? key;
+  // Inactive roles stay listed for an operator who still holds one, but are never offered.
+  const roleOptions = (current?: string) =>
+    roles.filter((r) => r.isActive || r.key === current).map((r) => <option key={r.key} value={r.key}>{r.name}</option>);
   const [busy, setBusy] = useState(false);
+  const mayUpdate = can("operators:update");
   const [problem, setProblem] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [editing, setEditing] = useState<OperatorAccount | null>(null);
   const [resetting, setResetting] = useState<OperatorAccount | null>(null);
 
-  if (!can("operator:manage")) {
+  if (!can("operators:view")) {
     return (
       <Card title="Operators">
         <Empty>Your role does not include operator management.</Empty>
@@ -75,7 +83,7 @@ export default function OperatorsPage() {
       {problem && <Alert>{problem}</Alert>}
       {notice && <Alert tone="ok">{notice}</Alert>}
 
-      <Card title="Add an operator">
+      {can("operators:create") && <Card title="Add an operator">
         <form
           className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3"
           onSubmit={(e) => {
@@ -93,9 +101,8 @@ export default function OperatorsPage() {
             <Input name="phone" type="tel" maxLength={30} placeholder="Phone number" />
           </Field>
           <Field label="Role">
-            <Select name="role" defaultValue="AUTHORIZED_PERSON">
-              <option value="AUTHORIZED_PERSON">Authorized person</option>
-              <option value="ADMIN">Administrator</option>
+            <Select name="role" defaultValue="SECURITY">
+              {roleOptions()}
             </Select>
           </Field>
           <Field label="Temporary password">
@@ -111,7 +118,7 @@ export default function OperatorsPage() {
           There is no email on this system, so you set the first password and tell them. They cannot
           do anything until they replace it.
         </p>
-      </Card>
+      </Card>}
 
       <Card title={`Operators (${data?.total ?? 0})`}>
         {error && <Alert>failed to load</Alert>}
@@ -130,7 +137,25 @@ export default function OperatorsPage() {
                   </td>
                   <td className="px-2 py-2">{op.phone ?? "—"}</td>
                   <td className="px-2 py-2">
-                    <Badge tone={op.role === "ADMIN" ? "info" : "neutral"}>{op.role}</Badge>
+                    {/* Your own role is not editable here: demoting yourself could
+                        leave no administrator, and the API refuses it too. */}
+                    {self ? (
+                      <Badge tone={op.role === "ADMIN" ? "info" : "neutral"}>{roleName(op.role)}</Badge>
+                    ) : (
+                      <Select
+                        className="py-1 text-sm"
+                        value={op.role}
+                        disabled={busy || !mayUpdate}
+                        onChange={(e) => {
+                          const role = e.target.value;
+                          void run(`${op.email} is now ${roleName(role)}.`, () =>
+                            api(`/api/operators/${op.id}`, { method: "PATCH", body: { role } }),
+                          );
+                        }}
+                      >
+                        {roleOptions(op.role)}
+                      </Select>
+                    )}
                   </td>
                   <td className="px-2 py-2">
                     <Badge tone={op.isActive ? "ok" : "danger"}>
@@ -150,18 +175,26 @@ export default function OperatorsPage() {
                   <td className="px-2 py-2">
                     <div className="flex flex-wrap justify-end gap-2">
                       <Button
-                        disabled={busy}
+                        disabled={busy || !mayUpdate}
                         onClick={() => setEditing(op)}
                       >
                         Edit details
                       </Button>
+                      {can("access:view") && (
+                        <Link
+                          href={`/operators/${op.id}/access`}
+                          className="rounded-[var(--radius)] border border-[var(--border)] px-3 py-1.5 text-sm hover:bg-[var(--surface-muted)]"
+                        >
+                          Access
+                        </Link>
+                      )}
                       {/* Self-actions are hidden, not merely refused: an admin
                           who disables their own account has no way back in,
                           and the API refuses these too. */}
                       {!self && (
                         <>
                           <Button
-                            disabled={busy}
+                            disabled={busy || !mayUpdate}
                             onClick={() =>
                               void run(`${op.email} is now ${op.isActive ? "disabled" : "active"}.`, () =>
                                 api(`/api/operators/${op.id}`, {
@@ -173,27 +206,10 @@ export default function OperatorsPage() {
                           >
                             {op.isActive ? "Disable" : "Re-enable"}
                           </Button>
-                          <Button
-                            disabled={busy}
-                            onClick={() =>
-                              void run(
-                                `${op.email} is now ${op.role === "ADMIN" ? "an authorized person" : "an administrator"}.`,
-                                () =>
-                                  api(`/api/operators/${op.id}`, {
-                                    method: "PATCH",
-                                    body: {
-                                      role: op.role === "ADMIN" ? "AUTHORIZED_PERSON" : "ADMIN",
-                                    },
-                                  }),
-                              )
-                            }
-                          >
-                            {op.role === "ADMIN" ? "Make operator" : "Make admin"}
-                          </Button>
                         </>
                       )}
                       <Button
-                        disabled={busy}
+                        disabled={busy || !mayUpdate}
                         onClick={() => setResetting(op)}
                       >
                         Reset password

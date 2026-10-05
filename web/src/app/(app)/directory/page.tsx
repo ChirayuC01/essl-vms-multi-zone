@@ -44,10 +44,10 @@ export default function DirectoryPage() {
         <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={`New ${title.slice(0, -1).toLowerCase()}`} />
         <Button variant="primary" disabled={!name.trim()} onClick={() => create(kind, name.trim())}>Add</Button>
       </div>
-      <Table head={["Name", "Status", ...(can("directory:deactivate") ? ["Action"] : [])]}>
+      <Table head={["Name", "Status", ...(can("directory:delete") ? ["Action"] : [])]}>
         {(items ?? []).map((item) => <tr key={item.id} className="border-b border-[var(--border)]">
           <td className="px-2 py-2">{item.name}</td><td className="px-2 py-2"><Badge tone={item.isActive ? "ok" : "warn"}>{item.isActive ? "active" : "inactive"}</Badge></td>
-          {can("directory:deactivate") && <td className="px-2 py-2"><Button onClick={() => toggle(kind, item)}>{item.isActive ? "Deactivate" : "Reactivate"}</Button></td>}
+          {can("directory:delete") && <td className="px-2 py-2"><Button onClick={() => toggle(kind, item)}>{item.isActive ? "Deactivate" : "Reactivate"}</Button></td>}
         </tr>)}
       </Table>
     </Card>

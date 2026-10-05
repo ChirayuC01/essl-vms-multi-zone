@@ -34,7 +34,7 @@ function summarise(detail: unknown): string {
 
 export function PersonHistory({ personId }: { personId: string }) {
   const { can } = useAuth();
-  const allowed = can("audit:read");
+  const allowed = can("audit:view");
   const { data } = useApi<AuditList>(allowed ? `/api/people/${personId}/audit` : null);
 
   if (!allowed) return null;

@@ -3,7 +3,7 @@ import path from "node:path";
 import type { FastifyInstance } from "fastify";
 import { config } from "../config/index.js";
 import { prisma } from "../db/index.js";
-import { Permission, requirePermission } from "./permissions.js";
+import { requirePermission } from "./permissions.js";
 import { parseUserId, photoPathFor, userIdFromPhotoFile, userIdKey } from "../user-id.js";
 
 // Unclaimed enrollments (Phase 1 Milestone 5).
@@ -33,7 +33,7 @@ function photoPathForPin(raw: string): { pin: string; filePath: string } | null 
 }
 
 export async function enrollmentRoutes(app: FastifyInstance): Promise<void> {
-  app.get("/enrollments/unclaimed", { preHandler: requirePermission(Permission.READ) }, async (request, reply) => {
+  app.get("/enrollments/unclaimed", { preHandler: requirePermission("people:view") }, async (request, reply) => {
     let files: string[];
     try {
       files = await readdir(config.photoStoragePath);
@@ -107,7 +107,7 @@ export async function enrollmentRoutes(app: FastifyInstance): Promise<void> {
     return reply.send({ items });
   });
 
-  app.get("/enrollments/unclaimed/:pin/photo", { preHandler: requirePermission(Permission.READ) }, async (request, reply) => {
+  app.get("/enrollments/unclaimed/:pin/photo", { preHandler: requirePermission("people:view") }, async (request, reply) => {
     const { pin } = request.params as { pin: string };
     const resolved = photoPathForPin(pin);
     if (!resolved) return reply.code(400).send({ error: "pin must be a number" });

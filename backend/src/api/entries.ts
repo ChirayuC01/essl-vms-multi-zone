@@ -6,7 +6,7 @@ import { overdueInside, sweepExpiredEntries } from "../jobs/expiry.js";
 import { retentionStatus, runRetention } from "../jobs/retention.js";
 import { dayBlockedEntries, runDailyReset } from "../services/entry-modes.js";
 import { actorId } from "./auth.js";
-import { Permission, requirePermission } from "./permissions.js";
+import { requirePermission } from "./permissions.js";
 import {
   ACTIVE_ENTRY_STATES,
   deprovisionEntry,
@@ -131,7 +131,7 @@ function commandDto(c: {
 
 export async function entryRoutes(app: FastifyInstance): Promise<void> {
   // ---- provision a person -------------------------------------------------
-  app.post("/people/:id/provision", { preHandler: requirePermission(Permission.ENTRY_MANAGE) }, async (request, reply) => {
+  app.post("/people/:id/provision", { preHandler: requirePermission("passes:create") }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const parsed = provisionSchema.safeParse(request.body ?? {});
     if (!parsed.success) {
@@ -168,7 +168,7 @@ export async function entryRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // ---- ask the device what it thinks it has (4.4) --------------------------
-  app.post("/people/:id/query-device", { preHandler: requirePermission(Permission.ENTRY_MANAGE) }, async (request, reply) => {
+  app.post("/people/:id/query-device", { preHandler: requirePermission("passes:update") }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const parsed = querySchema.safeParse(request.body ?? {});
     if (!parsed.success) {
@@ -186,7 +186,7 @@ export async function entryRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // ---- list ----------------------------------------------------------------
-  app.get("/entries", { preHandler: requirePermission(Permission.READ) }, async (request, reply) => {
+  app.get("/entries", { preHandler: requirePermission("passes:view") }, async (request, reply) => {
     const parsed = listEntriesSchema.safeParse(request.query);
     if (!parsed.success) {
       return reply.code(400).send({ error: "validation", issues: parsed.error.issues });
@@ -226,7 +226,7 @@ export async function entryRoutes(app: FastifyInstance): Promise<void> {
   // "Overdue" is not a fourth query — it is `retentionExpiresAt` in the past
   // on a row already returned, so the client derives it and the two can never
   // disagree with each other.
-  app.get("/entries/board", { preHandler: requirePermission(Permission.READ) }, async (_request, reply) => {
+  app.get("/entries/board", { preHandler: requirePermission("onsite:view") }, async (_request, reply) => {
     const select = {
       id: true,
       state: true,
@@ -287,13 +287,13 @@ export async function entryRoutes(app: FastifyInstance): Promise<void> {
   // What the policy is, what it would act on, and how much history has
   // already been rolled into summaries. Exposed because a retention policy
   // nobody can see is one nobody can audit — and this one deletes rows.
-  app.get("/maintenance/retention", { preHandler: requirePermission(Permission.READ) }, async (_request, reply) => {
+  app.get("/maintenance/retention", { preHandler: requirePermission("maintenance:view") }, async (_request, reply) => {
     return reply.send(await retentionStatus());
   });
 
   // Run a pass now. Bounded the same way the scheduled run is, so calling it
   // repeatedly is how a large backlog is cleared, not one enormous statement.
-  app.post("/maintenance/retention", { preHandler: requirePermission(Permission.MAINTENANCE_RUN) }, async (request, reply) => {
+  app.post("/maintenance/retention", { preHandler: requirePermission("maintenance:update") }, async (request, reply) => {
     return reply.send(await runRetention(request.log));
   });
 
@@ -301,7 +301,7 @@ export async function entryRoutes(app: FastifyInstance): Promise<void> {
   // The scheduled job runs every few minutes; this is the same function, on
   // demand. Safe to call at any time — the sweep is idempotent, and an entry
   // already on its way off a device is not a candidate.
-  app.post("/entries/sweep-expiry", { preHandler: requirePermission(Permission.MAINTENANCE_RUN) }, async (request, reply) => {
+  app.post("/entries/sweep-expiry", { preHandler: requirePermission("maintenance:update") }, async (request, reply) => {
     const result = await sweepExpiredEntries(request.log);
     return reply.send(result);
   });
@@ -311,7 +311,7 @@ export async function entryRoutes(app: FastifyInstance): Promise<void> {
   // day. This is the same function on demand — it will do nothing if the
   // device's day has already been reset, which is the correct answer and not
   // a failure.
-  app.post("/entries/daily-reset", { preHandler: requirePermission(Permission.MAINTENANCE_RUN) }, async (request, reply) => {
+  app.post("/entries/daily-reset", { preHandler: requirePermission("maintenance:update") }, async (request, reply) => {
     const result = await runDailyReset(request.log);
     return reply.send(result);
   });
@@ -320,7 +320,7 @@ export async function entryRoutes(app: FastifyInstance): Promise<void> {
   // SINGLE_ENTRY people who have used today's visit. They are still loaded on
   // the device and still recognized by it — the terminal identifies them and
   // then denies, which is why blocking never disturbs the biometric.
-  app.get("/entries/day-blocked", { preHandler: requirePermission(Permission.READ) }, async (_request, reply) => {
+  app.get("/entries/day-blocked", { preHandler: requirePermission("passes:view") }, async (_request, reply) => {
     const items = await dayBlockedEntries();
     return reply.send({ total: items.length, items });
   });
@@ -332,7 +332,7 @@ export async function entryRoutes(app: FastifyInstance): Promise<void> {
   // punch never comes, they stay on the device indefinitely, and the only
   // thing separating "correctly deferred" from "quietly forgotten" is
   // somebody being able to see the list. That is what this route is for.
-  app.get("/entries/overdue", { preHandler: requirePermission(Permission.READ) }, async (_request, reply) => {
+  app.get("/entries/overdue", { preHandler: requirePermission("passes:view") }, async (_request, reply) => {
     const items = await overdueInside();
     const now = Date.now();
     return reply.send({
@@ -351,7 +351,7 @@ export async function entryRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // ---- detail --------------------------------------------------------------
-  app.get("/entries/:id", { preHandler: requirePermission(Permission.READ) }, async (request, reply) => {
+  app.get("/entries/:id", { preHandler: requirePermission("passes:view") }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const entry = await prisma.entry.findUnique({
       where: { id },
@@ -375,7 +375,7 @@ export async function entryRoutes(app: FastifyInstance): Promise<void> {
   ] as const) {
     app.post(
       `/entries/:id/${suffix}`,
-      { preHandler: requirePermission(Permission.ENTRY_MANAGE) },
+      { preHandler: requirePermission("passes:update") },
       async (request, reply) => {
       const { id } = request.params as { id: string };
       const { devices, commands } = await setEntryBlocked(id, blocked, actorId(request));
@@ -391,7 +391,7 @@ export async function entryRoutes(app: FastifyInstance): Promise<void> {
   }
 
   // ---- de-provision --------------------------------------------------------
-  app.post("/entries/:id/deprovision", { preHandler: requirePermission(Permission.ENTRY_MANAGE) }, async (request, reply) => {
+  app.post("/entries/:id/deprovision", { preHandler: requirePermission("passes:delete") }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const { entry, devices, commands } = await deprovisionEntry(id, actorId(request));
     request.log.info(

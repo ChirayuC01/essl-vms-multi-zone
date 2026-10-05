@@ -9,9 +9,10 @@
 | Phase | Scope | State |
 |---|---|---|
 | 0 | Docs baseline and legacy split | `ACCEPTED` (commit `33da17e`) |
-| 1 | Zones and gates | `ACCEPTED` (owner, 2026-10-02) |
-| 2 | Roles and settings | `IN_PROGRESS` |
-| 3 | Pass types, visitor profile, documents, ID redaction | `NOT_STARTED` |
+| 1 | Zones and gates | `ACCEPTED` — verified by owner (commit `1cb2c8f`) |
+| 2 | Roles and settings | `ACCEPTED` (owner, 2026-10-05) |
+| 2b | Configurable access: custom roles, feature × action grid, per-user allow/deny | `ACCEPTED` (owner, 2026-10-05) |
+| 3 | Pass types, visitor profile, documents, ID redaction | `IN_PROGRESS` |
 | 4 | Gate-load engine | `NOT_STARTED` |
 | 5 | Messaging outbox and visitor portal | `NOT_STARTED` |
 | 6 | Visit requests, host review, walk-ins | `NOT_STARTED` |
@@ -117,6 +118,7 @@ The 0.5.0 installer must upgrade an existing single-zone 0.4.19 site in place, k
 |---|---|
 | 1 | Existing devices start with no zone (done). After the upgrade, an Admin creates one zone and places both terminals in it before issuing passes (Phase 4 refuses a pass with no placed gates). |
 | 2 | Existing `ADMIN` / `AUTHORIZED_PERSON` accounts keep their roles and their exact permissions. New roles are additions. `visitorIdPrefix` must default to a value that existing visitor IDs already match. Check this against the site's `visitorIdPatterns`, or reconciliation will treat existing visitors as foreign. |
+| 2b | Every existing operator keeps exactly the access they had. The migration creates one role row per old enum value, assigns every user, and seeds each role's grid from the Phase 2 matrix. No user overrides exist after upgrade. |
 | 3 | Existing Persons with no pass type remain valid. A seeded default pass type covers rows migrated from `Entry`. Existing ID numbers are masked on display, and no stored value changes. |
 | 4 | `Entry` → `Pass` is extended in place. The migration backfills `validFrom` from the entry start and `validUntil` from `retentionExpiresAt`. **Active passes:** a migration creates `PassGate` rows for every live entry on the devices it is currently provisioned to, in state `LOADED`, so no loaded face is lost or re-pushed. If that cannot be made exact, the upgrade precondition is "no visitors inside, no active passes" and the installer runbook says so. |
 | 5–8 | New tables only. Existing reports keep their columns, and new columns are appended. |
@@ -216,6 +218,97 @@ The exit-code rule is not a setting. It follows the client's confirmed rule: sin
 - `permissions.test.ts` extended with the new role matrix.
 - Settings round-trip and audit in e2e.
 - Log in as each role and confirm what's visible.
+
+**Stop.**
+
+## Phase 2b: Configurable access (custom roles, feature grid, per-user overrides)
+
+**Goal:** an Admin decides what each role may do, and can adjust any single
+operator, without a code change. Access is a grid of **feature × action**
+(View / Create / Update / Delete), as in the owner's existing product. Decided
+2026-10-02: custom roles, and per-user overrides that can both **allow** and
+**deny**.
+
+**Schema:**
+- `Role`: `key`, `name`, `description`, `isSystem`, `isActive`.
+  - One row per former enum value: Admin, Authorized person, Host, Security,
+    Security in-charge, HR, HOD.
+  - Admins can add custom roles.
+- `AppUser.roleId` replaces the `role` enum column. The backfill maps every
+  existing user before the old column is dropped.
+- `RolePermission` (role, resource, action): a row present means allowed.
+- `UserPermissionOverride` (user, resource, action, `effect` = `ALLOW` | `DENY`):
+  no row means the user inherits from their role.
+
+**Resource catalogue (code, `services/access.ts`):**
+- Each feature is listed with its group, label and **the actions that apply to
+  it**. A cell for an action that doesn't apply is not shown.
+- Features that don't fit view/create/update/delete get their own row with
+  only the actions that make sense: exit override, blacklist, command retry,
+  device refresh, maintenance.
+- **Delete never deletes data** (hard rule #3). Where Delete appears it means
+  deactivate or remove from terminals, and the grid labels it that way. Audit,
+  punches and history have no Delete.
+- Later phases add their own features to the catalogue, so they appear in the
+  grid automatically.
+
+**Resolution:**
+- Effective access = (role grants ∪ user ALLOW) − user DENY.
+- The **Admin** system role always has everything. It cannot be edited,
+  deactivated or overridden, so nobody can lock the site out.
+- Saving is refused if it would leave no active user able to manage access.
+- Resolved per user and cached briefly in process. The cache is invalidated
+  immediately on any role, grant or override change, so revocation still
+  takes effect on the next request (as today).
+- `/api/auth/me` returns the effective `resource:action` list. The console's
+  `can()` is unchanged in shape.
+- **Ownership rules stay in code.** For example, a host reviews only their own
+  visitors' requests. The grid decides *whether* a role may review at all; the
+  code decides *which* records.
+
+**Route guards:**
+- Every `requirePermission(...)` moves to a `resource:action` key, e.g.
+  `people:view` or `passes:create`. This is mechanical, across roughly 80
+  routes.
+- The Phase 2 matrix becomes the seed data that reproduces today's behaviour
+  exactly.
+
+**API (Admin; audited old → new):**
+- Roles:
+  - `GET /api/access/catalogue`
+  - `GET/POST/PATCH /api/roles` (create, rename, deactivate; system roles
+    can't be renamed or deactivated)
+  - `GET/PUT /api/roles/:id/permissions`
+- Per operator: `GET/PUT /api/operators/:id/permissions`, where each cell is
+  inherit, allow or deny.
+- Audit actions: `ROLE_CREATED`, `ROLE_UPDATED`, `ROLE_PERMISSIONS_CHANGED`
+  (cells added/removed), `USER_PERMISSIONS_CHANGED` (cells and effects).
+
+**Console:**
+- **Access → Role defaults:** role dropdown, resource search, grouped grid,
+  ✓/✗ per applicable cell, Save. Admin shows read-only.
+- **Access → Roles:** list, add a custom role, rename, deactivate.
+- **Operators → (operator) → Access:** the same grid. Each cell is
+  Inherit (shows the role's value) / Allow / Deny, and overridden cells are
+  highlighted.
+- The operator role picker lists active roles from the database.
+
+**Verify:**
+- Unit tests:
+  - effective-access resolution (inherit, allow adds, deny removes, Admin
+    immune)
+  - the seed reproduces the Phase 2 matrix cell for cell
+  - every route key exists in the catalogue
+- e2e:
+  - create a custom role with a few cells, assign a user, and confirm the
+    allowed and refused calls
+  - a user ALLOW override grants one extra action; a DENY override revokes
+    one the role has
+  - a change takes effect on the next request with no re-login
+  - lock-out protection: Admin is immune, and the last access manager can't be
+    stripped
+  - every change is audited
+- Manual: `VERIFICATION.md` § Phase 2b, together with § Phase 2.
 
 **Stop.**
 

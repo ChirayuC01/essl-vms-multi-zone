@@ -6,7 +6,8 @@ import { type Board, type DeviceList, type Paged, type Punch } from "@/lib/api";
 import { useEventStream } from "@/lib/events";
 import { useApi, refresh } from "@/lib/swr";
 import { formatRelative, formatTime, verifyModeLabel } from "@/lib/format";
-import { Accordion, Alert, Badge, Empty, Stat, Table } from "@/components/ui";
+import { useAuth } from "@/lib/auth";
+import { Accordion, Alert, Badge, Card, Empty, Stat, Table } from "@/components/ui";
 import { AlertsPanel } from "@/components/alerts";
 import { UnclaimedEnrollments } from "@/components/unclaimed";
 import { StreamStatus } from "@/components/stream-status";
@@ -20,7 +21,24 @@ import { PersonAvatar } from "@/components/person-avatar";
 
 const FEED_LIMIT = 40;
 
+// Roles without site-wide read access (a host) have nothing to see here yet;
+// their own screens arrive with the visit-request workflow.
 export default function DashboardPage() {
+  const { user, can } = useAuth();
+  if (user && !can("dashboard:view")) {
+    return (
+      <Card title="Welcome">
+        <p className="text-sm text-[var(--text-muted)]">
+          Your access does not include the site dashboard. Your own screens appear here as they are released,
+          or an administrator can grant more from the Access page.
+        </p>
+      </Card>
+    );
+  }
+  return <SiteDashboard />;
+}
+
+function SiteDashboard() {
   // Punches that arrived over the stream since load, newest first. Kept
   // separate from the fetched page so a revalidation cannot drop them.
   const [live, setLive] = useState<Punch[]>([]);

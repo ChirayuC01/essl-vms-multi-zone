@@ -156,34 +156,69 @@ covered by the code is loaded with the entry gates.
   released automatically and the release is recorded, for reconciling against
   the register. Phase 7.
 
-## 8. Roles (Phase 2)
+## 8. Roles and access (Phases 2 and 2b — implemented)
 
-| Role | Can |
+Access is a grid of **feature × action** (View / Create / Update / Delete),
+edited by an Admin in the console (**Access** page). Nothing about who may do
+what is fixed in code, except that the **Administrator** role always has
+everything.
+
+- **Roles** are data. Seven are seeded (below), and an Admin can add custom
+  roles: start empty, or copy an existing role's grid. Roles can be renamed or
+  deactivated. A role with active operators can't be deactivated. The
+  Administrator role can't be edited.
+- **Per-operator overrides:** on any operator's Access page each cell is
+  *Inherit* (follow the role), *Allow* or *Deny*. Administrators can't be
+  overridden.
+- **Changes apply on the operator's next action**, with no re-login. Every
+  change is audited: grid cells added/removed, and each override's before and
+  after.
+- Only the actions that mean something for a feature appear in its row.
+  **Delete never deletes data.** It means deactivate or remove from terminals,
+  and the grid says which. Actions that aren't really CRUD (exit override,
+  blacklist, refresh from terminal, maintenance jobs) are their own rows.
+- The grid decides **whether** a role may do something. **Which records** it
+  applies to stays a rule in code. For example, a host reviews only their own
+  visitors' requests.
+
+Seeded defaults. These are identical to an upgraded site's existing access.
+**Settings (view and change) is Administrator-only by default**; an Admin can
+grant it to a role on the Access page.
+
+
+| Role | Default access |
 |---|---|
-| Admin | Everything, including settings, zones, pass types, devices, operators, licence |
-| Host | Raise visit requests, review (Clear / Query / Reject) their own, widen zones on their visitors |
-| Security | Register walk-ins, issue long-term passes, exit override, photo retake, live board |
-| Security In-charge | Security + blacklist / lift blacklist |
-| HR | *Proposed:* view and report on sub-contractor passes (their approval happens outside the system) |
-| HOD | *Proposed:* view and report on credential-holder passes (their approval happens outside the system) |
-| Authorized Person | The 0.4.19 operator role, kept for continuity |
+| Administrator | Everything (system role, not editable) |
+| Security in-charge | Security, plus blacklist and audit trail |
+| Security | Gate work: view everything operational (not settings), people create/update/deactivate, passes, command retry, terminal refresh, companies/departments create and assign, walk-ins, long-term passes, exit override |
+| Host | Visit requests (view, create, decide) and zone widening. No site-wide view |
+| HR, HOD | View only (not settings), until the client confirms their duties |
+| Authorized person | The 0.4.19 operator role, unchanged |
 
-HR and HOD are named roles but their in-system duties are not yet confirmed;
-Security registers long-term pass holders. The exact permission matrix is fixed
-in Phase 2 and recorded here.
+The feature catalogue is `backend/src/services/access.ts`. The seed is
+migration `20261002140000_configurable_access`, and a unit test proves it
+matches the Phase 2 matrix cell for cell.
 
-## 9. Settings (Phase 2)
+## 9. Settings (Phase 2 — implemented)
 
-All site-adjustable behaviour is a setting, changed by an Admin, audited with
-old and new values:
+Settings → **System settings** (Admin only). Every save is audited with the
+old and new value of each changed setting.
 
-`entryLoadLeadMinutes` (5), `unloadAfterPunchMinutes` (10),
-`walkInRequiresHostClear` (true), `outageGapMinutes` (10), `visitorIdPrefix`,
-link and OTP expiry/attempt limits, document limits (JPEG/PNG/WebP/PDF, 10 MB
-each, 5 per visit), privacy notice text and version.
+| Setting | Default | Meaning |
+|---|---|---|
+| Load face before visit | 5 min | How early a visitor's face reaches the entry gates |
+| Remove after punch | 10 min | Single entry: removal from a terminal after its punch |
+| Walk-ins: host must Clear | on | Off = walk-ins load as soon as Security registers them |
+| Outage after | 10 min | A server silence longer than this counts as an outage |
+| Visitor ID prefix | `V` | Start of system-issued visitor terminal IDs; must fit the terminals' visitor ID patterns |
+| Visitor link valid | 72 h | Pre-registration link lifetime |
+| One-time code valid / attempts | 10 min / 5 | Mobile and exit codes |
+| Documents | JPEG, PNG, WebP, PDF; 10 MB; 5 per visit | Upload limits; 0 per visit turns uploads off |
+| Privacy notice | empty | The site's DPDP wording. The server stamps a new **version** (date-time) whenever the text changes, so each consent records exactly which wording was shown |
 
-The single/multi exit-code rule is **not** a setting — it is the client's
-confirmed rule.
+The single/multi exit-code rule is **not** a setting. It is the client's
+confirmed rule. Which zone's exit is code-gated by default is set per zone on
+the Devices page.
 
 ## 10. Privacy (Phases 3 and 5)
 

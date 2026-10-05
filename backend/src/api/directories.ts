@@ -2,7 +2,7 @@ import { Prisma } from "@prisma/client";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { z } from "zod";
 import { actorId } from "./auth.js";
-import { Permission, requirePermission } from "./permissions.js";
+import { requirePermission } from "./permissions.js";
 import { prisma } from "../db/index.js";
 
 const nameSchema = z.object({ name: z.string().trim().min(1).max(100) });
@@ -20,14 +20,14 @@ function conflict(reply: FastifyReply, err: unknown) {
 }
 
 export async function directoryRoutes(app: FastifyInstance): Promise<void> {
-  app.get("/companies", { preHandler: requirePermission(Permission.READ) }, async (_request, reply) => {
+  app.get("/companies", { preHandler: requirePermission("directory:view") }, async (_request, reply) => {
     return reply.send({ items: await prisma.company.findMany({ orderBy: [{ isActive: "desc" }, { name: "asc" }] }) });
   });
-  app.get("/departments", { preHandler: requirePermission(Permission.READ) }, async (_request, reply) => {
+  app.get("/departments", { preHandler: requirePermission("directory:view") }, async (_request, reply) => {
     return reply.send({ items: await prisma.department.findMany({ orderBy: [{ isActive: "desc" }, { name: "asc" }] }) });
   });
 
-  app.post("/companies", { preHandler: requirePermission(Permission.DIRECTORY_MANAGE) }, async (request, reply) => {
+  app.post("/companies", { preHandler: requirePermission("directory:create") }, async (request, reply) => {
     const parsed = nameSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: "validation", issues: parsed.error.issues });
     try {
@@ -36,7 +36,7 @@ export async function directoryRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(201).send(item);
     } catch (err) { return conflict(reply, err); }
   });
-  app.post("/departments", { preHandler: requirePermission(Permission.DIRECTORY_MANAGE) }, async (request, reply) => {
+  app.post("/departments", { preHandler: requirePermission("directory:create") }, async (request, reply) => {
     const parsed = nameSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: "validation", issues: parsed.error.issues });
     try {
@@ -46,7 +46,7 @@ export async function directoryRoutes(app: FastifyInstance): Promise<void> {
     } catch (err) { return conflict(reply, err); }
   });
 
-  app.patch("/companies/:id", { preHandler: requirePermission(Permission.DIRECTORY_DEACTIVATE) }, async (request, reply) => {
+  app.patch("/companies/:id", { preHandler: requirePermission("directory:delete") }, async (request, reply) => {
     const parsed = updateSchema.safeParse(request.body);
     if (!parsed.success || Object.keys(parsed.data).length === 0) return reply.code(400).send({ error: "validation" });
     const data: Prisma.CompanyUpdateInput = {};
@@ -55,7 +55,7 @@ export async function directoryRoutes(app: FastifyInstance): Promise<void> {
     try { return reply.send(await prisma.company.update({ where: { id: (request.params as { id: string }).id }, data })); }
     catch (err) { return conflict(reply, err); }
   });
-  app.patch("/departments/:id", { preHandler: requirePermission(Permission.DIRECTORY_DEACTIVATE) }, async (request, reply) => {
+  app.patch("/departments/:id", { preHandler: requirePermission("directory:delete") }, async (request, reply) => {
     const parsed = updateSchema.safeParse(request.body);
     if (!parsed.success || Object.keys(parsed.data).length === 0) return reply.code(400).send({ error: "validation" });
     const data: Prisma.DepartmentUpdateInput = {};
@@ -65,7 +65,7 @@ export async function directoryRoutes(app: FastifyInstance): Promise<void> {
     catch (err) { return conflict(reply, err); }
   });
 
-  app.post("/companies/:id/people", { preHandler: requirePermission(Permission.DIRECTORY_MANAGE) }, async (request, reply) => {
+  app.post("/companies/:id/people", { preHandler: requirePermission("directory:update") }, async (request, reply) => {
     const parsed = bulkSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: "validation", issues: parsed.error.issues });
     const id = (request.params as { id: string }).id;
@@ -73,7 +73,7 @@ export async function directoryRoutes(app: FastifyInstance): Promise<void> {
     const result = await prisma.person.updateMany({ where: { id: { in: parsed.data.personIds } }, data: { companyId: id } });
     return reply.send({ assigned: result.count });
   });
-  app.post("/departments/:id/people", { preHandler: requirePermission(Permission.DIRECTORY_MANAGE) }, async (request, reply) => {
+  app.post("/departments/:id/people", { preHandler: requirePermission("directory:update") }, async (request, reply) => {
     const parsed = bulkSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: "validation", issues: parsed.error.issues });
     const id = (request.params as { id: string }).id;

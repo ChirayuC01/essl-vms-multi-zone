@@ -379,7 +379,7 @@ export default function DevicesPage() {
         <Empty>Loading…</Empty>
       ) : (
         <>
-          {data.items.length > 0 && can("maintenance:run") && (
+          {data.items.length > 0 && can("maintenance:update") && (
             <div className="flex items-center justify-between">
               <h1 className="text-lg font-semibold">Devices</h1>
               <Button loading={reconciling} onClick={reconcileNow}>
@@ -422,7 +422,7 @@ export default function DevicesPage() {
                   value={<span className="font-mono text-sm">{device.serialNo}</span>}
                 />
                 <Stat label="IP" value={device.ip ?? "—"} />
-                {can("device:configure") ? (
+                {can("devices:update") ? (
                   <Stat
                     label="Role"
                     value={
@@ -442,7 +442,7 @@ export default function DevicesPage() {
                 ) : (
                   <Stat label="Role" value={device.role} />
                 )}
-                {can("device:configure") ? (
+                {can("devices:update") ? (
                   <Stat
                     label="Zone"
                     value={
@@ -463,7 +463,7 @@ export default function DevicesPage() {
                 ) : (
                   <Stat label="Zone" value={zones?.items.find((z) => z.id === device.zoneId)?.name ?? "Not placed"} />
                 )}
-                {can("device:configure") ? (
+                {can("devices:update") ? (
                   <Stat
                     label="Timezone"
                     value={
@@ -529,9 +529,9 @@ export default function DevicesPage() {
                 </div>
               )}
 
-              {(can("device:configure") || can("maintenance:run")) && (
+              {(can("devices:update") || can("maintenance:update")) && (
                 <div className="mt-4 flex flex-wrap items-end gap-3 border-t border-[var(--border)] pt-4">
-                  {can("device:configure") && (
+                  {can("devices:update") && (
                     <>
                       <Field
                         label="Duplicate punch period (minutes)"
@@ -581,7 +581,7 @@ export default function DevicesPage() {
                       <Button loading={savingPatterns === device.id} onClick={() => savePatterns(device.id, "visitor")}>Save visitor patterns</Button>
                     </>
                   )}
-                  {can("maintenance:run") && (
+                  {can("maintenance:update") && (
                     <Button
                       loading={resettingBaseline === device.id}
                       onClick={() => resetBaseline(device.id)}
@@ -592,7 +592,7 @@ export default function DevicesPage() {
                 </div>
               )}
 
-              {can("maintenance:run") &&
+              {can("maintenance:update") &&
                 (() => {
                   const scan = scanFor(device.id);
                   if (scan) {

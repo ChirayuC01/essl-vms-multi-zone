@@ -9,7 +9,7 @@ import { AuditAction, auditRow } from "../db/audit.js";
 import { actorId } from "./auth.js";
 import { isJpeg, jpegDimensions } from "./jpeg.js";
 import { MAX_USER_ID_LENGTH, parseUserId, photoPathFor } from "../user-id.js";
-import { can, Permission, requirePermission } from "./permissions.js";
+import { hasPermission, requirePermission } from "./permissions.js";
 import { assignEmployeeDevices, removeEmployeeDevice } from "../services/employee-access.js";
 
 // Person registration API (Phase 1 Milestone 3).
@@ -167,7 +167,7 @@ function personSummary(v: {
 
 export async function personRoutes(app: FastifyInstance): Promise<void> {
   // ---- create ------------------------------------------------------------
-  app.post("/people", { preHandler: requirePermission(Permission.PERSON_MANAGE) }, async (request, reply) => {
+  app.post("/people", { preHandler: requirePermission("people:create") }, async (request, reply) => {
     const parsed = createPersonSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.code(400).send({ error: "validation", issues: parsed.error.issues });
@@ -175,7 +175,7 @@ export async function personRoutes(app: FastifyInstance): Promise<void> {
     const input = parsed.data;
     const actor = actorId(request);
 
-    if (input.category === PersonCategory.EMPLOYEE && !can(request.operator!.role, Permission.PERSON_CATEGORY_MANAGE)) {
+    if (input.category === PersonCategory.EMPLOYEE && !(await hasPermission(request, "person_category:update"))) {
       return reply.code(403).send({ error: "only an administrator can register employees" });
     }
     const [company, department] = await prisma.$transaction([
@@ -281,7 +281,7 @@ export async function personRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // ---- list ----------------------------------------------------------------
-  app.get("/people", { preHandler: requirePermission(Permission.READ) }, async (request, reply) => {
+  app.get("/people", { preHandler: requirePermission("people:view") }, async (request, reply) => {
     const parsed = listQuerySchema.safeParse(request.query);
     if (!parsed.success) {
       return reply.code(400).send({ error: "validation", issues: parsed.error.issues });
@@ -334,7 +334,7 @@ export async function personRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // ---- detail ----------------------------------------------------------------
-  app.get("/people/:id", { preHandler: requirePermission(Permission.READ) }, async (request, reply) => {
+  app.get("/people/:id", { preHandler: requirePermission("people:view") }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const person = await prisma.person.findUnique({
       where: { id },
@@ -387,7 +387,7 @@ export async function personRoutes(app: FastifyInstance): Promise<void> {
   // taken in Milestone 17, not one to re-open per endpoint.
   app.get(
     "/people/:id/audit",
-    { preHandler: requirePermission(Permission.AUDIT_READ) },
+    { preHandler: requirePermission("audit:view") },
     async (request, reply) => {
       const { id } = request.params as { id: string };
       const person = await prisma.person.findUnique({ where: { id }, select: { id: true } });
@@ -425,7 +425,7 @@ export async function personRoutes(app: FastifyInstance): Promise<void> {
   // or none.
   app.get(
     "/people/by-pin/:pin",
-    { preHandler: requirePermission(Permission.READ) },
+    { preHandler: requirePermission("people:view") },
     async (request, reply) => {
       const pin = parseUserId((request.params as { pin: string }).pin);
       if (pin === null) {
@@ -467,7 +467,7 @@ export async function personRoutes(app: FastifyInstance): Promise<void> {
   );
 
   // ---- update ----------------------------------------------------------------
-  app.patch("/people/:id", { preHandler: requirePermission(Permission.PERSON_MANAGE) }, async (request, reply) => {
+  app.patch("/people/:id", { preHandler: requirePermission("people:update") }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const parsed = updatePersonSchema.safeParse(request.body);
     if (!parsed.success) {
@@ -478,7 +478,7 @@ export async function personRoutes(app: FastifyInstance): Promise<void> {
       include: { employeeAccess: true },
     });
     if (!current) return reply.code(404).send({ error: "person not found" });
-    if (parsed.data.category !== undefined && parsed.data.category !== current.category && !can(request.operator!.role, Permission.PERSON_CATEGORY_MANAGE)) {
+    if (parsed.data.category !== undefined && parsed.data.category !== current.category && !(await hasPermission(request, "person_category:update"))) {
       return reply.code(403).send({ error: "only an administrator can change category" });
     }
     const merged = { ...current, ...parsed.data };
@@ -552,7 +552,7 @@ export async function personRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // ---- soft delete ------------------------------------------------------------
-  app.delete("/people/:id", { preHandler: requirePermission(Permission.PERSON_MANAGE) }, async (request, reply) => {
+  app.delete("/people/:id", { preHandler: requirePermission("people:delete") }, async (request, reply) => {
     const { id } = request.params as { id: string };
 
     const person = await prisma.person.findUnique({ where: { id } });
@@ -607,7 +607,7 @@ export async function personRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // ---- photo: serve -------------------------------------------------------------
-  app.get("/people/:id/photo", { preHandler: requirePermission(Permission.READ) }, async (request, reply) => {
+  app.get("/people/:id/photo", { preHandler: requirePermission("people:view") }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const biometric = await prisma.personBiometric.findUnique({ where: { personId: id } });
     if (!biometric) return reply.code(404).send({ error: "no photo for this person" });
@@ -627,7 +627,7 @@ export async function personRoutes(app: FastifyInstance): Promise<void> {
   // Raw JPEG body (Content-Type: image/jpeg), not multipart — keeps the API
   // dependency-free and trivially scriptable; the M5 UI sends the file blob
   // directly.
-  app.post("/people/:id/photo", { preHandler: requirePermission(Permission.PERSON_MANAGE) }, async (request, reply) => {
+  app.post("/people/:id/photo", { preHandler: requirePermission("people:update") }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const person = await prisma.person.findUnique({ where: { id } });
     if (!person) return reply.code(404).send({ error: "person not found" });

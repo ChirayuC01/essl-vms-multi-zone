@@ -16,7 +16,10 @@ import {
   type Paged,
   type PersonDetail,
   type ZoneList,
+  type PassTypeList,
 } from "@/lib/api";
+import { DocumentsCard } from "@/components/documents-card";
+import { EMPTY_PROFILE, ProfileFields, draftFromPerson, profilePayload } from "@/components/profile-fields";
 import { useEventStream } from "@/lib/events";
 import { useApi, refresh } from "@/lib/swr";
 import { useAuth } from "@/lib/auth";
@@ -63,7 +66,8 @@ export default function PersonDetailPage() {
   const [purposeOfVisit, setPurposeOfVisit] = useState("");
   const [personToMeetId, setPersonToMeetId] = useState("");
   const [editing, setEditing] = useState(false);
-  const [profile, setProfile] = useState({ name: "", mobile: "", companyId: "", departmentId: "", category: "VISITOR", aadharNumber: "", panNumber: "" });
+  const [profile, setProfile] = useState({ name: "", category: "VISITOR", passTypeId: "" });
+  const [draft, setDraft] = useState(EMPTY_PROFILE);
   const { can } = useAuth();
 
   const { data: person, error: loadError } = useApi<PersonDetail>(`/api/people/${id}`);
@@ -71,6 +75,7 @@ export default function PersonDetailPage() {
   const { data: zoneList } = useApi<ZoneList>("/api/zones");
   const { data: companies } = useApi<DirectoryList>("/api/companies");
   const { data: departments } = useApi<DirectoryList>("/api/departments");
+  const { data: passTypes } = useApi<PassTypeList>("/api/pass-types");
   const { data: operators } = useApi<OperatorOptionList>("/api/operators/active");
   const { data: commandList } = useApi<Paged<Command>>(`/api/commands?personId=${id}&pageSize=25`);
 
@@ -175,12 +180,9 @@ export default function PersonDetailPage() {
     if (!person) return;
     await run("profile", () => api(`/api/people/${id}`, { method: "PATCH", body: {
       name: profile.name,
-      mobile: profile.mobile,
-      companyId: profile.companyId,
-      departmentId: profile.departmentId,
       category: profile.category,
-      ...(profile.aadharNumber ? { aadharNumber: profile.aadharNumber } : {}),
-      ...(profile.panNumber ? { panNumber: profile.panNumber } : {}),
+      ...(profile.category === "VISITOR" ? { passTypeId: profile.passTypeId || null } : {}),
+      ...profilePayload(draft, true),
       ...(person.category !== "EMPLOYEE" && profile.category === "EMPLOYEE" ? { deviceIds } : {}),
     } }), "Profile saved.");
     setEditing(false);
@@ -248,23 +250,58 @@ export default function PersonDetailPage() {
 
       <Card title="Profile" action={<Button onClick={() => {
         if (editing) return setEditing(false);
-        setProfile({ name: person.name, mobile: person.mobile ?? "", companyId: person.companyId ?? "", departmentId: person.departmentId ?? "", category: person.category, aadharNumber: person.aadharNumber ?? "", panNumber: person.panNumber ?? "" });
+        setProfile({ name: person.name, category: person.category, passTypeId: person.passTypeId ?? "" });
+        setDraft(draftFromPerson(person));
         setEditing(true);
       }}>{editing ? "Cancel" : "Edit"}</Button>}>
-        {!person.profileComplete && <Alert tone="warn">Complete every listed field before this visitor can be provisioned.</Alert>}
+        {!person.profileComplete && <Alert tone="warn">Complete every required field before this visitor can be provisioned.</Alert>}
+        {!editing && (
+          <dl className="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-3">
+            {([
+              ["Visitor type", person.category === "VISITOR" ? passTypes?.items.find((t) => t.id === person.passTypeId)?.name ?? "General" : null],
+              ["Mobile", person.mobile],
+              ["Email", person.email],
+              ["Designation", person.designation],
+              ["Govt ID", person.govtIdNumber ? `${person.govtIdType ?? "ID"} ${person.govtIdNumber}` : null],
+              ["Aadhaar", person.aadharNumber],
+              ["PAN", person.panNumber],
+              ["Vehicle", person.vehicleNumber],
+              ["Police clearance", person.policeClearance === null ? null : person.policeClearance ? "Yes" : "No"],
+              ["Credential", person.credentialNumber ? `${person.credentialNumber}${person.credentialExpiresAt ? ` · until ${person.credentialExpiresAt.slice(0, 10)}` : ""}` : null],
+            ] as const).filter(([, v]) => v).map(([k, v]) => (
+              <div key={k}><dt className="text-xs text-[var(--text-muted)]">{k}</dt><dd className="font-mono text-sm">{v}</dd></div>
+            ))}
+          </dl>
+        )}
         {editing && <div className="mt-3 grid gap-3 sm:grid-cols-2">
           <Field label={person.category === "VISITOR" ? "Visitor ID" : "Employee ID"}><Input value={person.esslUserId} disabled /></Field>
           <Field label="Name"><Input value={profile.name} onChange={(e) => setProfile({ ...profile, name: e.target.value })} /></Field>
-          <Field label="Mobile"><Input value={profile.mobile} onChange={(e) => setProfile({ ...profile, mobile: e.target.value })} /></Field>
-          <Field label="Company"><Select value={profile.companyId} onChange={(e) => setProfile({ ...profile, companyId: e.target.value })}><option value="">Select</option>{companies?.items.filter((x) => x.isActive || x.id === profile.companyId).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</Select></Field>
-          <Field label="Department"><Select value={profile.departmentId} onChange={(e) => setProfile({ ...profile, departmentId: e.target.value })}><option value="">Select</option>{departments?.items.filter((x) => x.isActive || x.id === profile.departmentId).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</Select></Field>
           <Field label="Category"><Select disabled={!can("person_category:update")} value={profile.category} onChange={(e) => setProfile({ ...profile, category: e.target.value })}><option value="VISITOR">Visitor</option><option value="EMPLOYEE">Employee</option></Select></Field>
-          <Field label="Aadhaar"><Input maxLength={12} value={profile.aadharNumber} onChange={(e) => setProfile({ ...profile, aadharNumber: e.target.value.replace(/\D/g, "") })} /></Field>
-          <Field label="PAN"><Input maxLength={10} value={profile.panNumber} onChange={(e) => setProfile({ ...profile, panNumber: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "") })} /></Field>
+          {profile.category === "VISITOR" && (
+            <Field label="Visitor type" hint="decides which details are required">
+              <Select value={profile.passTypeId} onChange={(e) => setProfile({ ...profile, passTypeId: e.target.value })}>
+                <option value="">General</option>
+                {passTypes?.items.filter((t) => t.isActive || t.id === profile.passTypeId).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </Select>
+            </Field>
+          )}
+          <div className="sm:col-span-2">
+            <ProfileFields
+              draft={draft}
+              onChange={setDraft}
+              category={profile.category}
+              passType={profile.category === "VISITOR" ? passTypes?.items.find((t) => t.id === profile.passTypeId) ?? null : null}
+              companies={companies}
+              departments={departments}
+              onFile={{ aadharNumber: person.aadharNumber, panNumber: person.panNumber, govtIdNumber: person.govtIdNumber, credentialNumber: person.credentialNumber }}
+            />
+          </div>
           {person.category !== "EMPLOYEE" && profile.category === "EMPLOYEE" && <Field label="Devices"><div>{devices.map((device) => <label key={device.id} className="mr-3 inline-flex items-center gap-1 text-sm"><input type="checkbox" checked={deviceIds.includes(device.id)} onChange={() => toggleDevice(device.id)} />{device.name ?? device.serialNo}</label>)}</div></Field>}
           <div className="flex items-end"><Button variant="primary" loading={busy === "profile"} onClick={saveProfile}>Save profile</Button></div>
         </div>}
       </Card>
+
+      {can("documents:view") && <DocumentsCard personId={id} />}
 
       <div className="grid gap-4 lg:grid-cols-3">
         <Card title="Enrollment photo">

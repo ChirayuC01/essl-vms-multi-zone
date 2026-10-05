@@ -70,6 +70,11 @@ enum CommandType {
   CLEAR_LOGS
 }
 
+enum PassKind {
+  SHORT_TERM
+  LONG_TERM
+}
+
 // How a per-operator override changes their role's grant for one cell.
 enum OverrideEffect {
   ALLOW
@@ -131,6 +136,24 @@ model Person {
   resignedAt        DateTime?      @map("resigned_at")
   resignedReason    String?        @map("resigned_reason")
   resignedById      String?        @map("resigned_by")
+  // Two-zone rebuild (Phase 3). All optional in the database; which are
+  // required is decided by the person's pass type (PassType.fieldRules).
+  email               String?   @map("email")
+  designation         String?   @map("designation")
+  govtIdType          String?   @map("govt_id_type")
+  // Stored in full for matching; every API response shows it masked.
+  govtIdNumber        String?   @map("govt_id_number")
+  vehicleNumber       String?   @map("vehicle_number")
+  // null = not asked; true/false = answered.
+  policeClearance     Boolean?  @map("police_clearance")
+  // An external pass (e.g. a port authority card) whose expiry may cap a pass.
+  credentialNumber    String?   @map("credential_number")
+  credentialExpiresAt DateTime? @map("credential_expires_at")
+  passTypeId          String?   @map("pass_type_id")
+  // Whether the profile satisfies its rules (pass type, or the default rule
+  // for employees and untyped visitors). Stored, not computed per read, so the
+  // "needs details" list stays one indexed filter whatever the rules are.
+  detailsComplete     Boolean   @default(false) @map("details_complete")
   // This face is on a terminal because somebody enrolled it there, not
   // because we pushed it — a person adopted from an unclaimed enrollment, or
   // one who predates this installation entirely. Reconciliation must not
@@ -154,12 +177,65 @@ model Person {
   employeeAccess EmployeeDeviceAccess[]
   attendanceDays AttendanceDaySummary[]
   resignedBy     AppUser?               @relation("EmployeeResignedBy", fields: [resignedById], references: [id])
+  passType       PassType?              @relation(fields: [passTypeId], references: [id])
+  documents      PersonDocument[]
 
   @@index([category])
   @@index([companyId])
   @@index([departmentId])
   @@index([resignedAt])
+  @@index([passTypeId])
+  @@index([detailsComplete])
   @@map("person")
+}
+
+// What kind of visitor pass this is (Phase 3). Configuration: a site's own
+// types are created by its Admin, never named in code.
+model PassType {
+  id                     String      @id @default(cuid())
+  name                   String
+  description            String?
+  kind                   PassKind    @default(SHORT_TERM)
+  entryModes             EntryMode[] @default([SINGLE_ENTRY, MULTI_ENTRY]) @map("entry_modes")
+  requiresHostClear      Boolean     @default(true) @map("requires_host_clear")
+  maxValidityDays        Int?        @map("max_validity_days")
+  // { field: "required" | "optional" | "hidden" }; see services/pass-types.ts.
+  fieldRules             Json        @default("{}") @map("field_rules")
+  // Label of an external credential this type collects; null = none.
+  credentialLabel        String?     @map("credential_label")
+  // A pass of this type ends no later than the credential's expiry.
+  credentialCapsValidity Boolean     @default(false) @map("credential_caps_validity")
+  isActive               Boolean     @default(true) @map("is_active")
+  createdAt              DateTime    @default(now()) @map("created_at")
+  updatedAt              DateTime    @updatedAt @map("updated_at")
+
+  people Person[]
+
+  @@map("pass_type")
+}
+
+// A file a visitor or operator attached to a person (Phase 3). The file lives
+// on local disk (CLAUDE.md #4); this row is its metadata. Never deleted:
+// removal hides it and records who and when.
+model PersonDocument {
+  id           String    @id @default(cuid())
+  personId     String    @map("person_id")
+  kind         String
+  fileName     String    @map("file_name")
+  mime         String
+  sizeBytes    Int       @map("size_bytes")
+  storedPath   String    @map("stored_path")
+  // CONSOLE (an operator) or PORTAL (the visitor, Phase 5).
+  source       String    @default("CONSOLE")
+  uploadedById String?   @map("uploaded_by")
+  removedAt    DateTime? @map("removed_at")
+  removedById  String?   @map("removed_by")
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  person Person @relation(fields: [personId], references: [id])
+
+  @@index([personId])
+  @@map("person_document")
 }
 
 model Company {

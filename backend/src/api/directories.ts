@@ -4,6 +4,7 @@ import { z } from "zod";
 import { actorId } from "./auth.js";
 import { requirePermission } from "./permissions.js";
 import { prisma } from "../db/index.js";
+import { recomputeDetails } from "../services/pass-types.js";
 
 const nameSchema = z.object({ name: z.string().trim().min(1).max(100) });
 const updateSchema = z.object({
@@ -71,6 +72,7 @@ export async function directoryRoutes(app: FastifyInstance): Promise<void> {
     const id = (request.params as { id: string }).id;
     if (!(await prisma.company.findFirst({ where: { id, isActive: true } }))) return reply.code(404).send({ error: "active company not found" });
     const result = await prisma.person.updateMany({ where: { id: { in: parsed.data.personIds } }, data: { companyId: id } });
+    await recomputeDetails({ id: { in: parsed.data.personIds } });
     return reply.send({ assigned: result.count });
   });
   app.post("/departments/:id/people", { preHandler: requirePermission("directory:update") }, async (request, reply) => {
@@ -79,6 +81,7 @@ export async function directoryRoutes(app: FastifyInstance): Promise<void> {
     const id = (request.params as { id: string }).id;
     if (!(await prisma.department.findFirst({ where: { id, isActive: true } }))) return reply.code(404).send({ error: "active department not found" });
     const result = await prisma.person.updateMany({ where: { id: { in: parsed.data.personIds } }, data: { departmentId: id } });
+    await recomputeDetails({ id: { in: parsed.data.personIds } });
     return reply.send({ assigned: result.count });
   });
 }

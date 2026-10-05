@@ -71,6 +71,13 @@ export const AuditAction = {
   ROLE_UPDATED: "ROLE_UPDATED",
   ROLE_PERMISSIONS_CHANGED: "ROLE_PERMISSIONS_CHANGED",
   USER_PERMISSIONS_CHANGED: "USER_PERMISSIONS_CHANGED",
+  // Phase 3. Document rows are recorded against the PERSON, so they appear in
+  // that person's history alongside everything else that happened to them.
+  PASS_TYPE_CREATED: "PASS_TYPE_CREATED",
+  PASS_TYPE_UPDATED: "PASS_TYPE_UPDATED",
+  DOCUMENT_UPLOADED: "DOCUMENT_UPLOADED",
+  DOCUMENT_DOWNLOADED: "DOCUMENT_DOWNLOADED",
+  DOCUMENT_REMOVED: "DOCUMENT_REMOVED",
 } as const;
 export type AuditActionName = (typeof AuditAction)[keyof typeof AuditAction];
 

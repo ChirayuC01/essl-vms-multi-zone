@@ -15,7 +15,7 @@ Hardware assumed: **two physical terminals** plus virtual ones as needed. See
 | 1 | §Phase 1 below | **VERIFIED** by owner (confirmed 2026-10-02) |
 | 2 | §Phase 2 below | Owner approved commit 2026-10-05; step results not recorded |
 | 2b | §Phase 2b below | Owner approved commit 2026-10-05; step results not recorded |
-| 3 | §Phase 3 below | Not yet implemented |
+| 3 | §Phase 3 below | Owner approved commit 2026-10-05; step results not recorded |
 
 Record results here as `PASS` / `FAIL — note` per step when walking through.
 
@@ -376,3 +376,112 @@ As a Security operator, provision a visitor on the real terminals as before.
 ✅ It works, because Security's defaults include passes.
 
 **Pass:** Steps 1–8 hold and Phase 2's steps still hold.
+
+---
+
+## Phase 3 — Pass types, visitor profile, documents, ID redaction
+
+No terminal is needed except in Step 8. Sign in as Admin.
+
+### Step 1 — Nothing changed for existing people
+
+Open **People**.
+
+✅ Existing people look as before. Anyone who was complete is still complete
+(no "Needs details").
+✅ Their Aadhaar/PAN now shows **masked** (e.g. `23********23`) wherever it
+appears: the list badges, the person header, and the person page details.
+
+### Step 2 — Create pass types
+
+Open the new **Pass types** menu → **Add pass type**.
+
+1. **Customs official:**
+   - Kind *Long-term*, Multi entry only, Host must Clear **off**
+   - Profile fields: Designation **Required**; Mobile, Company and
+     Department **Hidden**
+   - Save.
+2. **CHA / customer rep:**
+   - Long-term, max 90 days, Host Clear off
+   - External credential `BCBA pass`, tick "A pass ends no later than the
+     credential"
+   - Profile fields: Mobile, Company, Police clearance, BCBA pass number and
+     BCBA pass valid until all **Required**
+   - Save.
+
+✅ Both appear in the table.
+❌ Adding another called `customs official` is refused (duplicate).
+✅ Credential rows say "hidden — set an external credential first" until a
+credential label is typed.
+
+### Step 3 — Register by visitor type
+
+People → **Register person** → Category *Visitor*.
+
+1. Visitor type **Customs official**.
+   ✅ Only Name, Email, Designation, Govt ID, Aadhaar, PAN, Vehicle and Police
+   clearance remain; Mobile, Company and Department disappear. Designation
+   is marked `*`.
+2. Fill only ID, Name and Designation, then save. ✅ Registered and complete.
+3. Register a **CHA / customer rep** and leave the BCBA number empty.
+   ❌ Refused with "required: BCBA…" style wording naming the missing
+   fields. Fill them and save. ✅ Registered.
+4. Register with type **General**, leaving Aadhaar and PAN empty.
+   ❌ Refused: "required: Aadhaar or PAN" (the old rule still applies).
+
+### Step 4 — Masking and editing
+
+On the CHA person, enter a Govt ID number (e.g. `CI12345A7B`) and save.
+
+✅ It shows as `CI******7B`, never in full, including after a refresh.
+✅ **Edit** → the Govt ID / BCBA number fields are **empty**, with a hint
+"On file: CI******7B — type a new one to replace it".
+✅ Saving without touching them keeps the old numbers. Typing a new one
+replaces it (it shows masked again).
+✅ The vehicle number stays fully visible.
+
+### Step 5 — Stricter rules re-flag people
+
+Pass types → Edit **Customs official** → set **Email** to *Required* → Save.
+
+✅ The customs person from Step 3 now shows **Needs details** in People and
+in the needs-details filter. Add an email to clear it.
+
+### Step 6 — Documents
+
+On any person, use the new **Documents** card.
+
+1. Upload a PDF (kind *Govt ID*). ✅ Listed with size and time.
+2. **Download**. ✅ The browser downloads it as a file; it does not open
+   inside the console.
+3. Rename any `.html` or `.exe` file to `.pdf` and upload it.
+   ❌ Refused ("only JPEG, PNG, WEBP, PDF").
+4. Settings → System settings → *Documents per visit* = 1 → save. Try a
+   second upload. ❌ Refused (limit). Put it back to 5.
+5. **Remove** the document. ✅ It disappears from the list. (The record and
+   file are kept; this is visible in the audit trail.)
+
+### Step 7 — Audit trail
+
+Reports → Audit trail.
+
+✅ `PASS_TYPE_CREATED` / `PASS_TYPE_UPDATED` (with before and changes).
+✅ `DOCUMENT_UPLOADED` / `DOCUMENT_DOWNLOADED` / `DOCUMENT_REMOVED`, which
+also appear in that person's own history.
+✅ No audit row or report shows a full Aadhaar, PAN, Govt ID or credential
+number.
+
+### Step 8 — Nothing old broke
+
+Provision an existing complete visitor on the two terminals as before.
+✅ Works.
+❌ Try to provision a visitor flagged **Needs details**. Refused: "complete
+the visitor profile".
+
+### Step 9 — People transfer (optional)
+
+Run an export as in `PEOPLE_TRANSFER.md`, including `--database-url`.
+✅ `people.json` holds the full numbers and the pass type names; the console
+never does.
+
+**Pass:** Steps 1–8 hold.

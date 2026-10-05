@@ -284,7 +284,7 @@ export async function provisionPerson(input: ProvisionInput): Promise<ProvisionR
   if (person.category !== PersonCategory.VISITOR) {
     throw new ServiceError(409, "employees use permanent device access, not visitor entries");
   }
-  if (!person.mobile || !person.companyId || !person.departmentId || (!person.aadharNumber && !person.panNumber)) {
+  if (!person.detailsComplete) {
     throw new ServiceError(409, "complete the visitor profile before provisioning");
   }
   if (!person.biometric) {

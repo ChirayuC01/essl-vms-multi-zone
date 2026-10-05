@@ -149,9 +149,18 @@ export interface Person {
   departmentId: string | null;
   department: DirectoryItem | null;
   mobile: string | null;
-  /** Null only for people registered before this field was mandatory. */
+  /** Saved identity numbers arrive masked (e.g. 23********23); never the full value. */
   aadharNumber: string | null;
   panNumber: string | null;
+  email: string | null;
+  designation: string | null;
+  govtIdType: string | null;
+  govtIdNumber: string | null;
+  vehicleNumber: string | null;
+  policeClearance: boolean | null;
+  credentialNumber: string | null;
+  credentialExpiresAt: string | null;
+  passTypeId: string | null;
   esslUserId: string;
   isActive: boolean;
   resignedAt: string | null;
@@ -485,4 +494,31 @@ export interface OperatorAccess {
   roleGrants: string[];
   overrides: PermissionOverride[];
   effective: string[];
+}
+
+export type FieldRule = "required" | "optional" | "hidden";
+export interface PassType {
+  id: string;
+  name: string;
+  description: string | null;
+  kind: "SHORT_TERM" | "LONG_TERM";
+  entryModes: ("SINGLE_ENTRY" | "MULTI_ENTRY")[];
+  requiresHostClear: boolean;
+  maxValidityDays: number | null;
+  fieldRules: Record<string, FieldRule>;
+  credentialLabel: string | null;
+  credentialCapsValidity: boolean;
+  isActive: boolean;
+}
+export interface PassTypeList { items: PassType[]; fields: Record<string, string>; rules: FieldRule[] }
+
+export interface PersonDocument {
+  id: string;
+  kind: string;
+  fileName: string;
+  mime: string;
+  sizeBytes: number;
+  source: string;
+  uploadedById: string | null;
+  createdAt: string;
 }

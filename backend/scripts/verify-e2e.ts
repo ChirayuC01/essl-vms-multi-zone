@@ -255,7 +255,9 @@ async function resetDatabase(): Promise<void> {
     prisma.employeeDeviceAccess.deleteMany({}),
     prisma.attendanceDaySummary.deleteMany({}),
     prisma.personBiometric.deleteMany({}),
+    prisma.personDocument.deleteMany({}),
     prisma.person.deleteMany({}),
+    prisma.passType.deleteMany({}),
     prisma.auditLog.deleteMany({}),
     prisma.admissionQueue.deleteMany({}),
     prisma.device.deleteMany({}),
@@ -3796,6 +3798,114 @@ async function main() {
     check("override changes are audited per cell, before and after",
       accUserDetail?.changes?.["commands:view"]?.from === "INHERIT" && accUserDetail.changes["people:view"]?.to === "DENY", JSON.stringify(accUserDetail));
     check("role creation and changes are audited", (await prisma.auditLog.count({ where: { action: { in: ["ROLE_CREATED", "ROLE_UPDATED"] } } })) >= 3);
+  }
+
+  // ======================================================================
+  section("29. Pass types, profile rules, ID redaction, documents");
+  // ======================================================================
+  {
+    const pt = (method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE", url: string, payload?: object) =>
+      app.inject({ method, url, headers: auth(token), ...(payload ? { payload } : {}) });
+
+    // A type needing only name + designation, and a credential type.
+    const official = await pt("POST", "/api/pass-types", {
+      name: "E2E Official",
+      kind: "LONG_TERM",
+      fieldRules: { designation: "required", mobile: "hidden", companyId: "hidden", departmentId: "hidden" },
+    });
+    check("a pass type can be created with its field rules", official.statusCode === 201, official.body);
+    const officialId = JSON.parse(official.body).id as string;
+    const rep = await pt("POST", "/api/pass-types", {
+      name: "E2E Credential Rep",
+      kind: "LONG_TERM",
+      credentialLabel: "Port pass",
+      credentialCapsValidity: true,
+      fieldRules: { mobile: "required", credentialNumber: "required", credentialExpiresAt: "required", policeClearance: "required" },
+    });
+    const repId = JSON.parse(rep.body).id as string;
+    check("pass type names are unique case-insensitively", (await pt("POST", "/api/pass-types", { name: "e2e official" })).statusCode === 409);
+    check("an unknown field in the rules is refused", (await pt("POST", "/api/pass-types", { name: "Bad", fieldRules: { shoeSize: "required" } })).statusCode === 400);
+
+    const offOk = await pt("POST", "/api/people", { name: "E2E Inspector", designation: "Inspector", category: "VISITOR", passTypeId: officialId, esslUserId: "V9001" });
+    check("an official is registered with only a name and a designation", offOk.statusCode === 201 && JSON.parse(offOk.body).profileComplete === true, offOk.body);
+    const offMissing = await pt("POST", "/api/people", { name: "E2E Inspector Two", category: "VISITOR", passTypeId: officialId, esslUserId: "V9002" });
+    check("...and refused without the designation, naming it", offMissing.statusCode === 400 && /Designation/.test(offMissing.body), offMissing.body);
+    const repMissing = await pt("POST", "/api/people", { name: "E2E Rep", mobile: "9876500001", category: "VISITOR", passTypeId: repId, policeClearance: true, esslUserId: "V9003" });
+    check("a credential type refuses a profile without its credential", repMissing.statusCode === 400 && /Credential number/.test(repMissing.body), repMissing.body);
+    const repOk = await pt("POST", "/api/people", {
+      name: "E2E Rep", mobile: "9876500001", category: "VISITOR", passTypeId: repId, policeClearance: true,
+      credentialNumber: "PORTPASS778899", credentialExpiresAt: "2027-01-31", govtIdType: "Passport", govtIdNumber: "CI12345A7B", esslUserId: "V9003",
+    });
+    check("...and accepts it with the credential", repOk.statusCode === 201, repOk.body);
+    const repPerson = JSON.parse(repOk.body) as { id: string; credentialNumber: string; govtIdNumber: string };
+    check("saved identity numbers come back masked", repPerson.credentialNumber === "PO**********99" && repPerson.govtIdNumber === "CI******7B", repOk.body);
+    const untyped = await pt("POST", "/api/people", { name: "E2E Untyped", category: "VISITOR", esslUserId: "V9004", mobile: "9876500002" });
+    check("an untyped visitor still needs company, department and Aadhaar or PAN", untyped.statusCode === 400 && /Aadhaar or PAN/.test(untyped.body), untyped.body);
+
+    // No response anywhere may carry a full saved number.
+    const fullNumbers = ["PORTPASS778899", "CI12345A7B"];
+    const leakChecks = await Promise.all([
+      pt("GET", `/api/people/${repPerson.id}`),
+      pt("GET", "/api/people?pageSize=100"),
+      pt("GET", `/api/people/by-pin/V9003`),
+      pt("GET", "/api/reports/audit-trail?pageSize=100"),
+      pt("GET", "/api/reports/audit-trail?pageSize=100&format=csv"),
+    ]);
+    check("no API response or CSV export contains a saved full identity number", leakChecks.every((r) => fullNumbers.every((n) => !r.body.includes(n))), leakChecks.map((r) => r.statusCode).join(","));
+    const anyAadhaar = await prisma.person.findFirst({ where: { aadharNumber: { not: null } } });
+    const listBody = leakChecks[1]!.body;
+    check("Aadhaar numbers are masked in the people list", anyAadhaar !== null && !listBody.includes(anyAadhaar.aadharNumber!) && listBody.includes(anyAadhaar.aadharNumber!.slice(-2)));
+
+    const echoed = await pt("PATCH", `/api/people/${repPerson.id}`, { credentialNumber: repPerson.credentialNumber, govtIdNumber: repPerson.govtIdNumber, vehicleNumber: "mh12ab1234" });
+    const afterEcho = await prisma.person.findUniqueOrThrow({ where: { id: repPerson.id } });
+    check("a masked value sent back is ignored, never stored", echoed.statusCode === 200 && afterEcho.credentialNumber === "PORTPASS778899" && afterEcho.govtIdNumber === "CI12345A7B", echoed.body);
+    check("the vehicle number stays visible, upper-cased", JSON.parse(echoed.body).vehicleNumber === "MH12AB1234");
+    const replaced = await pt("PATCH", `/api/people/${repPerson.id}`, { credentialNumber: "NEWPASS000111" });
+    check("typing a new number replaces it", replaced.statusCode === 200 && (await prisma.person.findUniqueOrThrow({ where: { id: repPerson.id } })).credentialNumber === "NEWPASS000111");
+
+    // Tightening a type's rules recomputes who is complete.
+    await pt("PATCH", `/api/pass-types/${officialId}`, { fieldRules: { designation: "required", email: "required" } });
+    const inspector = await prisma.person.findFirstOrThrow({ where: { esslUserId: "V9001" } });
+    check("stricter rules mark existing people as needing details", inspector.detailsComplete === false);
+    const needs = JSON.parse((await pt("GET", "/api/people?needsDetails=true&pageSize=100")).body).items as { id: string }[];
+    check("...and they appear in the needs-details list", needs.some((n) => n.id === inspector.id));
+
+    // Documents.
+    const docUrl = `/api/people/${repPerson.id}/documents`;
+    const upload = (bytes: Buffer, kind: string, fileName: string) =>
+      app.inject({ method: "POST", url: `${docUrl}?kind=${encodeURIComponent(kind)}&fileName=${encodeURIComponent(fileName)}`, headers: { ...auth(token), "content-type": "application/octet-stream" }, payload: bytes });
+    const pdf = Buffer.from("%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n");
+    const upPdf = await upload(pdf, "Port pass", "port pass.pdf");
+    check("a PDF document is accepted", upPdf.statusCode === 201, upPdf.body);
+    const pdfDoc = JSON.parse(upPdf.body) as { id: string; mime: string };
+    check("...typed by its bytes", pdfDoc.mime === "application/pdf");
+    const upHtml = await upload(Buffer.from("<html><script>alert(1)</script></html>"), "Govt ID", "id.pdf");
+    check("an HTML page named .pdf is refused", upHtml.statusCode === 415, upHtml.body);
+    await pt("PATCH", "/api/settings", { documentMaxMb: 1, documentMaxCount: 2 });
+    const big = Buffer.concat([Buffer.from("%PDF-1.4\n"), Buffer.alloc(1024 * 1024 + 10)]);
+    check("an oversize document is refused", (await upload(big, "Big", "big.pdf")).statusCode === 413);
+    await upload(pdf, "Second", "second.pdf");
+    check("the per-person document limit is enforced", (await upload(pdf, "Third", "third.pdf")).statusCode === 409);
+    const dl = await pt("GET", `${docUrl}/${pdfDoc.id}/file`);
+    check(
+      "a document downloads as an attachment that cannot run in the browser",
+      dl.statusCode === 200 &&
+        String(dl.headers["content-disposition"]).startsWith("attachment;") &&
+        dl.headers["x-content-type-options"] === "nosniff" &&
+        String(dl.headers["content-security-policy"]).includes("sandbox"),
+      JSON.stringify(dl.headers),
+    );
+    const del = await pt("DELETE", `${docUrl}/${pdfDoc.id}`);
+    const stillStored = await prisma.personDocument.findUniqueOrThrow({ where: { id: pdfDoc.id } });
+    check("removing a document hides it but keeps the record", del.statusCode === 200 && stillStored.removedAt !== null && JSON.parse((await pt("GET", docUrl)).body).items.length === 1);
+    const docAudits = await prisma.auditLog.groupBy({ by: ["action"], where: { entityId: repPerson.id, action: { startsWith: "DOCUMENT_" } }, _count: { _all: true } });
+    check("uploads, downloads and removals are audited against the person", ["DOCUMENT_UPLOADED", "DOCUMENT_DOWNLOADED", "DOCUMENT_REMOVED"].every((a) => docAudits.some((r) => r.action === a)));
+    check("pass type changes are audited", (await prisma.auditLog.count({ where: { action: { in: ["PASS_TYPE_CREATED", "PASS_TYPE_UPDATED"] } } })) >= 3);
+    await pt("PATCH", "/api/settings", { documentMaxMb: 10, documentMaxCount: 5 });
+
+    // Access: a role without document cells sees none.
+    const docHostToken = JSON.parse((await app.inject({ method: "POST", url: "/api/auth/login", payload: { email: "host@vms.local", password: "role-password" } })).body).token as string;
+    check("documents need their own access cell", (await app.inject({ method: "GET", url: docUrl, headers: auth(docHostToken) })).statusCode === 403);
   }
 
   // --- teardown ---------------------------------------------------------

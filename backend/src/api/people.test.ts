@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createPersonSchema } from "./people.js";
+import { profileGaps } from "../services/pass-types.js";
 
 const valid = {
   name: "Ramesh Kumar",
@@ -12,12 +13,22 @@ const valid = {
   esslUserId: "WCTPL070",
 };
 
+// Since Phase 3 the request schema requires only what every person has; the
+// rest is required by the person's profile rule (the default rule for
+// employees and untyped visitors, or their pass type's rules), checked by the
+// route with profileGaps.
 test("registration requires every identifying field", () => {
   assert.equal(createPersonSchema.safeParse(valid).success, true);
-  for (const field of Object.keys(valid)) {
+  for (const field of ["name", "category", "esslUserId"]) {
     const partial: Record<string, unknown> = { ...valid };
     delete partial[field];
     assert.equal(createPersonSchema.safeParse(partial).success, false, `${field} was optional`);
+  }
+  for (const field of ["mobile", "companyId", "departmentId"]) {
+    const partial: Record<string, unknown> = { ...valid };
+    delete partial[field];
+    const parsed = createPersonSchema.parse(partial);
+    assert.deepEqual(profileGaps(parsed, null), [field], `${field} not required by the default rule`);
   }
 });
 
@@ -59,8 +70,6 @@ test("PAN is uppercased and must match the official shape", () => {
 });
 
 test("either Aadhaar or PAN is required", () => {
-  assert.equal(
-    createPersonSchema.safeParse({ ...valid, aadharNumber: undefined, panNumber: undefined }).success,
-    false,
-  );
+  const parsed = createPersonSchema.parse({ ...valid, aadharNumber: undefined, panNumber: undefined });
+  assert.deepEqual(profileGaps(parsed, null), ["aadharNumber|panNumber"]);
 });

@@ -329,3 +329,87 @@ result) · issues · next action.
 - Owner asked for the commit and for Phase 3 to start. Both phases are marked
   `ACCEPTED`. Individual manual-verification step results were not reported;
   `VERIFICATION.md` says so.
+
+### 2026-10-05 — Phase 3 — Pass types, visitor profile, documents, ID redaction
+
+- **Status:** `IMPLEMENTED_AWAITING_VERIFICATION`.
+- **Change:**
+  - **Migration `20261005100000_pass_types_documents`:**
+    - new `pass_type` table: name unique case-insensitively, kind, entry
+      modes, host Clear, max days, `field_rules` JSON, credential label and
+      "caps validity"
+    - person columns: email, designation, Govt ID type/number, vehicle
+      number, police clearance, credential number/expiry, pass type, and a
+      stored `details_complete` backfilled with the existing rule
+    - new `person_document` table
+    - access cells `documents:*` and `pass_types:view`, granted to the roles
+      that already hold the matching `people:*` cell
+  - **`services/pass-types.ts`:** the field catalogue and per-type rules
+    (required / optional / hidden, unlisted = optional, credential fields
+    hidden without a credential label). It also holds `profileGaps`, under
+    which employees and untyped visitors keep the old rule, and a batched
+    `recomputeDetails`.
+  - **People API:**
+    - only name, category and ID are schema-required; everything else is
+      checked against the person's rules, and refusals name the missing
+      fields
+    - new fields
+    - masking in the single DTO (`services/redact.ts` `maskId`); masked
+      echoes ignored on save (`isMasked`)
+    - the needs-details filter uses the stored flag
+    - provisioning checks the stored flag
+  - **Pass types API** (`api/pass-types.ts`): list (with the field catalogue),
+    create, edit and deactivate. All audited; rule changes recompute that
+    type's people.
+  - **Documents API** (`api/documents.ts`, `services/documents.ts`):
+    - type detected from the bytes against the enabled types
+    - size and count limits from settings (size max now 20 MB, matching the
+      server's request limit)
+    - stored under a generated name in `DOCUMENT_STORAGE_PATH` (default
+      `./data/documents`)
+    - downloads are attachments with `nosniff` + sandbox CSP + `no-store`
+    - removal is soft
+    - upload, download and removal are audited against the person
+  - **Directory bulk assignment** now recomputes completeness for the affected
+    people.
+  - **`transfer-people.mjs`:** export reads full identity numbers from the
+    database (`--database-url`, required) because the API masks them. It also
+    carries the new fields and the pass type by name; import maps the pass
+    type by name. `PEOPLE_TRANSFER.md` is carried forward from legacy with
+    this change.
+  - **Web:**
+    - shared `components/profile-fields.tsx` (fields shown, hidden and
+      starred by the rules)
+    - new-person and edit forms gain a Visitor type picker; masked numbers
+      are never pre-filled ("On file: 23********23 — type a new one to
+      replace it")
+    - a read-only profile summary on the person page
+    - `components/documents-card.tsx`
+    - new **Pass types** page with a rules editor
+    - nav entry
+- **Upgrade check on the dev database:** 4 existing people (2 employees, 2
+  visitors) all stay complete. Document and pass-type cells were granted to
+  Authorized person, Security, Security in-charge, HR and HOD; Host got none.
+- **Verification (2026-10-05):**
+  - `prisma migrate diff`: no difference.
+  - Unit tests **106/106**. New suites: `pass-types.test.ts`,
+    `redact.test.ts`, `documents.test.ts`. Two people schema tests were
+    rewritten to check the default rule where it is now enforced.
+  - e2e **347/347**. New section 29 (26 checks) covers:
+    - official type with name + designation only; credential type refusing a
+      missing credential; untyped visitor keeping the old rule
+    - masked numbers in create, detail, list, by-pin, the audit report and
+      its CSV, with no full number anywhere
+    - a masked echo ignored and a typed value replacing it
+    - stricter rules re-flagging existing people into needs-details
+    - PDF accepted; HTML named `.pdf` refused (415); oversize refused (413);
+      count limit (409)
+    - download headers; soft removal
+    - audits; documents need their own access cell
+  - Web lint and build PASS.
+- **Next action:** owner walk-through, `VERIFICATION.md` § Phase 3.
+
+### 2026-10-05 — Phase 3 — accepted
+
+- Owner asked for the commit and for Phase 4 to start. Phase 3 is marked
+  `ACCEPTED`; manual step results were not reported.

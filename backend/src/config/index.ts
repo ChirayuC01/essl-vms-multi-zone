@@ -43,6 +43,8 @@ const schema = z.object({
   PORT: z.coerce.number().int().min(1).max(65535).default(47102),
   ADMS_PORT: z.coerce.number().int().min(1).max(65535).default(47102),
   PHOTO_STORAGE_PATH: z.string().min(1).default("./data/photos"),
+  // Person documents (Govt ID copies, vehicle papers). Local disk, like photos.
+  DOCUMENT_STORAGE_PATH: z.string().min(1).default("./data/documents"),
   JWT_SECRET: z.string().min(16, "JWT_SECRET must be at least 16 characters"),
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info"),
   // (PERSON_PIN_START/END removed: a numeric range cannot describe a roster
@@ -183,6 +185,9 @@ export const config = {
   photoStoragePath: path.isAbsolute(env.PHOTO_STORAGE_PATH)
     ? env.PHOTO_STORAGE_PATH
     : path.resolve(backendRoot, env.PHOTO_STORAGE_PATH),
+  documentStoragePath: path.isAbsolute(env.DOCUMENT_STORAGE_PATH)
+    ? env.DOCUMENT_STORAGE_PATH
+    : path.resolve(backendRoot, env.DOCUMENT_STORAGE_PATH),
   brandingStoragePath: path.resolve(backendRoot, "data", "branding"),
   licenseStatePath: process.platform === "win32" && process.env.PROGRAMDATA
     ? path.join(process.env.PROGRAMDATA, "VMS", "license-state.json")

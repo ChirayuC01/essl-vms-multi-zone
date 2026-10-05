@@ -3,7 +3,8 @@
 import { Suspense, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { api, getApiBase, getToken, type DeviceList, type DirectoryList, type Person } from "@/lib/api";
+import { api, getApiBase, getToken, type DeviceList, type DirectoryList, type PassTypeList, type Person } from "@/lib/api";
+import { EMPTY_PROFILE, ProfileFields, profilePayload } from "@/components/profile-fields";
 import { useApi } from "@/lib/swr";
 import { Alert, Button, Card, Field, Input, Select } from "@/components/ui";
 import { WebcamCapture } from "@/components/webcam-capture";
@@ -29,12 +30,9 @@ function RegisterForm() {
   const deviceName = searchParams.get("name") ?? "";
 
   const [name, setName] = useState(deviceName);
-  const [companyId, setCompanyId] = useState("");
-  const [departmentId, setDepartmentId] = useState("");
   const [category, setCategory] = useState<"EMPLOYEE" | "VISITOR">("VISITOR");
-  const [mobile, setMobile] = useState("");
-  const [aadhar, setAadhar] = useState("");
-  const [pan, setPan] = useState("");
+  const [passTypeId, setPassTypeId] = useState("");
+  const [profile, setProfile] = useState(EMPTY_PROFILE);
   const [deviceIds, setDeviceIds] = useState<string[]>([]);
   const [pin, setPin] = useState(claimingPin);
   const [photo, setPhoto] = useState<File | null>(null);
@@ -46,6 +44,8 @@ function RegisterForm() {
   const { data: companies } = useApi<DirectoryList>("/api/companies");
   const { data: departments } = useApi<DirectoryList>("/api/departments");
   const { data: devices } = useApi<DeviceList>("/api/devices");
+  const { data: passTypes } = useApi<PassTypeList>("/api/pass-types");
+  const passType = category === "VISITOR" ? passTypes?.items.find((t) => t.id === passTypeId) ?? null : null;
 
   async function onSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -55,16 +55,13 @@ function RegisterForm() {
     try {
       const person = await api<Person>("/api/people", {
         method: "POST",
-        // Every field is required by the API; the form marks them required
-        // too, so this is a plain object rather than a pile of conditionals.
+        // Which fields are required depends on the visitor type; the API
+        // enforces it and names anything missing.
         body: {
           name: name.trim(),
-          companyId,
-          departmentId,
           category,
-          mobile: mobile.trim(),
-          ...(aadhar.trim() ? { aadharNumber: aadhar.trim() } : {}),
-          ...(pan.trim() ? { panNumber: pan.trim().toUpperCase() } : {}),
+          ...(passType ? { passTypeId: passType.id } : {}),
+          ...profilePayload(profile, false),
           deviceIds: category === "EMPLOYEE" ? deviceIds : [],
           esslUserId: pin.trim(),
         },
@@ -133,38 +130,18 @@ function RegisterForm() {
             />
           </Field>
 
-          <Field label="Company">
-            <Select required value={companyId} onChange={(e) => setCompanyId(e.target.value)}><option value="">Select company</option>{companies?.items.filter((x) => x.isActive).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</Select>
-          </Field>
-
-          <Field label="Department"><Select required value={departmentId} onChange={(e) => setDepartmentId(e.target.value)}><option value="">Select department</option>{departments?.items.filter((x) => x.isActive).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</Select></Field>
-
           <Field label="Category"><Select value={category} onChange={(e) => setCategory(e.target.value as "EMPLOYEE" | "VISITOR")}><option value="VISITOR">Visitor</option><option value="EMPLOYEE">Employee</option></Select></Field>
 
-          <Field label="Mobile">
-            <Input
-              required
-              value={mobile}
-              onChange={(e) => setMobile(e.target.value)}
-              placeholder="+91 9876543210"
-            />
-          </Field>
+          {category === "VISITOR" && (passTypes?.items.length ?? 0) > 0 && (
+            <Field label="Visitor type" hint="Decides which details are required. Leave as General for the standard set.">
+              <Select value={passTypeId} onChange={(e) => setPassTypeId(e.target.value)}>
+                <option value="">General (company, department, mobile, Aadhaar or PAN)</option>
+                {passTypes?.items.filter((t) => t.isActive).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </Select>
+            </Field>
+          )}
 
-          <Field
-            label="Aadhaar number"
-            hint="Enter Aadhaar or PAN. Each supplied identity number must be unique."
-          >
-            <Input
-              inputMode="numeric"
-              pattern="[0-9]{12}"
-              maxLength={12}
-              value={aadhar}
-              onChange={(e) => setAadhar(e.target.value.replace(/\D/g, ""))}
-              placeholder="123456789012"
-            />
-          </Field>
-
-          <Field label="PAN" hint="Format: ABCDE1234F"><Input pattern="[A-Za-z]{5}[0-9]{4}[A-Za-z]" maxLength={10} value={pan} onChange={(e) => setPan(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))} placeholder="ABCDE1234F" /></Field>
+          <ProfileFields draft={profile} onChange={setProfile} category={category} passType={passType} companies={companies} departments={departments} />
 
           {category === "EMPLOYEE" && <Field label="Permanent device access" hint="Employees remain on every selected device until an admin removes access."><div className="space-y-2">{devices?.items.map((device) => <label key={device.id} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={deviceIds.includes(device.id)} onChange={() => setDeviceIds((ids) => ids.includes(device.id) ? ids.filter((id) => id !== device.id) : [...ids, device.id])} />{device.name ?? device.serialNo}</label>)}</div></Field>}
 

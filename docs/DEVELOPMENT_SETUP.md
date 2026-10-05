@@ -251,6 +251,7 @@ Isolate the run from this machine's real state (added 2 October 2026). The licen
 cd C:\Work\essl-vms-two-zones\backend
 $env:PROGRAMDATA = "$env:TEMP\vms-e2e-programdata"
 $env:PHOTO_STORAGE_PATH = "./data/photos-e2e"
+$env:DOCUMENT_STORAGE_PATH = "./data/documents-e2e"
 $env:DATABASE_URL = "postgresql://vms_app:devpassword@localhost:48103/vms_test"
 npx prisma migrate deploy
 npm run verify:e2e

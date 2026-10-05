@@ -1,7 +1,7 @@
 import { readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { FastifyInstance } from "fastify";
-import { EntryState, PersonCategory, Prisma } from "@prisma/client";
+import { EntryState, PersonCategory, Prisma, type Person } from "@prisma/client";
 import { z } from "zod";
 import { config } from "../config/index.js";
 import { prisma } from "../db/index.js";
@@ -11,6 +11,8 @@ import { isJpeg, jpegDimensions } from "./jpeg.js";
 import { MAX_USER_ID_LENGTH, parseUserId, photoPathFor } from "../user-id.js";
 import { hasPermission, requirePermission } from "./permissions.js";
 import { assignEmployeeDevices, removeEmployeeDevice } from "../services/employee-access.js";
+import { describeGaps, profileGaps } from "../services/pass-types.js";
+import { isMasked, maskId } from "../services/redact.js";
 
 // Person registration API (Phase 1 Milestone 3).
 //
@@ -54,16 +56,38 @@ const identityFields = {
   panNumber: panNumber.optional(),
 };
 
+// A masked value echoed back by the console means "unchanged" (CLAUDE.md
+// #12), so it is dropped before validation rather than stored or rejected.
+const unlessMasked = <T extends z.ZodTypeAny>(schema: T) => z.preprocess((v) => (isMasked(v) ? undefined : v), schema);
+const text = (max: number) => z.string().trim().max(max).transform((v) => v || null);
+
+// Two-zone profile fields (Phase 3). Which are required depends on the
+// person's pass type; null clears an optional one.
+const profileFields = {
+  email: z.string().trim().toLowerCase().email().max(200).nullable().optional(),
+  designation: text(100).nullable().optional(),
+  govtIdType: text(40).nullable().optional(),
+  govtIdNumber: unlessMasked(z.string().trim().toUpperCase().regex(/^[A-Z0-9\-\/ ]{3,40}$/, "govt ID number: letters, digits, - / and spaces").nullable().optional()),
+  vehicleNumber: z.string().trim().toUpperCase().max(20).transform((v) => v || null).nullable().optional(),
+  policeClearance: z.boolean().nullable().optional(),
+  credentialNumber: unlessMasked(text(60).nullable().optional()),
+  credentialExpiresAt: z.coerce.date().nullable().optional(),
+  passTypeId: z.string().min(1).nullable().optional(),
+};
+
 // Every field is mandatory at registration: a person record is a permanent
 // identity, and the cheapest moment to require the identifying details is the
 // one moment somebody is looking at the person.
 export const createPersonSchema = z.object({
   name: z.string().trim().min(1).max(100),
-  mobile: mobileNumber,
-  companyId: z.string().min(1),
-  departmentId: z.string().min(1),
+  // Which of these are mandatory is decided after parsing, by the person's
+  // pass type (or the default rule): see services/pass-types.ts.
+  mobile: mobileNumber.optional(),
+  companyId: z.string().min(1).optional(),
+  departmentId: z.string().min(1).optional(),
   category: z.nativeEnum(PersonCategory),
   ...identityFields,
+  ...profileFields,
   deviceIds: z.array(z.string().min(1)).max(50).default([]),
   // The ID already typed on the terminal (device-first), or one the operator
   // chooses. Never auto-allocated — an ID somebody has to read back off a
@@ -79,9 +103,6 @@ export const createPersonSchema = z.object({
       message: `user ID must be letters and digits only, 1-${MAX_USER_ID_LENGTH} characters`,
     }),
 }).superRefine((value, ctx) => {
-  if (!value.aadharNumber && !value.panNumber) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "either Aadhaar or PAN is required", path: ["aadharNumber"] });
-  }
   if (value.category === PersonCategory.EMPLOYEE && value.deviceIds.length === 0) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: "employees require at least one device", path: ["deviceIds"] });
   }
@@ -93,8 +114,9 @@ export const createPersonSchema = z.object({
 const updatePersonSchema = z.object({
   name: z.string().trim().min(1).max(100).optional(),
   mobile: mobileNumber.optional(),
-  aadharNumber: aadharNumber.optional(),
-  panNumber: panNumber.optional(),
+  aadharNumber: unlessMasked(aadharNumber.optional()),
+  panNumber: unlessMasked(panNumber.optional()),
+  ...profileFields,
   companyId: z.string().min(1).optional(),
   departmentId: z.string().min(1).optional(),
   category: z.nativeEnum(PersonCategory).optional(),
@@ -124,25 +146,17 @@ const PHOTO_MAX_DIMENSION = 5000;
 
 // ---------------------------------------------------------------------------
 
-function personSummary(v: {
-  id: string;
-  name: string;
-  category: PersonCategory;
-  mobile: string | null;
-  aadharNumber: string | null;
-  panNumber: string | null;
-  companyId: string | null;
-  departmentId: string | null;
-  esslUserId: string;
-  isActive: boolean;
-  resignedAt: Date | null;
-  resignedReason: string | null;
-  createdAt: Date;
+type SummaryInput = Person & {
   biometric?: { id: string } | null;
   company?: { id: string; name: string; isActive: boolean } | null;
   department?: { id: string; name: string; isActive: boolean } | null;
-}) {
-  const profileComplete = Boolean(v.name && v.mobile && v.companyId && v.departmentId && (v.aadharNumber || v.panNumber));
+};
+
+/**
+ * The one shape a person leaves the API in. Identity numbers are masked here
+ * and only here, so no route can forget (CLAUDE.md #12).
+ */
+function personSummary(v: SummaryInput) {
   return {
     id: v.id,
     name: v.name,
@@ -152,17 +166,46 @@ function personSummary(v: {
     departmentId: v.departmentId,
     department: v.department ?? null,
     mobile: v.mobile,
-    aadharNumber: v.aadharNumber,
-    panNumber: v.panNumber,
+    aadharNumber: maskId(v.aadharNumber),
+    panNumber: maskId(v.panNumber),
+    email: v.email,
+    designation: v.designation,
+    govtIdType: v.govtIdType,
+    govtIdNumber: maskId(v.govtIdNumber),
+    vehicleNumber: v.vehicleNumber,
+    policeClearance: v.policeClearance,
+    credentialNumber: maskId(v.credentialNumber),
+    credentialExpiresAt: v.credentialExpiresAt,
+    passTypeId: v.passTypeId,
     esslUserId: v.esslUserId,
     isActive: v.isActive,
     resignedAt: v.resignedAt,
     resignedReason: v.resignedReason,
     hasPhoto: Boolean(v.biometric),
-    profileComplete,
-    needsDetails: !profileComplete,
+    profileComplete: v.detailsComplete,
+    needsDetails: !v.detailsComplete,
     createdAt: v.createdAt,
   };
+}
+
+/**
+ * Resolve the pass type a profile is checked against. Employees never have
+ * one; a visitor's must exist and, when newly chosen, be active.
+ */
+async function passTypeFor(category: PersonCategory, passTypeId: string | null | undefined, current: string | null) {
+  if (category === PersonCategory.EMPLOYEE || !passTypeId) return null;
+  const type = await prisma.passType.findUnique({ where: { id: passTypeId } });
+  if (!type || (!type.isActive && passTypeId !== current)) return undefined;
+  return type;
+}
+
+/** Copy the optional profile fields a request actually sent. */
+function profileData(input: Record<string, unknown>): Prisma.PersonUncheckedUpdateInput {
+  const out: Record<string, unknown> = {};
+  for (const key of ["email", "designation", "govtIdType", "govtIdNumber", "vehicleNumber", "policeClearance", "credentialNumber", "credentialExpiresAt", "passTypeId"]) {
+    if (input[key] !== undefined) out[key] = input[key];
+  }
+  return out as Prisma.PersonUncheckedUpdateInput;
 }
 
 export async function personRoutes(app: FastifyInstance): Promise<void> {
@@ -179,10 +222,16 @@ export async function personRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(403).send({ error: "only an administrator can register employees" });
     }
     const [company, department] = await prisma.$transaction([
-      prisma.company.findFirst({ where: { id: input.companyId, isActive: true } }),
-      prisma.department.findFirst({ where: { id: input.departmentId, isActive: true } }),
+      prisma.company.findFirst({ where: { id: input.companyId ?? "", isActive: true } }),
+      prisma.department.findFirst({ where: { id: input.departmentId ?? "", isActive: true } }),
     ]);
-    if (!company || !department) return reply.code(400).send({ error: "select an active company and department" });
+    if ((input.companyId && !company) || (input.departmentId && !department)) {
+      return reply.code(400).send({ error: "select an active company and department" });
+    }
+    const passType = await passTypeFor(input.category, input.passTypeId, null);
+    if (passType === undefined) return reply.code(400).send({ error: "select an active pass type" });
+    const gaps = profileGaps(input, passType);
+    if (gaps.length > 0) return reply.code(400).send({ error: `required: ${describeGaps(gaps)}`, missing: gaps });
 
     try {
       const result = await prisma.$transaction(async (tx) => {
@@ -197,15 +246,18 @@ export async function personRoutes(app: FastifyInstance): Promise<void> {
 
         const person = await tx.person.create({
           data: {
+            ...(profileData(input) as Prisma.PersonUncheckedCreateInput),
             name: input.name,
-            mobile: input.mobile,
-            companyId: input.companyId,
-            departmentId: input.departmentId,
+            mobile: input.mobile ?? null,
+            companyId: input.companyId ?? null,
+            departmentId: input.departmentId ?? null,
             category: input.category,
             aadharNumber: input.aadharNumber ?? null,
             panNumber: input.panNumber ?? null,
+            passTypeId: passType?.id ?? null,
             esslUserId,
             adoptedFromDevice: existingPhoto !== null,
+            detailsComplete: true,
           },
         });
 
@@ -259,7 +311,7 @@ export async function personRoutes(app: FastifyInstance): Promise<void> {
       }
 
       return reply.code(201).send({
-        ...personSummary({ ...result.person, company, department, biometric: null }),
+        ...personSummary({ ...result.person, company: input.companyId ? company : null, department: input.departmentId ? department : null, biometric: null }),
         hasPhoto: result.attachedExistingPhoto,
       });
     } catch (err) {
@@ -293,11 +345,7 @@ export async function personRoutes(app: FastifyInstance): Promise<void> {
     if (category) where.category = category;
     if (companyId) where.companyId = companyId;
     if (departmentId) where.departmentId = departmentId;
-    if (needsDetails === true) {
-      where.AND = [{ OR: [{ mobile: null }, { companyId: null }, { departmentId: null }, { AND: [{ aadharNumber: null }, { panNumber: null }] }] }];
-    } else if (needsDetails === false) {
-      where.AND = [{ mobile: { not: null } }, { companyId: { not: null } }, { departmentId: { not: null } }, { OR: [{ aadharNumber: { not: null } }, { panNumber: { not: null } }] }];
-    }
+    if (needsDetails !== undefined) where.detailsComplete = !needsDetails;
     if (q) {
       where.OR = [
         { name: { contains: q, mode: "insensitive" } },
@@ -481,15 +529,22 @@ export async function personRoutes(app: FastifyInstance): Promise<void> {
     if (parsed.data.category !== undefined && parsed.data.category !== current.category && !(await hasPermission(request, "person_category:update"))) {
       return reply.code(403).send({ error: "only an administrator can change category" });
     }
-    const merged = { ...current, ...parsed.data };
-    if (!merged.mobile || !merged.companyId || !merged.departmentId || (!merged.aadharNumber && !merged.panNumber)) {
-      return reply.code(400).send({ error: "name, mobile, company, department, and either Aadhaar or PAN are required" });
-    }
+    const sent = Object.fromEntries(Object.entries(parsed.data).filter(([, v]) => v !== undefined));
+    const merged = { ...current, ...sent } as typeof current;
+    if (merged.category === PersonCategory.EMPLOYEE) merged.passTypeId = null;
+    const passType = await passTypeFor(merged.category, merged.passTypeId, current.passTypeId);
+    if (passType === undefined) return reply.code(400).send({ error: "select an active pass type" });
+    const gaps = profileGaps(merged, passType);
+    if (gaps.length > 0) return reply.code(400).send({ error: `required: ${describeGaps(gaps)}`, missing: gaps });
+    // Only a newly chosen company or department must be active; a retired one
+    // already on the profile stays valid (directories are never deleted).
     const [company, department] = await prisma.$transaction([
-      prisma.company.findFirst({ where: { id: merged.companyId, isActive: true } }),
-      prisma.department.findFirst({ where: { id: merged.departmentId, isActive: true } }),
+      prisma.company.findFirst({ where: { id: parsed.data.companyId ?? "", isActive: true } }),
+      prisma.department.findFirst({ where: { id: parsed.data.departmentId ?? "", isActive: true } }),
     ]);
-    if (!company || !department) return reply.code(400).send({ error: "select an active company and department" });
+    if ((parsed.data.companyId && parsed.data.companyId !== current.companyId && !company) || (parsed.data.departmentId && parsed.data.departmentId !== current.departmentId && !department)) {
+      return reply.code(400).send({ error: "select an active company and department" });
+    }
     if (current.category !== PersonCategory.EMPLOYEE && merged.category === PersonCategory.EMPLOYEE && !(parsed.data.deviceIds?.length)) {
       return reply.code(400).send({ error: "select at least one device when changing to Employee" });
     }
@@ -509,6 +564,8 @@ export async function personRoutes(app: FastifyInstance): Promise<void> {
     if (parsed.data.companyId !== undefined) data.companyId = parsed.data.companyId;
     if (parsed.data.departmentId !== undefined) data.departmentId = parsed.data.departmentId;
     if (parsed.data.category !== undefined) data.category = parsed.data.category;
+    Object.assign(data, profileData(parsed.data));
+    if (merged.category === PersonCategory.EMPLOYEE && current.passTypeId) data.passTypeId = null;
     if (Object.keys(data).length === 0 && !parsed.data.deviceIds?.length) {
       return reply.code(400).send({ error: "no fields to update" });
     }
@@ -517,7 +574,7 @@ export async function personRoutes(app: FastifyInstance): Promise<void> {
       const [person] = await prisma.$transaction([
         prisma.person.update({
           where: { id },
-          data,
+          data: { ...data, detailsComplete: true },
           include: {
             biometric: { select: { id: true } },
             company: { select: { id: true, name: true, isActive: true } },

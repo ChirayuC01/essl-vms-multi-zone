@@ -25,6 +25,8 @@ import { personRoutes } from "./api/people.js";
 import { zoneRoutes } from "./api/zones.js";
 import { settingsRoutes } from "./api/settings.js";
 import { accessRoutes } from "./api/access.js";
+import { passTypeRoutes } from "./api/pass-types.js";
+import { documentRoutes } from "./api/documents.js";
 import { ServiceError } from "./services/errors.js";
 import { getLicenseStatus } from "./services/license.js";
 import { VMS_VERSION } from "./version.js";
@@ -152,6 +154,8 @@ export async function buildApp(): Promise<FastifyInstance> {
       await api.register(zoneRoutes);
       await api.register(settingsRoutes);
       await api.register(accessRoutes);
+      await api.register(passTypeRoutes);
+      await api.register(documentRoutes);
       await api.register(punchRoutes);
       await api.register(enrollmentRoutes);
       await api.register(operatorRoutes);

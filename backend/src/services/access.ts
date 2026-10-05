@@ -62,6 +62,12 @@ export const RESOURCES = {
     actions: ["create", "delete"],
     notes: { create: "assign / restore / rehire", delete: "remove / resign" },
   },
+  documents: {
+    label: "Person documents",
+    group: "People",
+    actions: ["view", "create", "delete"],
+    notes: { view: "list and download", delete: "remove from view (file kept)" },
+  },
   directory: {
     label: "Companies and departments",
     group: "People",
@@ -85,6 +91,7 @@ export const RESOURCES = {
 
   operators: { label: "Operators", group: "Administration", actions: ["view", "create", "update"], notes: { update: "details, role, disable, reset password" } },
   access: { label: "Roles and access", group: "Administration", actions: ["view", "create", "update"], notes: { create: "add a role", update: "edit grids and user overrides" } },
+  pass_types: { label: "Pass types", group: "Administration", actions: ["view", "create", "update"], notes: { update: "rules, validity, deactivate" } },
   settings: { label: "System settings", group: "Administration", actions: ["view", "update"] },
   branding: { label: "Branding", group: "Administration", actions: ["update"] },
   license: { label: "Licence", group: "Administration", actions: ["view", "update"], notes: { update: "install a key" } },

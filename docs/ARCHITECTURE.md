@@ -76,7 +76,7 @@ Delivered phase by phase; see `PLAN.md` for the exact fields.
 | `Zone`, `Device.zoneId` | Site topology, access by zone (`services/zones.ts`, `api/zones.ts`) — **done** | 1 |
 | typed settings over `app_config` | Every site toggle (`services/settings.ts`, `api/settings.ts`) — **done** | 2 |
 | `Role`, `RolePermission`, `UserPermissionOverride` | Configurable access grid (`services/access.ts`, `api/access.ts`) — **done** | 2b |
-| `PassType`, Person fields, `PersonDocument` | Per-type validation, documents | 3 |
+| `PassType`, Person fields, `PersonDocument` | Per-type validation (`services/pass-types.ts`), redaction (`services/redact.ts`), documents (`services/documents.ts`, `api/documents.ts`) — **done** | 3 |
 | `Entry` extended into a pass, `PassGate` | Per-terminal load/unload schedule | 4 |
 | `Message`, `Otp`, link tokens, `ConsentRecord` | Outbox, OTPs, portal | 5 |
 | `VisitRequest`, `VisitRequestEvent` | Request workflow with full history | 6 |

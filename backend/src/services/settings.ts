@@ -35,8 +35,8 @@ const fields = {
   otpTtlMinutes: z.number().int().min(1).max(60).default(10),
   /** Wrong attempts before a one-time code is burned. */
   otpMaxAttempts: z.number().int().min(1).max(10).default(5),
-  /** Largest uploaded document, in megabytes. */
-  documentMaxMb: z.number().int().min(1).max(50).default(10),
+  /** Largest uploaded document, in megabytes. Capped by the server's 20 MB request limit. */
+  documentMaxMb: z.number().int().min(1).max(20).default(10),
   /** Most documents per visit. 0 disables uploads. */
   documentMaxCount: z.number().int().min(0).max(20).default(5),
   documentTypes: z.array(z.enum(DOCUMENT_TYPES)).max(DOCUMENT_TYPES.length).default([...DOCUMENT_TYPES]),

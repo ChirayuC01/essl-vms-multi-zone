@@ -1,11 +1,14 @@
 #!/usr/bin/env node
 // Move a department's People — details and enrollment photos — from one VMS
-// installation to another, over the operator API of each. Nothing here touches
-// a database or a device directly: registration goes through POST /people, so
-// every validation rule and audit row applies exactly as if an operator typed
-// it in.
+// installation to another, over the operator API of each. Nothing here writes
+// to a database or a device directly: registration goes through POST /people,
+// so every validation rule and audit row applies exactly as if an operator
+// typed it in. The one exception is a READ: the API shows identity numbers
+// only masked, so export reads the full numbers from the source database
+// (--database-url, the DATABASE_URL in that install's backend/.env).
 //
 //   node transfer-people.mjs export --url http://localhost:47102 \
+//        --database-url 'postgresql://...' \
 //        --email admin@example.com --password '...' \
 //        [--department 'Finance'] [--company 'Acme'] [--directories] --out ./dept-backup
 //
@@ -85,6 +88,21 @@ async function runExport() {
     if (people.length >= res.total || res.items.length === 0) break;
   }
 
+  // The API only ever returns identity numbers masked (CLAUDE.md #12), and a
+  // backup that cannot be re-imported is no backup. The export therefore reads
+  // the full numbers straight from this installation's database, which only
+  // someone with server access can reach.
+  const db = await import("pg").then(({ default: pg }) => new pg.Client({ connectionString: need("database-url") }));
+  await db.connect();
+  const { rows } = await db.query(
+    `SELECT p."id", p."aadhar_number", p."pan_number", p."govt_id_number", p."credential_number", t."name" AS pass_type
+       FROM "person" p LEFT JOIN "pass_type" t ON t."id" = p."pass_type_id"
+      WHERE p."id" = ANY($1)`,
+    [people.map((p) => p.id)],
+  );
+  await db.end();
+  const full = new Map(rows.map((r) => [r.id, r]));
+
   await mkdir(path.join(out, "photos"), { recursive: true });
   let photos = 0;
   for (const p of people) {
@@ -119,8 +137,17 @@ async function runExport() {
           name: p.name,
           category: p.category,
           mobile: p.mobile,
-          aadharNumber: p.aadharNumber,
-          panNumber: p.panNumber,
+          aadharNumber: full.get(p.id)?.aadhar_number ?? null,
+          panNumber: full.get(p.id)?.pan_number ?? null,
+          email: p.email ?? null,
+          designation: p.designation ?? null,
+          govtIdType: p.govtIdType ?? null,
+          govtIdNumber: full.get(p.id)?.govt_id_number ?? null,
+          vehicleNumber: p.vehicleNumber ?? null,
+          policeClearance: p.policeClearance ?? null,
+          credentialNumber: full.get(p.id)?.credential_number ?? null,
+          credentialExpiresAt: p.credentialExpiresAt ?? null,
+          passType: full.get(p.id)?.pass_type ?? null,
           esslUserId: p.esslUserId,
           company: p.company?.name ?? null,
           department: p.department?.name ?? null,
@@ -169,6 +196,11 @@ async function runImport() {
   const deviceIds = (wanted ? devices.filter((d) => wanted.some((w) => sameName(d.name, w) || d.serialNo === w || d.id === w)) : devices).map((d) => d.id);
   if (wanted && deviceIds.length !== wanted.length) throw new Error(`--devices matched ${deviceIds.length} of ${wanted.length}; have: ${devices.map((d) => d.name).join(", ")}`);
 
+  // Pass types are matched by name; a type the target install lacks is left
+  // off, and the person is then checked against the default profile rule.
+  const { items: passTypes } = await api(token, "GET", "/pass-types").catch(() => ({ items: [] }));
+  const passTypeId = (name) => passTypes.find((t) => name && sameName(t.name, name))?.id;
+
   let created = 0, withPhoto = 0;
   const skipped = [];
   for (const p of dump.people) {
@@ -190,10 +222,16 @@ async function runImport() {
         mobile: p.mobile ?? undefined,
         aadharNumber: p.aadharNumber ?? undefined,
         panNumber: p.panNumber ?? undefined,
+        ...Object.fromEntries(
+          ["email", "designation", "govtIdType", "govtIdNumber", "vehicleNumber", "policeClearance", "credentialNumber", "credentialExpiresAt"]
+            .filter((k) => p[k] !== null && p[k] !== undefined)
+            .map((k) => [k, p[k]]),
+        ),
+        ...(p.category === "VISITOR" && passTypeId(p.passType) ? { passTypeId: passTypeId(p.passType) } : {}),
         category: p.category,
         esslUserId: p.esslUserId,
-        companyId: await directoryId("companies", p.company ?? "Unassigned"),
-        departmentId: await directoryId("departments", p.department ?? dump.scope.department ?? "Unassigned"),
+        ...(p.company || !p.passType ? { companyId: await directoryId("companies", p.company ?? "Unassigned") } : {}),
+        ...(p.department || !p.passType ? { departmentId: await directoryId("departments", p.department ?? dump.scope.department ?? "Unassigned") } : {}),
         deviceIds: p.category === "EMPLOYEE" ? deviceIds : [],
       });
       created++;
@@ -217,7 +255,7 @@ async function runImport() {
 try {
   if (mode === "export") await runExport();
   else if (mode === "import") await runImport();
-  else throw new Error("usage: transfer-people.mjs export|import --url ... --email ... --password ... [--department|--company|--directories|--out|--in|--devices|--include-inactive]");
+  else throw new Error("usage: transfer-people.mjs export|import --url ... [--database-url ... (export)] --email ... --password ... [--department|--company|--directories|--out|--in|--devices|--include-inactive]");
 } catch (err) {
   console.error(err.message);
   process.exit(1);

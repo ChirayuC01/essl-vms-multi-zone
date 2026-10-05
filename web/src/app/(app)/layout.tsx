@@ -21,6 +21,7 @@ const NAV: { href: string; label: string; permission?: string }[] = [
   { href: "/devices", label: "Devices", permission: "devices:view" },
   { href: "/reports", label: "Reports", permission: "reports:view" },
   { href: "/directory", label: "Directory", permission: "directory:view" },
+  { href: "/pass-types", label: "Pass types", permission: "pass_types:view" },
   { href: "/settings", label: "Settings", permission: "settings:view" },
   { href: "/operators", label: "Operators", permission: "operators:view" },
   { href: "/access", label: "Access", permission: "access:view" },

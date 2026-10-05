@@ -59,23 +59,41 @@ holder stays outside the system.
 A **returning visitor** is recognised by their OTP-verified mobile number and
 reuses the same Person, photograph and terminal ID.
 
-## 4. Pass types (Phase 3)
+## 4. Pass types (Phase 3 — implemented)
 
-Pass types are configuration, seeded per site. Each defines: short- or
-long-term, allowed entry modes (single/multi), whether a host must Clear it,
-maximum validity, which profile fields are required / optional / hidden, and
-optionally an external credential (number + expiry) whose expiry caps the
+Pass types are a site's own visitor categories, created by an Admin on the
+**Pass types** page. Nothing is pre-seeded and no type is named in code. Each
+defines:
+
+- short- or long-term
+- allowed entry modes (single / multi)
+- whether a host must Clear it
+- maximum validity in days
+- for every profile field: **required**, **optional** or **hidden**
+- optionally an external credential (a label, e.g. a port authority pass),
+  with whether its expiry caps the pass
+
+Profile fields: mobile, email, company, department, designation, Govt ID type
+and number, Aadhaar, PAN, vehicle number, police clearance (yes/no), and
+credential number and expiry. Name is always required.
+
+**Visitors with no pass type** ("General") and **all employees** keep the
+long-standing rule: mobile, company, department, and Aadhaar or PAN. Each
+person's "details complete" state is stored and recomputed whenever their
+profile, a directory bulk assignment, or their pass type's rules change. An
+incomplete visitor appears in the needs-details list and can't be issued a
 pass.
 
-The first two-zone site's seed:
+**Recommended setup for the first two-zone site.** An Admin creates these;
+they're configuration, not built in:
 
-| Pass type | Kind | Details collected | Approved by | Valid for |
-|---|---|---|---|---|
-| Planned visitor | short-term | name, mobile, company, purpose, Govt ID, vehicle no., selfie, optional documents | host (in system) | one day, single or multi entry |
-| Walk-in | short-term | same, captured at the gate by Security | host Clear (setting) | one day |
-| Sub-contractor staff | long-term | name, contact, email, company, Govt ID, police clearance yes/no, zone | outside the system (list to Security) | up to 3 months |
-| CHA / customer rep | long-term | as above + credential (BCBA) number and expiry | outside the system | 3 months or credential expiry, whichever first |
-| Customs official | long-term | name and designation only | — | set by Security |
+| Pass type | Kind | Entry | Host Clear | Max days | Required fields | Hidden | Credential |
+|---|---|---|---|---|---|---|---|
+| Planned visitor | short | single, multi | yes | 1 | mobile, company, Govt ID number | — | — |
+| Walk-in | short | single, multi | yes (setting) | 1 | mobile, company | — | — |
+| Sub-contractor staff | long | multi (single if wanted) | no | 90 | mobile, email, company, Govt ID number, police clearance | — | — |
+| CHA / customer rep | long | multi | no | 90 | as sub-contractor, plus credential number and expiry | — | "BCBA pass", caps validity |
+| Customs official | long | multi | no | Security decides | designation | mobile, company, department | — |
 
 Daily sub-contractor passes stay outside the system.
 
@@ -226,14 +244,27 @@ the Devices page.
   what is collected, why, for how long, and how to seek correction/erasure or
   complain. Every visitor must accept it before submitting anything; the
   acceptance time and notice version are recorded.
-- **ID numbers are redacted after saving.** Govt ID, Aadhaar, PAN and
+- **ID numbers are redacted after saving** (implemented, Phase 3). Govt ID, Aadhaar, PAN and
   credential numbers are stored in full (uniqueness and returning-visitor
   checks need them) but every screen, report, export and print shows only the
   first two and last two characters, e.g. `CI******7b`. The vehicle number
   stays visible for Security.
 - Aadhaar card copies: visitors are asked to upload masked Aadhaar.
-- Documents are optional until the site confirms requirements. Stored on
-  local disk, always downloaded as files, never rendered inline.
+- **Documents** (implemented, Phase 3): attached on a person's page (and, from
+  Phase 5, by the visitor).
+  - Optional until the site confirms requirements.
+  - The type is decided by the file's **bytes**, not its name: JPEG, PNG,
+    WebP or PDF, as enabled in System settings.
+  - Size limit (≤ 20 MB) and a per-person count limit are also System
+    settings.
+  - Stored on local disk under a generated name.
+  - Always downloaded as an attachment, with headers that stop a browser from
+    running it.
+  - Removing a document hides it, but the record and file are kept.
+  - Upload, download and removal are audited in the person's history.
+- **People transfer** (`backend/scripts/transfer-people.mjs`, `PEOPLE_TRANSFER.md`)
+  is the one place full identity numbers leave the system. It reads them from
+  the database with `--database-url` on the server, never through the API.
 - Retention periods for photos, documents and history await the site's
   answer; until then nothing is deleted.
 - Terminals shared with employees: only IDs matching a configured pattern are

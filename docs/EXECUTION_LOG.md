@@ -413,3 +413,120 @@ result) · issues · next action.
 
 - Owner asked for the commit and for Phase 4 to start. Phase 3 is marked
   `ACCEPTED`; manual step results were not reported.
+
+### 2026-10-05 — Phase 4 — Gate engine
+
+- **Status:** `IMPLEMENTED_AWAITING_VERIFICATION`.
+- **Change:**
+  - **Migration `20261005120000_gate_engine`:**
+    - enums `GateState`, `GateReason`
+    - `entry` gains `pass_type_id`, `zone_ids`, `exit_code_zone_ids`,
+      `location_zone_id` (an entry IS the pass)
+    - `person` gains blacklist fields
+    - new `pass_gate` table, unique per (entry, device)
+    - backfill: every live entry gets gate rows for exactly the terminals it
+      was provisioned to, in the matching state (`MIGRATED`)
+  - **`services/gates.ts`:**
+    - pure rules: `planGates` (exit-code gating for single entry only),
+      `usedUpByPunch`, `locationAfter`
+    - `gateTick`, a fixed query count per run: end passes (keeping the
+      exits of anyone inside), drop never-loaded gates past their removal,
+      queue due loads (PROVISION + PUSH_PHOTO in order), queue due unloads,
+      close finished passes; batched audits `GATE_LOAD_QUEUED` /
+      `GATE_UNLOAD_QUEUED`
+  - **`services/entries.ts`:**
+    - issuing creates the entry plus its gates (by zones, or by the old
+      device list) and runs the tick
+    - validation for a pass type's entry modes and max validity, credential
+      expiry capping the pass, blacklist refusal, and single entry limited to
+      one day
+    - close (de-provision) schedules every gate out
+    - acknowledgements advance gates per terminal and move face counts; a
+      pass becomes provisioned only when no due terminal is still loading
+  - **`services/punches.ts`:**
+    - location follows the zone tree
+    - single entry schedules the used terminal's removal +10 min (one
+      batched statement; `GATE_UNLOAD_SCHEDULED`)
+    - an overstaying holder walking out closes the pass at once
+    - the day-block is gone
+  - **`services/passes.ts`:**
+    - exit override (reason required; `EXIT_OVERRIDE`)
+    - zone widening (`ZONE_WIDENED`)
+    - blacklist and lift (visitors only; ends every pass through the normal
+      pass-end path, so someone inside keeps their exit)
+  - **Retired:**
+    - `runDailyReset`, `blockSingleEntryOnExit`, `assertSingleEntrySupported`
+    - the expiry batch code
+    - `DAILY_RESET_*` config, and `EXPIRY_SWEEP_CRON` (replaced by
+      `GATE_TICK_CRON`, every minute)
+    - `/entries/daily-reset`
+    - the old queues are unscheduled at start-up
+  - **`jobs/expiry.ts`** is now a thin wrapper over the tick, plus the
+    overstayed list.
+  - **Reconciliation:**
+    - per-terminal: a face on a terminal whose gate isn't loading or loaded
+      is removed, even while the pass is active
+    - expected face counts come from the gates
+  - **API:**
+    - issue body gains `zoneIds`, `exitCodeZoneIds`, `passTypeId`,
+      `validUntil`
+    - pass detail includes gates
+    - new routes: `POST /entries/:id/exit-override`,
+      `POST /entries/:id/widen`, `POST /people/:id/blacklist` and `/lift`
+  - **Web:**
+    - shared `IssuePassForm`: zones, exit-code ticks, pass type, visit time,
+      valid until with presets, used on the person and Provision pages
+    - `PassGates`: per-terminal state, location, overstayed, override and
+      widen
+    - `BlacklistControl`
+    - Inside Now: Location column, "overstayed", and manual-block wording
+  - **`scripts/sim-terminal.mjs`:** virtual terminal one-liners (hello,
+    drain, fail, in, out). Smoke-tested against the running dev backend.
+- **Verification (2026-10-05):**
+  - `prisma migrate diff`: no difference.
+  - Unit tests **104/104**. New `gates.test.ts`: planning, use-up, location.
+    `entry-modes.test.ts` was reduced to the date helper; the day-block and
+    reset tests were retired with the feature.
+  - e2e **381/381**:
+    - section 6c was rewritten from the day-block to the new single-entry
+      rule
+    - the per-device daily-reset checks were retired
+    - the sweep query-budget test now backdates after issuing (issuing runs
+      the engine)
+    - the two-gate test cleans up gate rows
+    - new section 30 (44 checks on 4 zoned terminals) covers:
+      - lead-time scheduling, then all 4 loading in one tick; face counts +1
+        each
+      - location through yard and premise
+      - multi entry never schedules removal
+      - single-entry office pass holding back the exit
+      - +10 min removal after each use
+      - override (reason, audit, no double)
+      - yard exit free vs ticked
+      - widening
+      - blacklist outside (all removed, pass closed, refused, lifted)
+      - blacklist inside (exit kept, closes on walking out)
+      - pass ending inside (overstayed, listed, exit kept, closes on exit)
+      - per-terminal reconciliation removal
+      - face counts matching gates
+      - the tick's query count flat for 2 vs 4 due gates
+  - Web lint and build PASS.
+- **Issues found and fixed during the phase:**
+  1. The first design advanced a pass to PROVISIONED on its first loaded
+     terminal. The existing two-gate e2e check caught it: the person could
+     walk in before the exit had their face. A pass is now provisioned only
+     when no due terminal is still loading.
+  2. Blacklisting someone inside removed their exit too (rule #9). Blacklist
+     now ends passes through the pass-end path.
+  3. Test-harness artefacts: a deleted terminal still referenced by gates;
+     punches in the same second deduplicated; a crashed run leaving its scratch
+     photo (the runner now clears `photos-e2e` first).
+- **Upgrade evidence:** the dev `vms` database has no entries, so its backfill
+  was a no-op. On `vms_test` the backfill created gate rows from leftover
+  entries (seen when the first e2e reset hit their foreign key).
+- **Next action:** owner walk-through, `VERIFICATION.md` § Phase 4.
+
+### 2026-10-05 — Phase 4 — verified and accepted
+
+- Owner verified Phase 4 end to end ("verified everything and works as
+  expected"). Marked `ACCEPTED`; committed. Phase 5 begins.

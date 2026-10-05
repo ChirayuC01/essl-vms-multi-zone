@@ -2,8 +2,11 @@ import { open } from "node:fs/promises";
 import {
   CommandStatus,
   CommandType,
+  DeviceRole,
   EntryMode,
   EntryState,
+  GateReason,
+  GateState,
   PersonCategory,
   RetentionPolicy,
   type Device,
@@ -16,12 +19,14 @@ import {
   buildDeleteUser,
   buildSetGroup,
 } from "../adms/commands.js";
-import { enqueue, enqueueIn } from "../adms/queue.js";
+import { enqueue } from "../adms/queue.js";
 import { AuditAction, auditRow } from "../db/audit.js";
 import { prisma } from "../db/index.js";
 import { publish } from "../events/bus.js";
-import { assertSingleEntrySupported } from "./entry-modes.js";
 import { ServiceError } from "./errors.js";
+import { closeFinishedEntries, gateTick, planGates, unloadAllGates } from "./gates.js";
+import { getSettings } from "./settings.js";
+import { zoneDevices } from "./zones.js";
 
 // The authorization lifecycle (Phase 1 Milestone 4).
 //
@@ -170,17 +175,15 @@ export async function resolveTargetDevices(deviceIds: string[] | undefined): Pro
  * device_id column could not represent that.
  */
 async function devicesForEntry(entryId: string): Promise<Device[]> {
-  const commands = await prisma.syncCommand.findMany({
-    where: { entryId, type: CommandType.PROVISION },
-    orderBy: { seq: "asc" },
+  const gates = await prisma.passGate.findMany({
+    where: { entryId, state: { in: [GateState.LOADING, GateState.LOADED] } },
     include: { device: true },
+    orderBy: { createdAt: "asc" },
   });
-  if (commands.length === 0) {
-    throw new ServiceError(409, "entry has no provisioning command — cannot determine its device(s)");
+  if (gates.length === 0) {
+    throw new ServiceError(409, "this pass is not loaded on any terminal right now");
   }
-  const seen = new Map<string, Device>();
-  for (const c of commands) if (!seen.has(c.device.id)) seen.set(c.device.id, c.device);
-  return [...seen.values()];
+  return gates.map((g) => g.device);
 }
 
 /**
@@ -238,14 +241,23 @@ function validateWire(build: () => string, what: string): void {
 
 export interface ProvisionInput {
   personId: string;
+  /** Zones the pass grants (their ancestors' gates are included). */
+  zoneIds?: string[] | undefined;
+  /** SINGLE entry: zones whose exit needs the exit code. Defaults from each zone. */
+  exitCodeZoneIds?: string[] | undefined;
+  /** An explicit terminal list instead of zones (sites without zones). */
   deviceIds?: string[] | undefined;
+  passTypeId?: string | undefined;
   retentionPolicy: RetentionPolicy;
   retentionExpiresAt?: Date | undefined;
+  /** Exact end of the pass; overrides the retention policy. */
+  validUntil?: Date | undefined;
   entryMode: EntryMode;
   /** Why this visit was authorized. Required — see the API schema. */
   purposeOfVisit: string;
-  /** Optional active operator the visitor is coming to meet. */
+  /** Optional active operator the visitor is coming to meet (the host). */
   personToMeetId?: string | undefined;
+  /** When the visit starts; faces load a few minutes before (a setting). */
   expectedInAt?: Date | undefined;
   actorId?: string | undefined;
 }
@@ -257,172 +269,159 @@ export interface ProvisionResult {
 }
 
 /**
- * Authorize a person onto one or more devices: create the entry, then queue
- * a user create followed by a photo push for each device. Order is
- * load-bearing within a device — the user must exist there before a photo can
- * attach to it — and is guaranteed by the queue's seq ordering, not by
- * timing. Across devices there is no ordering requirement: an IN terminal and
- * an OUT terminal are independent rosters that happen to share one person.
+ * Issue a pass: create the entry and one gate row per terminal it will use,
+ * then run the gate engine so anything due now is queued at once.
+ *
+ * Every check runs before anything is written. A person should never land on
+ * two of three intended terminals because the third failed a check after the
+ * first two were already queued.
  */
 export async function provisionPerson(input: ProvisionInput): Promise<ProvisionResult> {
-  // Pure request validation first: a malformed retention window should be
-  // answered as the 400 it is, not masked by whichever state check happens
-  // to fail first.
-  const retentionExpiresAt = resolveRetentionExpiry(
-    input.retentionPolicy,
-    input.retentionExpiresAt,
-  );
-
-  const person = await prisma.person.findUnique({
-    where: { id: input.personId },
-    include: { biometric: true },
-  });
-  if (!person) throw new ServiceError(404, "person not found");
-  if (!person.isActive) {
-    throw new ServiceError(409, "person is deactivated — reactivate before provisioning");
+  const now = new Date();
+  const validFrom = input.expectedInAt ?? now;
+  let validUntil = input.validUntil ?? resolveRetentionExpiry(input.retentionPolicy, input.retentionExpiresAt);
+  if (validUntil.getTime() <= now.getTime() || validUntil.getTime() <= validFrom.getTime()) {
+    throw new ServiceError(400, "the pass must end after it starts, and in the future");
   }
+
+  const person = await prisma.person.findUnique({ where: { id: input.personId }, include: { biometric: true } });
+  if (!person) throw new ServiceError(404, "person not found");
+  if (!person.isActive) throw new ServiceError(409, "person is deactivated — reactivate before provisioning");
   if (person.category !== PersonCategory.VISITOR) {
     throw new ServiceError(409, "employees use permanent device access, not visitor entries");
   }
-  if (!person.detailsComplete) {
-    throw new ServiceError(409, "complete the visitor profile before provisioning");
-  }
+  if (person.blacklistedAt) throw new ServiceError(409, "this person is blacklisted — no pass can be issued until it is lifted");
+  if (!person.detailsComplete) throw new ServiceError(409, "complete the visitor profile before provisioning");
   if (!person.biometric) {
-    throw new ServiceError(
-      409,
-      "person has no enrollment photo — upload one or enroll them on the device first",
-    );
+    throw new ServiceError(409, "person has no enrollment photo — upload one or enroll them on the device first");
   }
   await assertPhotoUsable(person.biometric.photoPath);
-
-  if (
-    input.personToMeetId &&
-    !(await prisma.appUser.findFirst({ where: { id: input.personToMeetId, isActive: true } }))
-  ) {
+  if (input.personToMeetId && !(await prisma.appUser.findFirst({ where: { id: input.personToMeetId, isActive: true } }))) {
     throw new ServiceError(400, "person to meet must be an active operator");
   }
-
   const active = await prisma.entry.findFirst({
     where: { personId: person.id, state: { in: [...ACTIVE_ENTRY_STATES] } },
     orderBy: { createdAt: "desc" },
   });
-  if (active) {
-    throw new ServiceError(
-      409,
-      `person already has an active entry (${active.state}) — de-provision it first`,
-    );
-  }
+  if (active) throw new ServiceError(409, `person already has an active entry (${active.state}) — de-provision it first`);
 
-  const devices = await resolveTargetDevices(input.deviceIds);
-
-  // Every device is checked before anything is written. A person should
-  // never land on two of three intended devices because the third failed a
-  // check after the first two were already queued — that is a half-done
-  // authorization nobody asked for and no operator would notice mid-click.
-  for (const device of devices) {
-    // Refused before anything is written: a SINGLE_ENTRY authorization on a
-    // terminal that can swallow the OUT punch would enforce nothing, and
-    // would do so silently. Better to fail here, where an operator is
-    // looking at it, than to hand out an entry mode that quietly does not
-    // apply.
-    await assertSingleEntrySupported(device, input.entryMode);
-
-    if (device.maxFaces !== null && device.facesUsed >= device.maxFaces) {
-      throw new ServiceError(
-        409,
-        `device ${device.serialNo} is at face capacity (${device.facesUsed}/${device.maxFaces})`,
-      );
+  // Pass type: the one asked for, else the person's own.
+  const passTypeId = input.passTypeId ?? person.passTypeId ?? null;
+  const passType = passTypeId ? await prisma.passType.findUnique({ where: { id: passTypeId } }) : null;
+  if (passTypeId && (!passType || !passType.isActive)) throw new ServiceError(400, "select an active pass type");
+  if (passType) {
+    if (!passType.entryModes.includes(input.entryMode)) {
+      throw new ServiceError(400, `${passType.name} passes do not allow ${input.entryMode === EntryMode.SINGLE_ENTRY ? "single" : "multi"} entry`);
     }
-
-    // Validate before anything is written, let alone sent (CLAUDE.md #10).
-    // The access group is per-device, so this must run for each one.
-    validateWire(
-      () =>
-        buildCreateUser({ pin: person.esslUserId, name: person.name, grp: device.normalGroupId }),
-      "provision this person",
-    );
+    if (passType.credentialCapsValidity && passType.credentialLabel) {
+      if (!person.credentialExpiresAt) throw new ServiceError(409, `${passType.credentialLabel} expiry is not recorded`);
+      const cap = endOfIstDay(person.credentialExpiresAt);
+      if (cap.getTime() <= now.getTime()) throw new ServiceError(409, `${passType.credentialLabel} has expired`);
+      if (cap < validUntil) validUntil = cap;
+    }
+    if (passType.maxValidityDays !== null && validUntil > endOfIstDay(validFrom, passType.maxValidityDays)) {
+      throw new ServiceError(400, `${passType.name} passes last at most ${passType.maxValidityDays} day(s)`);
+    }
+  }
+  // One entry, one day: a single-entry face is removed after use, so a
+  // multi-day single-entry pass would lock its holder out after day one.
+  if (input.entryMode === EntryMode.SINGLE_ENTRY && validUntil > endOfIstDay(validFrom)) {
+    throw new ServiceError(400, "single entry passes end the same day; use multi entry for longer passes");
   }
 
-  const photoPath = person.biometric.photoPath;
+  // Terminals: by zone (their ancestors included), or an explicit list.
+  let devices: Device[];
+  let zoneIds: string[] = [];
+  let exitCodeZoneIds: string[] = [];
+  if (input.zoneIds?.length) {
+    zoneIds = [...new Set(input.zoneIds)];
+    devices = await zoneDevices(zoneIds);
+    if (!devices.some((d) => d.role !== DeviceRole.OUT)) {
+      throw new ServiceError(409, "the selected zones have no entry terminal placed in them yet");
+    }
+    if (input.entryMode === EntryMode.SINGLE_ENTRY) {
+      const closure = new Set(devices.map((d) => d.zoneId).filter((z): z is string => z !== null));
+      if (input.exitCodeZoneIds) {
+        exitCodeZoneIds = [...new Set(input.exitCodeZoneIds)];
+        if (exitCodeZoneIds.some((z) => !closure.has(z))) throw new ServiceError(400, "exit-code zones must be among the pass's zones");
+      } else {
+        exitCodeZoneIds = (await prisma.zone.findMany({ where: { id: { in: [...closure] }, exitCodeDefault: true }, select: { id: true } })).map((z) => z.id);
+      }
+    }
+  } else {
+    devices = await resolveTargetDevices(input.deviceIds);
+  }
 
-  return prisma.$transaction(async (tx) => {
-    const entry = await tx.entry.create({
+  for (const device of devices) {
+    if (device.maxFaces !== null && device.facesUsed >= device.maxFaces) {
+      throw new ServiceError(409, `device ${device.serialNo} is at face capacity (${device.facesUsed}/${device.maxFaces})`);
+    }
+    validateWire(() => buildCreateUser({ pin: person.esslUserId, name: person.name, grp: device.normalGroupId }), "provision this person");
+  }
+
+  const { entryLoadLeadMinutes } = await getSettings();
+  // A due-or-past load time is fine: the tick below queues it at once.
+  const loadAt = new Date(validFrom.getTime() - entryLoadLeadMinutes * 60_000);
+  const planned = planGates(devices, {
+    entryMode: input.entryMode,
+    exitCodeZoneIds: new Set(exitCodeZoneIds),
+    loadAt,
+    unloadAt: validUntil,
+    reason: GateReason.SCHEDULE,
+  });
+
+  const entry = await prisma.$transaction(async (tx) => {
+    const created = await tx.entry.create({
       data: {
         personId: person.id,
         state: EntryState.PENDING_PROVISION,
-        retentionPolicy: input.retentionPolicy,
-        retentionExpiresAt,
+        retentionPolicy: input.validUntil ? RetentionPolicy.CUSTOM : input.retentionPolicy,
+        retentionExpiresAt: validUntil,
         entryMode: input.entryMode,
         purposeOfVisit: input.purposeOfVisit,
         personToMeetId: input.personToMeetId ?? null,
         expectedInAt: input.expectedInAt ?? null,
         authorizedById: input.actorId ?? null,
+        passTypeId,
+        zoneIds,
+        exitCodeZoneIds,
       },
     });
-
-    // Taking ownership. However this person's face first got onto a terminal,
-    // from here it is loaded because we said so — which is what restores
-    // reconciliation's licence to remove them when this entry ends.
-    if (person.adoptedFromDevice) {
-      await tx.person.update({
-        where: { id: person.id },
-        data: { adoptedFromDevice: false },
-      });
-    }
-
-    const commands: SyncCommand[] = [];
-    for (const device of devices) {
-      commands.push(
-        await enqueueIn(tx, {
-          type: CommandType.PROVISION,
-          targetDeviceId: device.id,
-          payload: { pin: person.esslUserId, name: person.name, grp: device.normalGroupId },
-          // Scoped per device: the same entry gets one PROVISION per device it
-          // spans, and each needs its own idempotency key or the second
-          // device's command would collide with the first's.
-          idempotencyKey: `provision:${entry.id}:${device.id}`,
-          entryId: entry.id,
-          personId: person.id,
-          initiatedById: input.actorId,
-        }),
-      );
-      commands.push(
-        await enqueueIn(tx, {
-          type: CommandType.PUSH_PHOTO,
-          targetDeviceId: device.id,
-          // The JPEG is read from disk at send time, never carried in the
-          // row — the photo stays the artifact on disk, the DB stays lean.
-          payload: { pin: person.esslUserId, photoPath },
-          idempotencyKey: `push-photo:${entry.id}:${device.id}`,
-          entryId: entry.id,
-          personId: person.id,
-          initiatedById: input.actorId,
-        }),
-      );
-    }
-
+    // Taking ownership: however this face first reached a terminal, from now
+    // on it is there because a pass says so, which restores reconciliation's
+    // licence to remove it when the pass ends.
+    if (person.adoptedFromDevice) await tx.person.update({ where: { id: person.id }, data: { adoptedFromDevice: false } });
+    await tx.passGate.createMany({ data: planned.map((g) => ({ ...g, entryId: created.id })) });
     await tx.auditLog.create({
       data: auditRow({
         action: AuditAction.ENTRY_PROVISION_REQUESTED,
         entityType: "entry",
-        entityId: entry.id,
+        entityId: created.id,
         detail: {
           personId: person.id,
           esslUserId: person.esslUserId,
           deviceIds: devices.map((d) => d.id),
-          deviceSerialNos: devices.map((d) => d.serialNo),
-          retentionPolicy: input.retentionPolicy,
-          retentionExpiresAt: retentionExpiresAt.toISOString(),
+          gateDeviceIds: planned.map((g) => g.deviceId),
+          zoneIds,
+          exitCodeZoneIds,
+          passTypeId,
+          validFrom: validFrom.toISOString(),
+          validUntil: validUntil.toISOString(),
           entryMode: input.entryMode,
           personToMeetId: input.personToMeetId ?? null,
         },
         actorId: input.actorId ?? null,
       }),
     });
-
-    return { entry, devices, commands };
+    return created;
   });
+
+  await gateTick(silentLog);
+  const commands = await prisma.syncCommand.findMany({ where: { entryId: entry.id }, orderBy: { seq: "asc" } });
+  return { entry, devices, commands };
 }
+
+const silentLog: Logger = { info: () => undefined, warn: () => undefined };
 
 // ---------------------------------------------------------------------------
 // Block / unblock — a pure authorization change; the biometric is untouched
@@ -510,82 +509,40 @@ export async function deprovisionEntry(
   entryId: string,
   actorId?: string,
 ): Promise<{ entry: Entry; devices: Device[]; commands: SyncCommand[] }> {
-  const entry = await prisma.entry.findUnique({
-    where: { id: entryId },
-    include: { person: true },
-  });
+  const entry = await prisma.entry.findUnique({ where: { id: entryId }, include: { person: true } });
   if (!entry) throw new ServiceError(404, "entry not found");
 
   // The rule that must never be bypassed: removing a person's credential
   // while they are inside the site strands them at the exit barrier.
   if (entry.state === EntryState.INSIDE) {
-    throw new ServiceError(
-      409,
-      "person is INSIDE — de-provisioning is deferred until they punch OUT",
-    );
+    throw new ServiceError(409, "person is INSIDE — de-provisioning is deferred until they punch OUT");
   }
-  if (entry.state === EntryState.PENDING_DEPROVISION) {
-    throw new ServiceError(409, "entry is already de-provisioning");
-  }
+  if (entry.state === EntryState.PENDING_DEPROVISION) throw new ServiceError(409, "entry is already de-provisioning");
   if (entry.state === EntryState.REGISTERED) {
     throw new ServiceError(409, "entry is already closed — the person is not on any device");
   }
+  validateWire(() => buildDeleteUser({ pin: entry.person.esslUserId }), "de-provision this person");
 
-  const devices = await devicesForEntry(entryId);
-  validateWire(
-    () => buildDeleteUser({ pin: entry.person.esslUserId }),
-    "de-provision this person",
-  );
-
-  // Only a completed provision was counted against the device's face
-  // capacity, so only that one is given back. Cancelling a still-pending
-  // provision must not decrement a count it never incremented. Entry-wide,
-  // not per device: PENDING_PROVISION/PROVISIONED describes how far the
-  // whole authorization got, not any one device's progress.
-  const countedOnDevice = entry.state === EntryState.PROVISIONED;
+  const now = new Date();
   const fromState = entry.state;
-
-  return prisma.$transaction(async (tx) => {
-    const moved = await tx.entry.updateMany({
-      where: { id: entryId, state: fromState },
-      data: { state: EntryState.PENDING_DEPROVISION },
-    });
-    if (moved.count !== 1) {
-      throw new ServiceError(409, "entry changed state concurrently — retry");
-    }
-
-    const commands: SyncCommand[] = [];
-    for (const device of devices) {
-      commands.push(
-        await enqueueIn(tx, {
-          type: CommandType.DEPROVISION,
-          targetDeviceId: device.id,
-          payload: { pin: entry.person.esslUserId, countedOnDevice },
-          idempotencyKey: `deprovision:${entryId}:${device.id}`,
-          entryId,
-          personId: entry.personId,
-          initiatedById: actorId,
-        }),
-      );
-    }
-
+  const devices = (await prisma.passGate.findMany({ where: { entryId, state: { in: [GateState.LOADING, GateState.LOADED] } }, include: { device: true } })).map((g) => g.device);
+  await prisma.$transaction(async (tx) => {
+    const moved = await tx.entry.updateMany({ where: { id: entryId, state: fromState }, data: { state: EntryState.PENDING_DEPROVISION } });
+    if (moved.count !== 1) throw new ServiceError(409, "entry changed state concurrently — retry");
+    await unloadAllGates([entryId], now, tx);
     await tx.auditLog.create({
       data: auditRow({
         action: AuditAction.ENTRY_DEPROVISION_REQUESTED,
         entityType: "entry",
         entityId: entryId,
-        detail: {
-          esslUserId: entry.person.esslUserId,
-          deviceIds: devices.map((d) => d.id),
-          fromState,
-          countedOnDevice,
-        },
+        detail: { esslUserId: entry.person.esslUserId, deviceIds: devices.map((d) => d.id), fromState },
         actorId: actorId ?? null,
       }),
     });
-
-    return { entry: { ...entry, state: EntryState.PENDING_DEPROVISION }, devices, commands };
   });
+  await gateTick(silentLog, now);
+  const commands = await prisma.syncCommand.findMany({ where: { entryId, type: CommandType.DEPROVISION }, orderBy: { seq: "asc" } });
+  return { entry: { ...entry, state: EntryState.PENDING_DEPROVISION }, devices, commands };
 }
 
 // ---------------------------------------------------------------------------
@@ -669,66 +626,61 @@ async function completeProvisionIfReady(command: SyncCommand, log: Logger): Prom
   if (!entryId) {
     if (command.type !== CommandType.PUSH_PHOTO || !command.personId) return;
     const changed = await prisma.employeeDeviceAccess.updateMany({
-      where: {
-        personId: command.personId,
-        deviceId: command.targetDeviceId,
-        desiredAccess: true,
-        provisioned: false,
-      },
+      where: { personId: command.personId, deviceId: command.targetDeviceId, desiredAccess: true, provisioned: false },
       data: { provisioned: true },
     });
     if (changed.count === 1) {
-      await prisma.device.update({
-        where: { id: command.targetDeviceId },
-        data: { facesUsed: { increment: 1 } },
-      });
+      await prisma.device.update({ where: { id: command.targetDeviceId }, data: { facesUsed: { increment: 1 } } });
     }
     return;
   }
 
-  // Both halves must land: a user with no photo cannot be recognised, and a
-  // photo with no user has nothing to attach to.
+  // One terminal at a time: both halves (user, then photo) must land on THIS
+  // terminal before its gate counts as loaded. A user with no photo cannot be
+  // recognised, and a photo with no user has nothing to attach to.
   const outstanding = await prisma.syncCommand.count({
     where: {
       entryId,
+      targetDeviceId: command.targetDeviceId,
       type: { in: [CommandType.PROVISION, CommandType.PUSH_PHOTO] },
       status: { not: CommandStatus.SUCCESS },
     },
   });
   if (outstanding > 0) return;
 
-  // Every device this entry was provisioned onto gets its face count
-  // incremented here, not just the device belonging to whichever command
-  // happened to be the last to resolve — otherwise a two-device entry would
-  // only ever credit one of its two devices.
-  const provisionCommands = await prisma.syncCommand.findMany({
-    where: { entryId, type: CommandType.PROVISION },
-    select: { targetDeviceId: true },
-  });
-  const deviceIds = [...new Set(provisionCommands.map((c) => c.targetDeviceId))];
-
+  const now = new Date();
   const changed = await prisma.$transaction(async (tx) => {
-    const advanced = await tx.entry.updateMany({
-      where: { id: entryId, state: EntryState.PENDING_PROVISION },
-      data: { state: EntryState.PROVISIONED },
+    const loaded = await tx.passGate.updateMany({
+      where: { entryId, deviceId: command.targetDeviceId, state: GateState.LOADING },
+      data: { state: GateState.LOADED, loadedAt: now },
     });
-    if (advanced.count !== 1) return false; // already advanced — replayed ack
-    await tx.device.updateMany({
-      where: { id: { in: deviceIds } },
-      data: { facesUsed: { increment: 1 } },
-    });
+    if (loaded.count !== 1) return false; // replayed ack, or a gate already moving out
+    await tx.device.update({ where: { id: command.targetDeviceId }, data: { facesUsed: { increment: 1 } } });
     await tx.auditLog.create({
-      data: auditRow({
-        action: AuditAction.ENTRY_PROVISIONED,
-        entityType: "entry",
-        entityId: entryId,
-        detail: { deviceIds },
-      }),
+      data: auditRow({ action: AuditAction.GATE_LOADED, entityType: "entry", entityId: entryId, detail: { deviceId: command.targetDeviceId } }),
     });
-    log.info({ entryId, deviceIds }, "entry PROVISIONED on every device");
+    // The pass counts as provisioned only once EVERY terminal due now has
+    // confirmed. Reporting it loaded while the exit terminal has not answered
+    // is how someone walks in and is then trapped. Gates scheduled for later,
+    // or exits waiting for the code, do not hold it back.
+    const stillLoading = await tx.passGate.count({ where: { entryId, state: GateState.LOADING } });
+    const advanced = stillLoading > 0
+      ? { count: 0 }
+      : await tx.entry.updateMany({
+          where: { id: entryId, state: EntryState.PENDING_PROVISION },
+          data: { state: EntryState.PROVISIONED },
+        });
+    if (advanced.count === 1) {
+      await tx.auditLog.create({
+        data: auditRow({ action: AuditAction.ENTRY_PROVISIONED, entityType: "entry", entityId: entryId, detail: { deviceId: command.targetDeviceId } }),
+      });
+    }
     return true;
   });
-  if (changed) await publishEntryById(entryId);
+  if (changed) {
+    log.info({ entryId, deviceId: command.targetDeviceId }, "pass loaded on terminal");
+    await publishEntryById(entryId);
+  }
 }
 
 async function applyBlockState(
@@ -766,9 +718,8 @@ async function completeDeprovision(command: SyncCommand, log: Logger): Promise<v
   const entryId = command.entryId;
   const payload = command.payload as { countedOnDevice?: boolean } | null;
 
-  // This device's own bookkeeping happens as soon as ITS removal is
-  // confirmed, independent of any other device the person was also loaded
-  // on — the face really is gone from this one now.
+  // This terminal's own bookkeeping happens as soon as ITS removal is
+  // confirmed, independent of any other terminal the pass is on.
   if (payload?.countedOnDevice) {
     await prisma.device.updateMany({
       where: { id: command.targetDeviceId, facesUsed: { gt: 0 } },
@@ -784,36 +735,15 @@ async function completeDeprovision(command: SyncCommand, log: Logger): Promise<v
     }
     return;
   }
+  await prisma.passGate.updateMany({
+    where: { entryId, deviceId: command.targetDeviceId, state: GateState.UNLOADING },
+    data: { state: GateState.DONE, doneAt: new Date() },
+  });
   await prisma.auditLog.create({
-    data: auditRow({
-      action: AuditAction.ENTRY_DEPROVISIONED,
-      entityType: "entry",
-      entityId: entryId,
-      detail: { deviceId: command.targetDeviceId },
-    }),
+    data: auditRow({ action: AuditAction.ENTRY_DEPROVISIONED, entityType: "entry", entityId: entryId, detail: { deviceId: command.targetDeviceId } }),
   });
-  log.info(
-    { entryId, deviceId: command.targetDeviceId },
-    "removed from device",
-  );
+  log.info({ entryId, deviceId: command.targetDeviceId }, "removed from terminal");
 
-  // The entry itself only closes once EVERY device it was loaded on confirms
-  // removal — an entry can span more than one device, and closing on the
-  // first ack would mark the person fully de-provisioned while a face still
-  // sits on a second device with nothing left to say so.
-  const outstanding = await prisma.syncCommand.count({
-    where: { entryId, type: CommandType.DEPROVISION, status: { not: CommandStatus.SUCCESS } },
-  });
-  if (outstanding > 0) return;
-
-  const closed = await prisma.entry.updateMany({
-    where: { id: entryId, state: EntryState.PENDING_DEPROVISION },
-    // The cycle ends where it began. The person's record, photo and history
-    // are untouched — only the device's working set changed.
-    data: { state: EntryState.REGISTERED, dayBlocked: false },
-  });
-  if (closed.count === 1) {
-    log.info({ entryId }, "entry de-provisioned from every device — record retained");
-    await publishEntryById(entryId);
-  }
+  // The pass itself closes only once EVERY gate is done.
+  if (await closeFinishedEntries()) await publishEntryById(entryId);
 }

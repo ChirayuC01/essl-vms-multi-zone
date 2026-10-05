@@ -161,6 +161,8 @@ export interface Person {
   credentialNumber: string | null;
   credentialExpiresAt: string | null;
   passTypeId: string | null;
+  blacklistedAt: string | null;
+  blacklistReason: string | null;
   esslUserId: string;
   isActive: boolean;
   resignedAt: string | null;
@@ -237,8 +239,27 @@ export interface Entry {
   inAt: string | null;
   outAt: string | null;
   createdAt: string;
+  passTypeId?: string | null;
+  zoneIds?: string[];
+  exitCodeZoneIds?: string[];
+  /** Innermost zone the holder is in; null = outside. */
+  locationZoneId?: string | null;
   person?: { id: string; name: string; company: string | null; esslUserId: string };
 }
+
+export type GateState = "PENDING" | "LOADING" | "LOADED" | "UNLOADING" | "DONE";
+/** One pass on one terminal (GET /api/entries/:id → gates). */
+export interface PassGate {
+  id: string;
+  state: GateState;
+  reason: "SCHEDULE" | "EXIT_CODE" | "OVERRIDE" | "WIDEN" | "MIGRATED";
+  loadAt: string;
+  unloadAt: string | null;
+  loadedAt: string | null;
+  doneAt: string | null;
+  device: { id: string; name: string | null; serialNo: string; role: string; zoneId: string | null };
+}
+export interface EntryDetail extends Entry { gates: PassGate[] }
 
 export type CommandStatus = "PENDING" | "SENT" | "SUCCESS" | "FAILED" | "RETRY";
 
@@ -416,6 +437,8 @@ export interface BoardEntry {
   outAt: string | null;
   retentionPolicy: string;
   retentionExpiresAt: string | null;
+  /** Innermost zone the holder is in (null = outside or no zone). */
+  locationZoneId?: string | null;
   person: { id: string; name: string; company: string | null; esslUserId: string };
 }
 

@@ -1,4 +1,4 @@
-import { CommandStatus, CommandType, EntryState, PersonCategory, type Device } from "@prisma/client";
+import { CommandStatus, CommandType, EntryState, GateState, PersonCategory, type Device } from "@prisma/client";
 import { buildSetGroup } from "../adms/commands.js";
 import { enqueue } from "../adms/queue.js";
 import type { UserRecord } from "../adms/parsers.js";
@@ -96,6 +96,10 @@ export async function reconcileUserRecord(
         where: { state: { in: [...ACTIVE_ENTRY_STATES] } },
         orderBy: { createdAt: "desc" },
         take: 1,
+        // Whether THIS terminal should hold them: a pass can be active while
+        // its face is meant to be gone from one terminal (a single-entry
+        // entry gate already used, an exit gate still waiting for the code).
+        include: { gates: { where: { deviceId: device.id }, take: 1 } },
       },
       employeeAccess: { where: { deviceId: device.id }, take: 1 },
     },
@@ -177,9 +181,12 @@ export async function reconcileUserRecord(
     return { pin: user.pin, drift: "IN_SYNC", healed: false };
   }
 
-  // No active entry, yet the device still has them. This is the dangerous
-  // case: an authorization that ended, with working access at the barrier.
-  if (!entry || entry.state === EntryState.REGISTERED) {
+  // No active entry, or an active pass that should not be on this terminal
+  // right now, yet the device still has them. This is the dangerous case:
+  // working access at a barrier nothing authorizes.
+  const gate = entry?.gates[0];
+  const meantToBeHere = gate !== undefined && (gate.state === GateState.LOADING || gate.state === GateState.LOADED);
+  if (!entry || entry.state === EntryState.REGISTERED || !meantToBeHere) {
     // ...unless we never put them there.
     //
     // A person adopted from an unclaimed enrollment is on the device because
@@ -346,16 +353,15 @@ export async function faceCountDrift(): Promise<FaceCountDrift[]> {
   });
   if (devices.length === 0) return [];
 
-  // One grouped query for every device rather than a count each.
-  const loaded = await prisma.syncCommand.groupBy({
-    by: ["targetDeviceId"],
-    where: {
-      type: CommandType.PROVISION,
-      entry: { state: { in: [EntryState.PROVISIONED, EntryState.INSIDE] } },
-    },
+  // One grouped query for every device rather than a count each. A gate
+  // counts from its load acknowledgement until its removal acknowledgement,
+  // exactly when facesUsed moves.
+  const loaded = await prisma.passGate.groupBy({
+    by: ["deviceId"],
+    where: { state: { in: [GateState.LOADED, GateState.UNLOADING] } },
     _count: { _all: true },
   });
-  const expectedBy = new Map(loaded.map((r) => [r.targetDeviceId, r._count._all]));
+  const expectedBy = new Map(loaded.map((r) => [r.deviceId, r._count._all]));
   const employees = await prisma.employeeDeviceAccess.groupBy({
     by: ["deviceId"],
     where: { desiredAccess: true, provisioned: true },

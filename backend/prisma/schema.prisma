@@ -70,6 +70,27 @@ enum CommandType {
   CLEAR_LOGS
 }
 
+// Where one pass stands on one terminal (Phase 4). PENDING = scheduled, not
+// yet sent; LOADING / UNLOADING = command queued, awaiting the terminal's
+// acknowledgement; LOADED = the face is on the terminal; DONE = removed (or
+// never needed).
+enum GateState {
+  PENDING
+  LOADING
+  LOADED
+  UNLOADING
+  DONE
+}
+
+// Why a gate row exists.
+enum GateReason {
+  SCHEDULE
+  EXIT_CODE
+  OVERRIDE
+  WIDEN
+  MIGRATED
+}
+
 enum PassKind {
   SHORT_TERM
   LONG_TERM
@@ -154,6 +175,10 @@ model Person {
   // for employees and untyped visitors). Stored, not computed per read, so the
   // "needs details" list stays one indexed filter whatever the rules are.
   detailsComplete     Boolean   @default(false) @map("details_complete")
+  // Blacklist (Phase 4): removed from every gate and refused any pass until lifted.
+  blacklistedAt       DateTime? @map("blacklisted_at")
+  blacklistedById     String?   @map("blacklisted_by")
+  blacklistReason     String?   @map("blacklist_reason")
   // This face is on a terminal because somebody enrolled it there, not
   // because we pushed it — a person adopted from an unclaimed enrollment, or
   // one who predates this installation entirely. Reconciliation must not
@@ -209,7 +234,8 @@ model PassType {
   createdAt              DateTime    @default(now()) @map("created_at")
   updatedAt              DateTime    @updatedAt @map("updated_at")
 
-  people Person[]
+  people  Person[]
+  entries Entry[]
 
   @@map("pass_type")
 }
@@ -305,18 +331,60 @@ model Entry {
   dayBlocked         Boolean         @default(false) @map("day_blocked")
   authorizedById     String?         @map("authorized_by")
   createdAt          DateTime        @default(now()) @map("created_at")
+  // ---- Two-zone pass fields (Phase 4). An entry IS a pass: the retention
+  // window is its validity (expectedInAt = valid from, retentionExpiresAt =
+  // valid until), extended in place so every earlier entry stays valid.
+  passTypeId         String?         @map("pass_type_id")
+  // Zones the pass grants (their ancestors' gates are implied).
+  zoneIds            String[]        @default([]) @map("zone_ids")
+  // SINGLE entry only: zones whose exit gates load only after the exit code
+  // or a Security override.
+  exitCodeZoneIds    String[]        @default([]) @map("exit_code_zone_ids")
+  // The innermost zone the holder is in; null = outside (or unknown on a
+  // terminal not placed in a zone).
+  locationZoneId     String?         @map("location_zone_id")
 
   person       Person        @relation(fields: [personId], references: [id])
   authorizedBy AppUser?      @relation("EntryAuthorizedBy", fields: [authorizedById], references: [id])
   personToMeet AppUser?      @relation("EntryPersonToMeet", fields: [personToMeetId], references: [id])
   punchEvents  PunchEvent[]
   syncCommands SyncCommand[]
+  gates        PassGate[]
+  passType     PassType?     @relation(fields: [passTypeId], references: [id])
 
   @@index([state])
   @@index([personId])
   @@index([retentionExpiresAt])
   @@index([personToMeetId])
   @@map("entry")
+}
+
+// One pass on one terminal (Phase 4): when the face should arrive, when it
+// should leave, and where that stands. The gate engine (services/gates.ts)
+// turns due rows into queued commands; acknowledgements advance them.
+model PassGate {
+  id        String     @id @default(cuid())
+  entryId   String     @map("entry_id")
+  deviceId  String     @map("device_id")
+  state     GateState  @default(PENDING)
+  reason    GateReason @default(SCHEDULE)
+  loadAt    DateTime   @map("load_at")
+  // null = no scheduled removal yet (e.g. an exit gate that leaves on the
+  // holder's exit punch or at pass end).
+  unloadAt  DateTime?  @map("unload_at")
+  loadedAt  DateTime?  @map("loaded_at")
+  doneAt    DateTime?  @map("done_at")
+  createdAt DateTime   @default(now()) @map("created_at")
+  updatedAt DateTime   @updatedAt @map("updated_at")
+
+  entry  Entry  @relation(fields: [entryId], references: [id])
+  device Device @relation(fields: [deviceId], references: [id])
+
+  @@unique([entryId, deviceId])
+  @@index([state, loadAt])
+  @@index([state, unloadAt])
+  @@index([deviceId, state])
+  @@map("pass_gate")
 }
 
 // ---------------------------------------------------------------------------
@@ -432,6 +500,7 @@ model Device {
   syncCommands   SyncCommand[]
   punchEvents    PunchEvent[]
   employeeAccess EmployeeDeviceAccess[]
+  passGates      PassGate[]
 
   @@index([zoneId])
   @@map("device")

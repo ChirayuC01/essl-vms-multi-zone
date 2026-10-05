@@ -133,16 +133,19 @@ captures the face, and names a host. With `walkInRequiresHostClear` on
 (default) the host must Clear before anything is loaded; switched off, the
 pass is issued immediately. Steps 7–10 above then apply.
 
-### 5.3 Long-term passes (Phase 4)
+### 5.3 Long-term passes (Phase 4 — implemented)
 
 Security registers the person once and issues the pass. Faces stay loaded for
 the validity period and are removed automatically when it ends. A **single
 entry** long-term pass has no host, so its exit code goes to the **Security
 desk**. A multi-entry one has no exit code.
 
-## 6. Gate-loading rules (Phases 4 and 7)
+## 6. Gate-loading rules (Phase 4 — implemented; exit code itself Phase 7)
 
-Defaults shown; minutes are settings.
+Defaults shown; minutes are settings. A **gate engine** runs every minute and
+is the only thing that loads or removes faces. Each pass has one row per
+terminal saying when the face arrives and leaves; the operator console shows
+it on the person page ("scheduled / loading / loaded / removing / removed").
 
 | Event | Single entry | Multi entry |
 |---|---|---|
@@ -155,17 +158,42 @@ Defaults shown; minutes are settings.
 
 **Which exits need the code** is chosen per pass: the office (outer) exit
 always, by default; the yard exit only if ticked on a yard pass. An exit not
-covered by the code is loaded with the entry gates.
+covered by the code is loaded with the entry gates. Each zone's default comes
+from its "exit code by default" setting.
+
+Further rules:
+
+- **A single-entry pass lasts one day.** A multi-day single-entry pass is
+  refused, because the holder would be locked out after the first day. Use
+  multi entry for longer passes.
+- **Location** follows the zone tree. In at the yard gate means "in the
+  yard"; out of the yard means "back in the premise"; out of the outer gate
+  means "outside".
+- **A two-way (BOTH) terminal**, at sites without separate IN/OUT gates:
+  - its face loads with the entry gates
+  - single entry removes it 10 minutes after the OUT punch
+  - the exit code never applies to it
+
+  The old "blocked for the rest of the day, reset at midnight" mechanism is
+  retired.
+- **A pass also works without zones.** It can name terminals directly, which
+  is how single-entrance sites and older integrations keep working.
+- **Upgrade:** passes live at upgrade time keep exactly the terminals they
+  were on (no face is re-sent).
 
 ## 7. Controls
 
-- **Blacklist** (Security In-charge) — removes the person from every terminal
-  at once and blocks any new pass until lifted. Phase 4.
-- **Zone widening** (host) — add a zone (e.g. Yard) during a visit; recorded
-  against the host. Phase 4.
+- **Blacklist** (Security In-charge; visitors only) — ends every pass at once
+  and blocks any new pass until lifted. Someone outside is removed from every
+  terminal. Someone inside keeps any exit already loaded, so they can be walked
+  out, and is listed as overstayed. Implemented, Phase 4.
+- **Zone widening** (host) — add a zone (e.g. Yard) during a visit; its
+  terminals load at once; recorded against the operator. Implemented, Phase 4.
+  (Limiting it to the visitor's own host comes with visit requests, Phase 6.)
 - **Exit override** (Security) — when the code route fails, Security releases
-  a single-entry visitor at the exit. Reason mandatory; logged with operator,
-  visitor, time and reason; shown in a report. Phase 4.
+  a single-entry visitor at the exit: the code-gated exit terminals load at
+  once. Reason mandatory; logged with operator, visitor, time and reason.
+  Implemented, Phase 4. The report comes in Phase 8.
 - **Security photo retake** — replace a poor selfie at the gate; re-pushed to
   the loaded terminals. Phase 6.
 - **Outage procedure** — while the system is down, site staff release people

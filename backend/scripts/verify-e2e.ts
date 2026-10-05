@@ -40,6 +40,7 @@ import { enqueue, stopQueueMaintenance, sweepTimeouts } from "../src/adms/queue.
 import { invalidateDevice } from "../src/adms/registry.js";
 import { photoPathFor } from "../src/user-id.js";
 import { sweepExpiredEntries } from "../src/jobs/expiry.js";
+import { gateTick } from "../src/services/gates.js";
 import { localDate } from "../src/services/entry-modes.js";
 import { ACTIVE_ENTRY_STATES } from "../src/services/entries.js";
 
@@ -103,7 +104,7 @@ if (!/_test(\?|$)/.test(config.databaseUrl.split("/").pop() ?? "")) {
 // Every PIN this run writes a photo for. Checked BEFORE anything happens,
 // because a guard that fires halfway through has already created files that
 // its own abort then skips cleaning up.
-const PHOTO_PINS = [PIN, PIN_SECOND, ALPHA_PIN, ORPHAN_PIN, "TWOGATE1"];
+const PHOTO_PINS = [PIN, PIN_SECOND, ALPHA_PIN, ORPHAN_PIN, "TWOGATE1", "ZONEV1", "ZONEV2"];
 
 /**
  * REFUSE to touch a photo we did not create.
@@ -251,6 +252,7 @@ async function resetDatabase(): Promise<void> {
   await prisma.$transaction([
     prisma.syncCommand.deleteMany({}),
     prisma.punchEvent.deleteMany({}),
+    prisma.passGate.deleteMany({}),
     prisma.entry.deleteMany({}),
     prisma.employeeDeviceAccess.deleteMany({}),
     prisma.attendanceDaySummary.deleteMany({}),
@@ -711,240 +713,74 @@ async function main() {
   await device.drain();
 
   // ======================================================================
-  section("6c. SINGLE_ENTRY — day-block on exit and the daily reset");
+  section("6c. SINGLE_ENTRY — the terminal drops the face after use (gate engine)");
   // ======================================================================
-  // Free the person first. Without this the provisions below fail with
-  // "already has an active entry" — a 409 for the wrong reason, which would
-  // make the refusal check below pass without testing anything.
-  await app.inject({
-    method: "POST",
-    url: `/api/entries/${entryId}/deprovision`,
-    headers: auth(token),
-  });
+  // Retired in Phase 4: the day-block on exit and the daily reset. Single
+  // entry now means the face leaves a terminal shortly after that terminal is
+  // used, and a single-entry pass lasts one day.
+  await app.inject({ method: "POST", url: `/api/entries/${entryId}/deprovision`, headers: auth(token) });
   await device.drain();
   const freed = await prisma.entry.findUniqueOrThrow({ where: { id: entryId } });
-  check(
-    "person is free to be re-authorized in a different entry mode",
-    freed.state === EntryState.REGISTERED,
-    freed.state,
-  );
+  check("person is free to be re-authorized in a different entry mode", freed.state === EntryState.REGISTERED, freed.state);
 
-  // The simulated device is role BOTH. SINGLE_ENTRY depends on seeing the OUT
-  // punch, and this firmware can suppress that, so an unsafe configuration is
-  // refused rather than silently enforcing nothing.
-  await prisma.device.update({
-    where: { serialNo: SN },
-    data: { duplicatePunchPeriodMinutes: 1 },
-  });
-  const refusedMode = await app.inject({
-    method: "POST",
-    url: `/api/people/${personId}/provision`,
-    headers: auth(token),
-    payload: { retentionPolicy: "ONE_DAY", entryMode: "SINGLE_ENTRY", purposeOfVisit: "E2E check" },
-  });
-  check(
-    "SINGLE_ENTRY is refused on a terminal that can swallow the OUT punch",
-    refusedMode.statusCode === 409,
-    `${refusedMode.statusCode} ${refusedMode.body}`,
-  );
-  check(
-    "...with a message naming the device setting to change",
-    /Duplicate Punch Period/.test(refusedMode.body),
-    refusedMode.body,
-  );
-
-  // MULTI_ENTRY does not depend on the OUT punch, so it must stay allowed on
-  // exactly the same device.
-  const multiStillOk = await app.inject({
-    method: "POST",
-    url: `/api/people/${personId}/provision`,
-    headers: auth(token),
-    payload: { retentionPolicy: "ONE_DAY", entryMode: "MULTI_ENTRY", purposeOfVisit: "E2E check" },
-  });
-  check(
-    "MULTI_ENTRY is unaffected by that setting",
-    multiStillOk.statusCode === 202,
-    `${multiStillOk.statusCode} ${multiStillOk.body}`,
-  );
-  await device.drain();
-  await app.inject({
-    method: "POST",
-    url: `/api/entries/${JSON.parse(multiStillOk.body).entry.id}/deprovision`,
-    headers: auth(token),
-  });
-  await device.drain();
-
-  await prisma.device.update({
-    where: { serialNo: SN },
-    data: { duplicatePunchPeriodMinutes: 0, lastDayResetOn: null },
-  });
-  const single = await app.inject({
+  const seSingleWeek = await app.inject({
     method: "POST",
     url: `/api/people/${personId}/provision`,
     headers: auth(token),
     payload: { retentionPolicy: "ONE_WEEK", entryMode: "SINGLE_ENTRY", purposeOfVisit: "E2E check" },
   });
-  check(
-    "SINGLE_ENTRY is accepted once the window is recorded as zero",
-    single.statusCode === 202,
-    `${single.statusCode} ${single.body}`,
-  );
+  check("a multi-day single-entry pass is refused", seSingleWeek.statusCode === 400 && /same day/.test(seSingleWeek.body), `${seSingleWeek.statusCode} ${seSingleWeek.body}`);
+
+  const single = await app.inject({
+    method: "POST",
+    url: `/api/people/${personId}/provision`,
+    headers: auth(token),
+    payload: { retentionPolicy: "ONE_DAY", entryMode: "SINGLE_ENTRY", purposeOfVisit: "E2E check" },
+  });
+  check("a one-day single-entry pass is accepted", single.statusCode === 202, `${single.statusCode} ${single.body}`);
   const singleEntryId = JSON.parse(single.body).entry.id as string;
   await device.drain();
+  const seFacesLoaded = (await prisma.device.findUniqueOrThrow({ where: { serialNo: SN } })).facesUsed;
 
-  // In, then out. The exit is what consumes the day.
-  await device.punch("2026-08-07 09:00:00", 0);
-  await device.punch("2026-08-07 12:00:00", 1);
+  // Punches at the device's real local time, so "10 minutes after" is now-relative.
+  const seDeviceNow = (plusMinutes = 0) =>
+    new Date(Date.now() + (TZ_OFFSET + plusMinutes) * 60_000).toISOString().replace("T", " ").slice(0, 19);
+  await device.punch(seDeviceNow(), 0);
+  await device.punch(seDeviceNow(1), 1);
   const exited = await prisma.entry.findUniqueOrThrow({ where: { id: singleEntryId } });
   check("the person is back outside", exited.state === EntryState.PROVISIONED, exited.state);
-  check(
-    "not marked blocked until the device confirms",
-    exited.dayBlocked === false,
-    `dayBlocked=${exited.dayBlocked}`,
-  );
+  const seUsedGate = await prisma.passGate.findFirstOrThrow({ where: { entryId: singleEntryId } });
+  const seMinutesOut = seUsedGate.unloadAt ? (seUsedGate.unloadAt.getTime() - Date.now()) / 60_000 : -1;
+  check("leaving through a two-way terminal schedules its seRemoval ~10 minutes later", seMinutesOut > 9 && seMinutesOut < 12, `${seMinutesOut.toFixed(1)} min`);
+  check("...and that scheduling is audited", (await prisma.auditLog.count({ where: { entityId: singleEntryId, action: "GATE_UNLOAD_SCHEDULED" } })) >= 1);
+  check("nothing is removed before the time comes", (await device.poll()) === null);
 
-  const exitBlockCmd = await device.poll();
-  check(
-    "a BLOCK is queued on the way out, moving them to the blocked group",
-    exitBlockCmd?.text.includes("Grp=100") === true,
-    exitBlockCmd?.text,
-  );
-  const blockRow = await prisma.syncCommand.findFirstOrThrow({
-    where: { entryId: singleEntryId, type: CommandType.BLOCK },
-  });
-  check(
-    "queued as a system action — an entry mode, not somebody's decision",
-    blockRow.initiatedById === null,
-  );
-  await device.ack(exitBlockCmd!.wireId);
-  const blockedNow = await prisma.entry.findUniqueOrThrow({ where: { id: singleEntryId } });
-  check("marked blocked once confirmed", blockedNow.dayBlocked === true);
+  // Let the 10 minutes pass.
+  await prisma.passGate.update({ where: { id: seUsedGate.id }, data: { unloadAt: new Date(Date.now() - 1000) } });
+  await sweepExpiredEntries(silentLog);
+  const seRemoval = await device.poll();
+  check("then the engine removes the face from the terminal", seRemoval?.text.startsWith("DATA DELETE USERINFO") === true, seRemoval?.text);
+  const seRemovalRow = await prisma.syncCommand.findFirstOrThrow({ where: { entryId: singleEntryId, type: CommandType.DEPROVISION } });
+  check("queued as a system action — an entry mode, not somebody's decision", seRemovalRow.initiatedById === null);
+  await device.ack(seRemoval!.wireId);
+  const seDoneGate = await prisma.passGate.findUniqueOrThrow({ where: { id: seUsedGate.id } });
+  const seFacesAfter = (await prisma.device.findUniqueOrThrow({ where: { serialNo: SN } })).facesUsed;
+  check("the gate is done once the terminal confirms, and the face count is given back", seDoneGate.state === "DONE" && seFacesAfter === seFacesLoaded - 1, `${seDoneGate.state} ${seFacesLoaded}→${seFacesAfter}`);
+  const seUsedUpEntry = await prisma.entry.findUniqueOrThrow({ where: { id: singleEntryId } });
+  check("the pass itself stays open until it ends (a record of today's visit)", seUsedUpEntry.state === EntryState.PROVISIONED, seUsedUpEntry.state);
 
-  const dayBlockedList = await app.inject({
-    method: "GET",
-    url: "/api/entries/day-blocked",
-    headers: auth(token),
-  });
-  check(
-    "and appears on the day-blocked list",
-    JSON.parse(dayBlockedList.body).total === 1,
-    dayBlockedList.body,
-  );
-
-  // The inside-now board (M10) answers from the same data in one request.
-  const boardBlocked = await app.inject({
-    method: "GET",
-    url: "/api/entries/board",
-    headers: auth(token),
-  });
-  const boardBlockedBody = JSON.parse(boardBlocked.body);
-  check(
-    "the board reports them blocked and nobody inside",
-    boardBlockedBody.dayBlocked.length === 1 && boardBlockedBody.inside.length === 0,
-    boardBlocked.body,
-  );
+  const seBoardAfter = JSON.parse((await app.inject({ method: "GET", url: "/api/entries/board", headers: auth(token) })).body);
+  check("the board shows nobody inside", seBoardAfter.inside.length === 0, JSON.stringify(seBoardAfter.inside));
   check(
     "the board carries the server's clock, so a drifted gate PC cannot judge expiry",
-    typeof boardBlockedBody.serverTime === "string" &&
-      Math.abs(Date.now() - new Date(boardBlockedBody.serverTime).getTime()) < 60_000,
-    boardBlockedBody.serverTime,
+    typeof seBoardAfter.serverTime === "string" && Math.abs(Date.now() - new Date(seBoardAfter.serverTime).getTime()) < 60_000,
+    seBoardAfter.serverTime,
   );
 
-  // Re-entry on the same day must not silently work. The device denies them,
-  // and a denial is never pushed to the server — so the absence of a new
-  // punch is the expected observation, and the block state is what we assert.
-  const stillBlocked = await prisma.entry.findUniqueOrThrow({ where: { id: singleEntryId } });
-  check(
-    "they stay blocked for the rest of the day",
-    stillBlocked.dayBlocked === true && stillBlocked.state === EntryState.PROVISIONED,
-    stillBlocked.state,
-  );
+  // Closing a used-up pass is immediate: there is nothing left on any terminal.
+  await app.inject({ method: "POST", url: `/api/entries/${singleEntryId}/deprovision`, headers: auth(token) });
+  check("closing a used-up pass needs no device work", (await prisma.entry.findUniqueOrThrow({ where: { id: singleEntryId } })).state === EntryState.REGISTERED);
 
-  // A second exit punch must not queue a second block.
-  const beforeDup = await prisma.syncCommand.count({
-    where: { entryId: singleEntryId, type: CommandType.BLOCK },
-  });
-  await device.punch("2026-08-07 12:30:00", 1);
-  const afterDup = await prisma.syncCommand.count({
-    where: { entryId: singleEntryId, type: CommandType.BLOCK },
-  });
-  check("an already-blocked person is not blocked again", beforeDup === afterDup, `${beforeDup} → ${afterDup}`);
-
-  // The reset is keyed to the DEVICE's local day, and it has not rolled over
-  // yet — the device was just marked as reset for today.
-  await prisma.device.update({
-    where: { serialNo: SN },
-    data: { lastDayResetOn: localDate(new Date(), TZ_OFFSET) },
-  });
-  const noReset = await app.inject({
-    method: "POST",
-    url: "/api/entries/daily-reset",
-    headers: auth(token),
-  });
-  check(
-    "the reset does nothing twice in the same device-local day",
-    JSON.parse(noReset.body).devicesReset === 0,
-    noReset.body,
-  );
-
-  // Roll the device into a new day. Deliberately expressed as "the last reset
-  // was yesterday" rather than by moving a clock, because that is exactly the
-  // state a service that was down at midnight wakes up in.
-  await prisma.device.update({
-    where: { serialNo: SN },
-    data: { lastDayResetOn: "2000-01-01" },
-  });
-  const didReset = await app.inject({
-    method: "POST",
-    url: "/api/entries/daily-reset",
-    headers: auth(token),
-  });
-  const resetBody = JSON.parse(didReset.body);
-  check(
-    "a new device-local day releases them",
-    resetBody.devicesReset === 1 && resetBody.unblocked === 1,
-    didReset.body,
-  );
-  const unblockCmdReset = await device.poll();
-  check(
-    "the unblock restores the normal group",
-    unblockCmdReset?.text.includes("Grp=1") === true,
-    unblockCmdReset?.text,
-  );
-  await device.ack(unblockCmdReset!.wireId);
-  const released = await prisma.entry.findUniqueOrThrow({ where: { id: singleEntryId } });
-  check("entry is no longer day-blocked", released.dayBlocked === false);
-  check("and is still PROVISIONED, ready for another visit", released.state === EntryState.PROVISIONED);
-
-  // A lapsed person must NOT be handed working access by the reset — the
-  // sweeper is about to remove them.
-  await prisma.entry.update({
-    where: { id: singleEntryId },
-    data: { dayBlocked: true, retentionExpiresAt: new Date(Date.now() - 60_000) },
-  });
-  await prisma.device.update({ where: { serialNo: SN }, data: { lastDayResetOn: "2000-01-01" } });
-  const lapsedReset = await app.inject({
-    method: "POST",
-    url: "/api/entries/daily-reset",
-    headers: auth(token),
-  });
-  check(
-    "the reset refuses to un-block a person whose window has already closed",
-    JSON.parse(lapsedReset.body).unblocked === 0,
-    lapsedReset.body,
-  );
-
-  // Clean up: remove this entry and leave a fresh MULTI_ENTRY one behind.
-  await prisma.entry.update({
-    where: { id: singleEntryId },
-    data: { dayBlocked: false },
-  });
-  await app.inject({
-    method: "POST",
-    url: `/api/entries/${singleEntryId}/deprovision`,
-    headers: auth(token),
-  });
-  await device.drain();
   await app.inject({
     method: "POST",
     url: `/api/people/${personId}/provision`,
@@ -1446,6 +1282,7 @@ async function main() {
     );
 
     await prisma.syncCommand.deleteMany({ where: { targetDeviceId: outGate.id } });
+    await prisma.passGate.deleteMany({ where: { deviceId: outGate.id } });
     await prisma.device.delete({ where: { id: outGate.id } });
     await device.drain();
   }
@@ -1471,38 +1308,8 @@ async function main() {
       lastDayResetOn: localDate(new Date(), 0),
     },
   });
-  await prisma.device.update({
-    where: { serialNo: SN },
-    data: { lastDayResetOn: localDate(new Date(), TZ_OFFSET) },
-  });
-  const noneDue = await app.inject({
-    method: "POST",
-    url: "/api/entries/daily-reset",
-    headers: auth(token),
-  });
-  check(
-    "no device is reset when both have already had their local day",
-    JSON.parse(noneDue.body).devicesReset === 0,
-    noneDue.body,
-  );
-
-  await prisma.device.update({ where: { serialNo: SN }, data: { lastDayResetOn: "2000-01-01" } });
-  const oneDue = await app.inject({
-    method: "POST",
-    url: "/api/entries/daily-reset",
-    headers: auth(token),
-  });
-  check(
-    "only the device whose own local day rolled over is reset",
-    JSON.parse(oneDue.body).devicesReset === 1,
-    oneDue.body,
-  );
-  const farZone = await prisma.device.findUniqueOrThrow({ where: { id: utcDevice.id } });
-  check(
-    "...and the other device's reset date is left alone",
-    farZone.lastDayResetOn === localDate(new Date(), 0),
-    String(farZone.lastDayResetOn),
-  );
+  // (The per-device daily reset that used to be checked here is retired in
+  // Phase 4: single entry is enforced per terminal by the gate engine.)
 
   const timezoneUpdate = await app.inject({
     method: "PATCH",
@@ -1545,6 +1352,10 @@ async function main() {
   // same path, so an equal query count means the batch is genuinely batched.
   if (config.databaseLogQueries) {
     const lapse = async (people: string[]): Promise<void> => {
+      // Issue every pass first and only then backdate them: issuing runs the
+      // gate engine, which would otherwise end an earlier pass before the
+      // sweep being measured gets to it.
+      const issued: string[] = [];
       for (const v of people) {
         const res = await app.inject({
           method: "POST",
@@ -1552,12 +1363,10 @@ async function main() {
           headers: auth(token),
           payload: { retentionPolicy: "ONE_DAY", entryMode: "MULTI_ENTRY", purposeOfVisit: "E2E check" },
         });
-        await prisma.entry.update({
-          where: { id: JSON.parse(res.body).entry.id as string },
-          data: { retentionExpiresAt: new Date(Date.now() - 60_000) },
-        });
+        issued.push(JSON.parse(res.body).entry.id as string);
       }
       await device.drain();
+      await prisma.entry.updateMany({ where: { id: { in: issued } }, data: { retentionExpiresAt: new Date(Date.now() - 60_000) } });
     };
 
     // Free both people first, so each round starts from the same place.
@@ -3906,6 +3715,230 @@ async function main() {
     // Access: a role without document cells sees none.
     const docHostToken = JSON.parse((await app.inject({ method: "POST", url: "/api/auth/login", payload: { email: "host@vms.local", password: "role-password" } })).body).token as string;
     check("documents need their own access cell", (await app.inject({ method: "GET", url: docUrl, headers: auth(docHostToken) })).statusCode === 403);
+  }
+
+  // ======================================================================
+  section("30. Gate engine — per-terminal loading on a two-zone site");
+  // ======================================================================
+  {
+    const ge = (method: "GET" | "POST" | "PATCH", url: string, payload?: object) =>
+      app.inject({ method, url, headers: auth(token), ...(payload ? { payload } : {}) });
+    const zPremise = await prisma.zone.findFirstOrThrow({ where: { name: "E2E Premise" } });
+    const zYard = await prisma.zone.findFirstOrThrow({ where: { name: "E2E Yard" } });
+    const term = async (serial: string) => {
+      const d = await prisma.device.findUniqueOrThrow({ where: { serialNo: serial } });
+      return { id: d.id, sim: new SimulatedDevice(app, serial) };
+    };
+    const oIn = await term("E2EZONEOUTERIN");
+    const oOut = await term("E2EZONEOUTEROUT");
+    const yIn = await term("E2EZONEYARDIN");
+    const yOut = await term("E2EZONEYARDOUT");
+    const allTerms = [oIn, oOut, yIn, yOut];
+    const drainAll = async () => { for (const t of allTerms) await t.sim.drain(20); };
+    // Device-local "now", one second apart per call: two punches by the same
+    // person at the same terminal in the same second are one record (dedup).
+    let geSeq = 0;
+    const geNow = (_unused = 0) => {
+      geSeq += 1;
+      return new Date(Date.now() + TZ_OFFSET * 60_000 + geSeq * 1000).toISOString().replace("T", " ").slice(0, 19);
+    };
+    const gatesOf = async (entryId: string) =>
+      Object.fromEntries(
+        (await prisma.passGate.findMany({ where: { entryId } })).map((g) => [allTerms.find((t) => t.id === g.deviceId) === oIn ? "oIn" : g.deviceId === oOut.id ? "oOut" : g.deviceId === yIn.id ? "yIn" : "yOut", g]),
+      );
+    const tick = () => gateTick(silentLog);
+    const close = async (entryId: string) => {
+      await ge("POST", `/api/entries/${entryId}/deprovision`);
+      await drainAll();
+      await tick();
+    };
+
+    await testPhoto("ZONEV1");
+    const gv = JSON.parse((await ge("POST", "/api/people", registration("Zone Visitor", "ZONEV1"))).body) as { id: string };
+    const issue = (payload: object) => ge("POST", `/api/people/${gv.id}/provision`, { purposeOfVisit: "E2E zones", retentionPolicy: "ONE_DAY", ...payload });
+
+    // --- lead-time load
+    const later = await issue({ zoneIds: [zYard.id], entryMode: "MULTI_ENTRY", expectedInAt: new Date(Date.now() + 60 * 60_000).toISOString() });
+    check("a yard pass for later is accepted", later.statusCode === 202, later.body);
+    const laterId = JSON.parse(later.body).entry.id as string;
+    const laterGates = await gatesOf(laterId);
+    const leadSetting = (JSON.parse((await ge("GET", "/api/settings")).body) as { entryLoadLeadMinutes: number }).entryLoadLeadMinutes;
+    const leadMin = (laterGates.oIn!.loadAt.getTime() - Date.now()) / 60_000 + leadSetting;
+    check("a yard pass covers all four terminals (yard implies the premise)", Object.keys(laterGates).length === 4, Object.keys(laterGates).join());
+    check("faces are scheduled the configured lead time before the visit, not sent now", leadMin > 59 && leadMin < 61 && JSON.parse(later.body).commands.length === 0, `${leadMin.toFixed(1)} min incl. ${leadSetting} lead`);
+    await prisma.passGate.updateMany({ where: { entryId: laterId }, data: { loadAt: new Date(Date.now() - 1000) } });
+    const facesBefore = Object.fromEntries((await prisma.device.findMany({ where: { id: { in: allTerms.map((t) => t.id) } } })).map((d) => [d.id, d.facesUsed]));
+    const loadTick = await tick();
+    check("when the time comes the engine queues every terminal at once", loadTick.loadsQueued === 4, JSON.stringify(loadTick));
+    await drainAll();
+    const loaded = await prisma.entry.findUniqueOrThrow({ where: { id: laterId } });
+    check("multi entry: every terminal loads, exits included, and the pass is provisioned", loaded.state === EntryState.PROVISIONED && Object.values(await gatesOf(laterId)).every((g) => g.state === "LOADED"), loaded.state);
+    const facesNow = await prisma.device.findMany({ where: { id: { in: allTerms.map((t) => t.id) } } });
+    check("each terminal's face count rose by exactly one", facesNow.every((d) => d.facesUsed === (facesBefore[d.id] ?? 0) + 1));
+
+    // --- multi entry: movement and location, no removals
+    await oIn.sim.punch(geNow(), 0, "ZONEV1" as unknown as number);
+    check("in at the outer gate: inside the premise", (await prisma.entry.findUniqueOrThrow({ where: { id: laterId } })).locationZoneId === zPremise.id);
+    await yIn.sim.punch(geNow(1), 0, "ZONEV1" as unknown as number);
+    check("in at the yard gate: inside the yard", (await prisma.entry.findUniqueOrThrow({ where: { id: laterId } })).locationZoneId === zYard.id);
+    await yOut.sim.punch(geNow(2), 1, "ZONEV1" as unknown as number);
+    const inPremise = await prisma.entry.findUniqueOrThrow({ where: { id: laterId } });
+    check("out of the yard: back in the premise, still inside", inPremise.locationZoneId === zPremise.id && inPremise.state === EntryState.INSIDE, `${inPremise.locationZoneId} ${inPremise.state}`);
+    await oOut.sim.punch(geNow(3), 1, "ZONEV1" as unknown as number);
+    const outside = await prisma.entry.findUniqueOrThrow({ where: { id: laterId } });
+    check("out of the outer gate: outside", outside.locationZoneId === null && outside.state === EntryState.PROVISIONED);
+    check("multi entry never schedules a removal after use", Object.values(await gatesOf(laterId)).every((g) => g.unloadAt?.getTime() === outside.retentionExpiresAt?.getTime()));
+    await close(laterId);
+
+    // --- single entry, office pass: the outer exit waits for the code
+    check("exit-code zones outside the pass are refused", (await issue({ zoneIds: [zPremise.id], entryMode: "SINGLE_ENTRY", exitCodeZoneIds: [zYard.id] })).statusCode === 400);
+    const office = await issue({ zoneIds: [zPremise.id], entryMode: "SINGLE_ENTRY" });
+    const officeId = JSON.parse(office.body).entry.id as string;
+    const officeGates = await gatesOf(officeId);
+    check("single-entry office pass: only the outer entry loads; the exit waits for the code", Object.keys(officeGates).join() === "oIn", Object.keys(officeGates).join());
+    check("the pass records the office exit as code-gated by default", JSON.parse(office.body).entry.exitCodeZoneIds.join() === zPremise.id);
+    await drainAll();
+    await oIn.sim.punch(geNow(), 0, "ZONEV1" as unknown as number);
+    const inGateAfter = (await gatesOf(officeId)).oIn!;
+    const inMinutes = ((inGateAfter.unloadAt?.getTime() ?? 0) - Date.now()) / 60_000;
+    check("going in schedules the entry terminal's removal ~10 minutes later", inMinutes > 9 && inMinutes < 12, inMinutes.toFixed(1));
+    check("an exit override needs a reason", (await ge("POST", `/api/entries/${officeId}/exit-override`, {})).statusCode === 400);
+    const override = await ge("POST", `/api/entries/${officeId}/exit-override`, { reason: "Host unreachable" });
+    check("Security can release the visitor at the exit", override.statusCode === 202, override.body);
+    const overrideGate = (await gatesOf(officeId)).oOut;
+    check("...which loads the outer exit, marked as an override", overrideGate?.reason === "OVERRIDE", overrideGate?.reason);
+    const overrideAudit = await prisma.auditLog.findFirst({ where: { entityId: officeId, action: "EXIT_OVERRIDE" } });
+    check("the override is audited with operator, visitor and reason", overrideAudit !== null && overrideAudit.actorId !== null && (overrideAudit.detail as { reason?: string }).reason === "Host unreachable");
+    check("a second override is refused (exit already loaded)", (await ge("POST", `/api/entries/${officeId}/exit-override`, { reason: "again" })).statusCode === 409);
+    await drainAll();
+    await oOut.sim.punch(geNow(1), 1, "ZONEV1" as unknown as number);
+    const outGateAfter = (await gatesOf(officeId)).oOut!;
+    check("going out schedules the exit terminal's removal too", outGateAfter.unloadAt !== null && outGateAfter.unloadAt.getTime() > Date.now() + 9 * 60_000);
+    await prisma.passGate.updateMany({ where: { entryId: officeId }, data: { unloadAt: new Date(Date.now() - 1000) } });
+    await tick();
+    await drainAll();
+    check("after the 10 minutes both terminals are emptied", Object.values(await gatesOf(officeId)).every((g) => g.state === "DONE"));
+    await close(officeId);
+
+    // --- single entry, yard pass: yard exit free unless ticked
+    const yardFree = await issue({ zoneIds: [zYard.id], entryMode: "SINGLE_ENTRY", exitCodeZoneIds: [zPremise.id] });
+    const yardFreeId = JSON.parse(yardFree.body).entry.id as string;
+    check("yard pass, yard exit not ticked: the yard exit loads, only the outer exit waits", Object.keys(await gatesOf(yardFreeId)).sort().join() === "oIn,yIn,yOut");
+    await drainAll();
+    await close(yardFreeId);
+    const yardGated = await issue({ zoneIds: [zYard.id], entryMode: "SINGLE_ENTRY", exitCodeZoneIds: [zPremise.id, zYard.id] });
+    const yardGatedId = JSON.parse(yardGated.body).entry.id as string;
+    check("yard pass, yard exit ticked: both exits wait for the code", Object.keys(await gatesOf(yardGatedId)).sort().join() === "oIn,yIn");
+    await drainAll();
+    await close(yardGatedId);
+
+    // --- widening
+    const narrow = await issue({ zoneIds: [zPremise.id], entryMode: "MULTI_ENTRY" });
+    const narrowId = JSON.parse(narrow.body).entry.id as string;
+    await drainAll();
+    const widen = await ge("POST", `/api/entries/${narrowId}/widen`, { zoneId: zYard.id });
+    check("a loaded pass can be widened to the yard", widen.statusCode === 202, widen.body);
+    const widened = await gatesOf(narrowId);
+    check("...adding the yard terminals, marked as a widening", widened.yIn?.reason === "WIDEN" && widened.yOut?.reason === "WIDEN");
+    check("widening is audited against the operator", (await prisma.auditLog.count({ where: { entityId: narrowId, action: "ZONE_WIDENED", actorId: { not: null } } })) === 1);
+    await drainAll();
+
+    // --- blacklist
+    const bl = await ge("POST", `/api/people/${gv.id}/blacklist`, { reason: "E2E incident" });
+    check("Security in-charge can blacklist a visitor", bl.statusCode === 202, bl.body);
+    const purge = await prisma.syncCommand.count({ where: { entryId: narrowId, type: CommandType.DEPROVISION } });
+    check("...which queues removal from every terminal at once", purge === 4, String(purge));
+    await drainAll();
+    await tick();
+    check("...and closes the pass once they confirm", (await prisma.entry.findUniqueOrThrow({ where: { id: narrowId } })).state === EntryState.REGISTERED);
+    check("a blacklisted visitor cannot be issued a pass", (await issue({ zoneIds: [zPremise.id], entryMode: "MULTI_ENTRY" })).statusCode === 409);
+    const zoneEmployee = await prisma.person.findFirstOrThrow({ where: { esslUserId: "EMPZONEOFF" } });
+    check("employees are not blacklisted (access removal instead)", (await ge("POST", `/api/people/${zoneEmployee.id}/blacklist`, { reason: "x x x" })).statusCode === 409);
+    check("lifting the blacklist is allowed", (await ge("POST", `/api/people/${gv.id}/blacklist/lift`, { reason: "cleared" })).statusCode === 200);
+    // Blacklisting someone who is INSIDE must not strand them: their exit stays.
+    const blInside = await issue({ zoneIds: [zPremise.id], entryMode: "MULTI_ENTRY" });
+    const blInsideId = JSON.parse(blInside.body).entry.id as string;
+    await drainAll();
+    await oIn.sim.punch(geNow(), 0, "ZONEV1" as unknown as number);
+    await ge("POST", `/api/people/${gv.id}/blacklist`, { reason: "E2E inside" });
+    const blGates = await gatesOf(blInsideId);
+    check("blacklisting someone inside removes their entry terminal but keeps the exit they need", blGates.oIn?.state === "UNLOADING" && blGates.oOut?.state === "LOADED", `${blGates.oIn?.state} ${blGates.oOut?.state}`);
+    await drainAll();
+    await oOut.sim.punch(geNow(), 1, "ZONEV1" as unknown as number);
+    await drainAll();
+    await tick();
+    check("...and once they walk out the pass closes completely", (await prisma.entry.findUniqueOrThrow({ where: { id: blInsideId } })).state === EntryState.REGISTERED);
+    await ge("POST", `/api/people/${gv.id}/blacklist/lift`, { reason: "cleared again" });
+    check("blacklisting and lifting are audited", (await prisma.auditLog.count({ where: { entityId: gv.id, action: { in: ["BLACKLISTED", "BLACKLIST_LIFTED"] } } })) === 4);
+
+    // --- pass ends while the holder is inside
+    const late = await issue({ zoneIds: [zPremise.id], entryMode: "SINGLE_ENTRY" });
+    const lateId = JSON.parse(late.body).entry.id as string;
+    await drainAll();
+    await oIn.sim.punch(geNow(), 0, "ZONEV1" as unknown as number);
+    await ge("POST", `/api/entries/${lateId}/exit-override`, { reason: "release later" });
+    await drainAll();
+    await prisma.entry.update({ where: { id: lateId }, data: { retentionExpiresAt: new Date(Date.now() - 1000) } });
+    await prisma.passGate.updateMany({ where: { entryId: lateId, deviceId: oIn.id }, data: { unloadAt: null } });
+    const endTick = await tick();
+    const overstay = await prisma.entry.findUniqueOrThrow({ where: { id: lateId } });
+    const overstayGates = await gatesOf(lateId);
+    check("a pass ending while the holder is inside leaves them overstayed, not stranded", overstay.state === EntryState.INSIDE && endTick.overstayed >= 1);
+    check("...their entry terminal is removed but the exit terminal stays", overstayGates.oIn?.state === "UNLOADING" && overstayGates.oOut?.state === "LOADED");
+    const overdueList = JSON.parse((await ge("GET", "/api/entries/overdue")).body) as { items: { id: string }[] };
+    check("...and they are listed for Security", overdueList.items.some((i) => i.id === lateId));
+    await drainAll();
+    await oOut.sim.punch(geNow(1), 1, "ZONEV1" as unknown as number);
+    check("walking out closes the pass and queues the exit's removal at once", (await prisma.entry.findUniqueOrThrow({ where: { id: lateId } })).state === EntryState.PENDING_DEPROVISION && (await prisma.syncCommand.count({ where: { entryId: lateId, deviceId: undefined, type: CommandType.DEPROVISION, targetDeviceId: oOut.id } })) === 1);
+    await drainAll();
+    await tick();
+    check("...and once confirmed the pass is closed", (await prisma.entry.findUniqueOrThrow({ where: { id: lateId } })).state === EntryState.REGISTERED);
+
+    // --- per-terminal reconciliation: a face left on a used-up terminal is removed
+    const recon = await issue({ zoneIds: [zPremise.id], entryMode: "SINGLE_ENTRY" });
+    const reconId = JSON.parse(recon.body).entry.id as string;
+    await drainAll();
+    // Our records say the face was removed (gate done, count given back);
+    // the terminal says it still holds them.
+    await prisma.passGate.updateMany({ where: { entryId: reconId, deviceId: oIn.id }, data: { state: "DONE", doneAt: new Date() } });
+    await prisma.device.update({ where: { id: oIn.id }, data: { facesUsed: { decrement: 1 } } });
+    await app.inject({
+      method: "POST",
+      url: `/iclock/cdata.aspx?SN=E2EZONEOUTERIN&table=OPERLOG`,
+      payload: "USER PIN=ZONEV1\tName=Zone Visitor\tPri=0\tPasswd=\tCard=\tGrp=1\tTZ=0000000100000000\tVerify=-1",
+    });
+    check(
+      "reconciliation removes a face from a terminal its pass no longer needs, even while the pass is active",
+      (await prisma.syncCommand.count({ where: { personId: gv.id, targetDeviceId: oIn.id, type: CommandType.DEPROVISION, entryId: null } })) === 1,
+    );
+    await drainAll();
+    await close(reconId);
+
+    // --- face counts agree with the gates
+    const drift = JSON.parse((await ge("GET", "/api/devices/drift")).body) as { items: { deviceId: string }[] };
+    check("terminal face counts agree with loaded gates", !drift.items.some((d) => allTerms.some((t) => t.id === d.deviceId)), JSON.stringify(drift.items));
+
+    // --- the tick's cost does not grow with how many gates are due
+    if (config.databaseLogQueries) {
+      await testPhoto("ZONEV2");
+      const gv2 = JSON.parse((await ge("POST", "/api/people", registration("Zone Visitor Two", "ZONEV2"))).body) as { id: string };
+      const future = new Date(Date.now() + 60 * 60_000).toISOString();
+      const p1 = JSON.parse((await issue({ zoneIds: [zPremise.id], entryMode: "MULTI_ENTRY", expectedInAt: future })).body).entry.id as string;
+      await prisma.passGate.updateMany({ where: { entryId: p1 }, data: { loadAt: new Date(Date.now() - 1000) } });
+      const oneTick = await countQueries(() => tick());
+      await drainAll();
+      const p2 = JSON.parse((await ge("POST", `/api/people/${gv2.id}/provision`, { purposeOfVisit: "E2E", retentionPolicy: "ONE_DAY", zoneIds: [zYard.id], entryMode: "MULTI_ENTRY", expectedInAt: future })).body).entry.id as string;
+      await prisma.passGate.updateMany({ where: { entryId: p2 }, data: { loadAt: new Date(Date.now() - 1000) } });
+      const manyTick = await countQueries(() => tick());
+      check(
+        "an engine tick costs the same queries for 2 due gates as for 4",
+        manyTick.queries.length <= oneTick.queries.length && oneTick.result.loadsQueued === 2 && manyTick.result.loadsQueued === 4,
+        `${oneTick.result.loadsQueued} gates: ${oneTick.queries.length} queries; ${manyTick.result.loadsQueued} gates: ${manyTick.queries.length}`,
+      );
+      await drainAll();
+      await close(p1);
+      await close(p2);
+    }
   }
 
   // --- teardown ---------------------------------------------------------

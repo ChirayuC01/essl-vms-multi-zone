@@ -55,12 +55,30 @@ published to the internet only through a Cloudflare Tunnel whose ingress allows
   per-punch lookups. Direction from the terminal's role; status code
   corroborates.
 - **Jobs** (`jobs/index.ts`, pg-boss on the same database, own schema
-  `pgboss`). Today: expiry sweep (*/5 min), daily reset (*/15 min check),
-  reconcile (hourly, 25 IDs per sweep), retention (03:30), roster scan tick
-  (every minute). **Rebuild:** a one-minute gate-load engine tick replaces the
-  daily reset and absorbs the expiry sweep (Phase 4).
+  `pgboss`):
+  - **gate engine** tick every minute (`GATE_TICK_CRON`)
+  - reconcile hourly, 25 IDs per sweep
+  - retention at 03:30
+  - roster scan tick every minute
+
+  The old expiry sweep and daily reset are retired (Phase 4); their queues
+  are unscheduled at start-up.
+- **Gate engine** (`services/gates.ts`). One `pass_gate` row per (pass,
+  terminal) holds `loadAt` / `unloadAt` and a state (PENDING → LOADING →
+  LOADED → UNLOADING → DONE).
+  - Everything that changes access only edits rows: issuing a pass, a punch,
+    the pass ending, override, widening, blacklist.
+  - The tick turns due rows into queued commands (per-gate idempotency keys)
+    in a fixed number of queries.
+  - Acks advance rows and move face counts per terminal.
+  - A pass counts as provisioned only once no due terminal is still loading.
+  - Security operations live in `services/passes.ts`.
 - **Reconciliation** (`services/reconcile.ts`) — a security control: the
   terminal enforces no expiry, so a stale face opens the barrier silently.
+  Since Phase 4 it judges per terminal: a face on a terminal whose gate is not
+  loading or loaded is removed, even while the pass itself is active (e.g. a
+  used single-entry entry gate). Expected face counts are the loaded and
+  unloading gates.
 - **Audit** — every state change writes `audit_log`; system actions have a null
   actor. `sync_command.initiated_by` attributes device writes to operators.
 - **Licensing** — offline Ed25519 keys bound to the installation, 30-day trial,
@@ -77,7 +95,7 @@ Delivered phase by phase; see `PLAN.md` for the exact fields.
 | typed settings over `app_config` | Every site toggle (`services/settings.ts`, `api/settings.ts`) — **done** | 2 |
 | `Role`, `RolePermission`, `UserPermissionOverride` | Configurable access grid (`services/access.ts`, `api/access.ts`) — **done** | 2b |
 | `PassType`, Person fields, `PersonDocument` | Per-type validation (`services/pass-types.ts`), redaction (`services/redact.ts`), documents (`services/documents.ts`, `api/documents.ts`) — **done** | 3 |
-| `Entry` extended into a pass, `PassGate` | Per-terminal load/unload schedule | 4 |
+| `Entry` extended into a pass, `PassGate` | Per-terminal load/unload schedule (`services/gates.ts`, `services/passes.ts`) — **done** | 4 |
 | `Message`, `Otp`, link tokens, `ConsentRecord` | Outbox, OTPs, portal | 5 |
 | `VisitRequest`, `VisitRequestEvent` | Request workflow with full history | 6 |
 | `Outage` | Outage detection and automatic release | 7 |

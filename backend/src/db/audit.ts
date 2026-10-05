@@ -78,6 +78,17 @@ export const AuditAction = {
   DOCUMENT_UPLOADED: "DOCUMENT_UPLOADED",
   DOCUMENT_DOWNLOADED: "DOCUMENT_DOWNLOADED",
   DOCUMENT_REMOVED: "DOCUMENT_REMOVED",
+  // Gate engine (Phase 4). Queued = the engine decided; LOADED / the existing
+  // ENTRY_DEPROVISIONED = the terminal confirmed. The gap between them is
+  // where a terminal problem lives.
+  GATE_LOAD_QUEUED: "GATE_LOAD_QUEUED",
+  GATE_LOADED: "GATE_LOADED",
+  GATE_UNLOAD_QUEUED: "GATE_UNLOAD_QUEUED",
+  GATE_UNLOAD_SCHEDULED: "GATE_UNLOAD_SCHEDULED",
+  EXIT_OVERRIDE: "EXIT_OVERRIDE",
+  ZONE_WIDENED: "ZONE_WIDENED",
+  BLACKLISTED: "BLACKLISTED",
+  BLACKLIST_LIFTED: "BLACKLIST_LIFTED",
 } as const;
 export type AuditActionName = (typeof AuditAction)[keyof typeof AuditAction];
 

@@ -16,6 +16,7 @@ Hardware assumed: **two physical terminals** plus virtual ones as needed. See
 | 2 | §Phase 2 below | Owner approved commit 2026-10-05; step results not recorded |
 | 2b | §Phase 2b below | Owner approved commit 2026-10-05; step results not recorded |
 | 3 | §Phase 3 below | Owner approved commit 2026-10-05; step results not recorded |
+| 4 | §Phase 4 below | **VERIFIED** by owner (2026-10-05) |
 
 Record results here as `PASS` / `FAIL — note` per step when walking through.
 
@@ -483,5 +484,127 @@ the visitor profile".
 Run an export as in `PEOPLE_TRANSFER.md`, including `--database-url`.
 ✅ `people.json` holds the full numbers and the pass type names; the console
 never does.
+
+**Pass:** Steps 1–8 hold.
+
+---
+
+## Phase 4 — Gate engine
+
+**Layout:**
+- **Office zone:** your two real terminals, as Outer IN and Outer OUT.
+- **Yard zone:** two virtual terminals, as in Phase 1.
+
+Drive the virtual ones with the simulator (`TESTING_WITH_TWO_TERMINALS.md`).
+Restart the dev backend first (schema changed).
+
+Setup:
+1. Devices page: Office has **exit code by default** ticked; Yard doesn't.
+   Outer IN/OUT are in Office; `VIRTYARDIN`/`VIRTYARDOUT` in Yard.
+2. Have a complete **visitor** with a photo (call them V).
+
+### Step 1 — Multi-entry yard pass, loaded later
+
+V's page → **Issue pass**: zone **Yard**, Multi entry, Visit time = now + 30
+min, Valid until = today.
+
+✅ The pass shows four terminals, all **scheduled**, "from <visit time − 5
+min>".
+✅ Nothing appears on the Command queue yet.
+
+To skip the wait, set Visit time to now instead.
+✅ Within a minute all four show **loading**. The real terminals turn
+**loaded** by themselves. Drain the virtual ones:
+
+```powershell
+node scripts\sim-terminal.mjs drain VIRTYARDIN
+node scripts\sim-terminal.mjs drain VIRTYARDOUT
+```
+
+✅ All four **loaded**; the pass is PROVISIONED.
+
+### Step 2 — Location as V moves
+
+1. Walk through **Outer IN** (real). ✅ Inside Now: V, Location = Office.
+2. `sim-terminal.mjs in VIRTYARDIN <V's ID>`. ✅ Location = Yard.
+3. `sim-terminal.mjs out VIRTYARDOUT <V's ID>`. ✅ Location = Office.
+4. Walk out through **Outer OUT** (real). ✅ V leaves Inside Now.
+5. ✅ Multi entry: no terminal shows "leaves" earlier than the pass end.
+
+Close the pass (De-provision) before the next step.
+
+### Step 3 — Single-entry office pass: exit waits
+
+Issue: zone **Office**, **Single entry**.
+
+✅ Only **Outer IN** is listed; the form shows "Exit code needed at: Office
+exit" ticked.
+✅ The note reads "Exit terminals load after the exit code is verified, or a
+Security override".
+
+1. Walk through **Outer IN**. ✅ Outer IN shows "leaves <now + 10 min>".
+2. ❌ Try the Outer OUT terminal: **not recognised** (no face yet).
+3. Type a reason ("Host unreachable") → **Release at exit (override)**.
+   ✅ Outer OUT appears with *override*, loading, then loaded.
+4. ❌ Release again: refused (already loaded).
+5. Walk out through Outer OUT. ✅ Outer OUT shows "leaves <now + 10 min>".
+6. After 10 minutes: ✅ both terminals show **removed**, and ❌ V is no
+   longer recognised at either.
+
+### Step 4 — Single-entry yard pass: yard exit optional
+
+Issue for zone **Yard**, Single entry:
+- With only "Office exit" ticked: ✅ Outer IN, Yard IN and **Yard OUT** load;
+  Outer OUT waits.
+- With "Office exit" and "Yard exit" both ticked: ✅ only Outer IN and Yard IN
+  load.
+
+❌ A single-entry pass with "Valid until" on a later day is refused ("single
+entry passes end the same day").
+
+### Step 5 — Widening
+
+Issue a **multi-entry Office** pass, then on V's page **Add a zone… → Yard →
+Widen pass**.
+
+✅ Yard IN / Yard OUT appear marked *widen* and load.
+
+### Step 6 — Blacklist
+
+1. V's page → **Blacklist** with a reason, while V is **outside**.
+   ✅ Every terminal goes to removing, then removed. ✅ The pass closes.
+   ❌ Issuing a new pass is refused (blacklisted).
+2. **Lift blacklist.** Issue a multi-entry Office pass, walk V **in**, then
+   blacklist again.
+   ✅ Outer IN is removed but **Outer OUT stays loaded**. V is shown
+   **overstayed** on Inside Now and can still walk out. After they do, the pass
+   closes.
+3. Lift the blacklist.
+
+### Step 7 — Pass ends while inside
+
+Issue a single-entry Office pass with Valid until a few minutes ahead. Walk
+in; don't release.
+
+✅ After the end time V shows **overstayed** on Inside Now, and the warning
+explains it.
+✅ Use the override to let them out; after they exit, the pass closes.
+
+### Step 8 — Audit
+
+Reports → Audit trail.
+
+✅ `ENTRY_PROVISION_REQUESTED` (with zones and terminals) ·
+`GATE_LOAD_QUEUED` / `GATE_LOADED` · `GATE_UNLOAD_SCHEDULED` (after each
+single-entry use) · `GATE_UNLOAD_QUEUED` / `ENTRY_DEPROVISIONED` ·
+`EXIT_OVERRIDE` (with reason) · `ZONE_WIDENED` · `BLACKLISTED` /
+`BLACKLIST_LIFTED`.
+
+### Step 9 — Nothing old broke
+
+On a person with no zones involved (or if you remove all zones), issuing a
+pass still loads every registered terminal, as before.
+✅ The Provision page (returning visitor by ID) issues passes with the same
+form.
 
 **Pass:** Steps 1–8 hold.

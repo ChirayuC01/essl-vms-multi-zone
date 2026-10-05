@@ -68,12 +68,13 @@ const schema = z.object({
     .enum(["true", "false"])
     .default("false")
     .transform((v) => v === "true"),
-  // How often the expiry sweeper runs. It is the ONLY thing that removes a
-  // lapsed person from a device — there is no device-native expiry — so this
-  // interval is the worst-case window in which someone whose authorization
-  // ended can still open a barrier. Five minutes trades a small amount of
-  // that exposure against constant load on a possibly-remote database.
-  EXPIRY_SWEEP_CRON: z.string().min(1).default("*/5 * * * *"),
+  // How often the gate engine runs (services/gates.ts). It is the ONLY thing
+  // that loads a scheduled face and removes one whose pass ended or whose
+  // single-entry terminal was used — there is no device-native expiry — so
+  // this interval is the worst-case lateness of every load and removal. A
+  // minute keeps "load 5 min before, remove 10 min after" meaningful. Each
+  // tick is a fixed handful of queries however many passes there are.
+  GATE_TICK_CRON: z.string().min(1).default("* * * * *"),
   // pg-boss runs its own pool, separate from Prisma's. Kept small on purpose:
   // these jobs run minutes apart and never concurrently, and a managed
   // database's connection limit is a real constraint (CLAUDE.md #4).
@@ -82,16 +83,6 @@ const schema = z.object({
   // application schema so Prisma migrations and job-queue internals can never
   // collide, and so a DBA can see which tables are ours.
   JOBS_SCHEMA: z.string().min(1).default("pgboss"),
-  // The hour, in each DEVICE's local time, at which SINGLE_ENTRY people are
-  // un-blocked for a new day. 0 = midnight, matching the calendar-day meaning
-  // of "one entry per day". Raise it if a shift spans midnight, so the reset
-  // cannot un-block someone in the middle of their own shift.
-  DAILY_RESET_HOUR: z.coerce.number().int().min(0).max(23).default(0),
-  // How often to CHECK whether a device has rolled into a new local day. This
-  // is not the reset time — the reset happens once per device-local day
-  // whatever this is. A short interval only decides how promptly it lands
-  // after the hour, and lets a missed midnight be caught up quickly.
-  DAILY_RESET_CRON: z.string().min(1).default("*/15 * * * *"),
   // How often the reconciliation sweep asks the device about a slice of the
   // roster. This is a security control, not housekeeping: it is what catches a
   // person still loaded on a terminal after their authorization ended, which
@@ -208,11 +199,9 @@ export const config = {
   retentionPassesPerRun: env.RETENTION_PASSES_PER_RUN,
   reconcileCron: env.RECONCILE_CRON,
   reconcileBatch: env.RECONCILE_BATCH,
-  dailyResetHour: env.DAILY_RESET_HOUR,
-  dailyResetCron: env.DAILY_RESET_CRON,
   databaseLogQueries: env.DATABASE_LOG_QUERIES,
   deviceOfflineAfterSeconds: env.DEVICE_OFFLINE_AFTER_SECONDS,
-  expirySweepCron: env.EXPIRY_SWEEP_CRON,
+  gateTickCron: env.GATE_TICK_CRON,
   jobsPoolSize: env.JOBS_POOL_SIZE,
   jobsSchema: env.JOBS_SCHEMA,
   corsOrigins: env.CORS_ORIGINS.split(",")
@@ -236,7 +225,7 @@ export function redactedConfig(): Record<string, string | number> {
     logPretty: String(config.logPretty),
     corsOrigins: config.corsOrigins.length > 0 ? config.corsOrigins.join(",") : "<any origin>",
     deviceOfflineAfterSeconds: config.deviceOfflineAfterSeconds,
-    expirySweepCron: config.expirySweepCron,
+    gateTickCron: config.gateTickCron,
     faceCapacityWarnPercent: config.faceCapacityWarnPercent,
     faceCapacityCriticalPercent: config.faceCapacityCriticalPercent,
     commandStuckMinutes: config.commandStuckMinutes,
@@ -250,8 +239,6 @@ export function redactedConfig(): Record<string, string | number> {
     databaseLogQueries: String(config.databaseLogQueries),
     reconcileCron: config.reconcileCron,
     reconcileBatch: config.reconcileBatch,
-    dailyResetHour: config.dailyResetHour,
-    dailyResetCron: config.dailyResetCron,
     jobsPoolSize: config.jobsPoolSize,
     jobsSchema: config.jobsSchema,
     licensePublicKeyConfigured: config.licensePublicKey !== null ? "true" : "false",

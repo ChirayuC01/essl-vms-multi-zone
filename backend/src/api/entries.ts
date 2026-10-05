@@ -4,7 +4,8 @@ import { z } from "zod";
 import { prisma } from "../db/index.js";
 import { overdueInside, sweepExpiredEntries } from "../jobs/expiry.js";
 import { retentionStatus, runRetention } from "../jobs/retention.js";
-import { dayBlockedEntries, runDailyReset } from "../services/entry-modes.js";
+import { dayBlockedEntries } from "../services/entry-modes.js";
+import { exitOverride, passGates, widenZone } from "../services/passes.js";
 import { actorId } from "./auth.js";
 import { requirePermission } from "./permissions.js";
 import {
@@ -29,6 +30,14 @@ const provisionSchema = z.object({
   // entirely when exactly one device is registered, matching how a
   // single-device site has always worked.
   deviceIds: z.array(z.string().min(1)).min(1).optional(),
+  // The two-zone way: zones the pass grants. Their ancestors' gates are
+  // included. Preferred over deviceIds; when given, deviceIds is ignored.
+  zoneIds: z.array(z.string().min(1)).min(1).max(20).optional(),
+  // SINGLE entry: which zones' exits need the exit code (default per zone).
+  exitCodeZoneIds: z.array(z.string().min(1)).max(20).optional(),
+  passTypeId: z.string().min(1).optional(),
+  // Exact end of the pass; overrides retentionPolicy.
+  validUntil: z.coerce.date().optional(),
   retentionPolicy: z.nativeEnum(RetentionPolicy).default(RetentionPolicy.ONE_DAY),
   retentionExpiresAt: z.coerce.date().optional(),
   entryMode: z.nativeEnum(EntryMode).default(EntryMode.MULTI_ENTRY),
@@ -67,6 +76,10 @@ interface EntryRow {
   inAt: Date | null;
   outAt: Date | null;
   createdAt: Date;
+  passTypeId?: string | null;
+  zoneIds?: string[];
+  exitCodeZoneIds?: string[];
+  locationZoneId?: string | null;
   person?: { id: string; name: string; company: { name: string } | null; esslUserId: string } | undefined;
   personToMeet?: { id: string; name: string | null; email: string } | null | undefined;
 }
@@ -90,6 +103,10 @@ function entryDto(e: EntryRow) {
     inAt: e.inAt,
     outAt: e.outAt,
     createdAt: e.createdAt,
+    passTypeId: e.passTypeId ?? null,
+    zoneIds: e.zoneIds ?? [],
+    exitCodeZoneIds: e.exitCodeZoneIds ?? [],
+    locationZoneId: e.locationZoneId ?? null,
     ...(e.person
       ? {
           person: {
@@ -142,6 +159,10 @@ export async function entryRoutes(app: FastifyInstance): Promise<void> {
       personId: id,
       actorId: actorId(request),
       deviceIds: parsed.data.deviceIds,
+      zoneIds: parsed.data.zoneIds,
+      exitCodeZoneIds: parsed.data.exitCodeZoneIds,
+      passTypeId: parsed.data.passTypeId,
+      validUntil: parsed.data.validUntil,
       retentionPolicy: parsed.data.retentionPolicy,
       retentionExpiresAt: parsed.data.retentionExpiresAt,
       entryMode: parsed.data.entryMode,
@@ -240,6 +261,9 @@ export async function entryRoutes(app: FastifyInstance): Promise<void> {
       outAt: true,
       retentionPolicy: true,
       retentionExpiresAt: true,
+      locationZoneId: true,
+      zoneIds: true,
+      exitCodeZoneIds: true,
       person: {
         select: {
           id: true,
@@ -306,16 +330,6 @@ export async function entryRoutes(app: FastifyInstance): Promise<void> {
     return reply.send(result);
   });
 
-  // ---- run the daily reset now ---------------------------------------------
-  // The scheduled job checks every few minutes and acts once per device-local
-  // day. This is the same function on demand — it will do nothing if the
-  // device's day has already been reset, which is the correct answer and not
-  // a failure.
-  app.post("/entries/daily-reset", { preHandler: requirePermission("maintenance:update") }, async (request, reply) => {
-    const result = await runDailyReset(request.log);
-    return reply.send(result);
-  });
-
   // ---- day-blocked ---------------------------------------------------------
   // SINGLE_ENTRY people who have used today's visit. They are still loaded on
   // the device and still recognized by it — the terminal identifies them and
@@ -364,6 +378,16 @@ export async function entryRoutes(app: FastifyInstance): Promise<void> {
     if (!entry) return reply.code(404).send({ error: "entry not found" });
     return reply.send({
       ...entryDto(entry),
+      gates: (await passGates(id)).map((g) => ({
+        id: g.id,
+        state: g.state,
+        reason: g.reason,
+        loadAt: g.loadAt,
+        unloadAt: g.unloadAt,
+        loadedAt: g.loadedAt,
+        doneAt: g.doneAt,
+        device: g.device,
+      })),
       commands: entry.syncCommands.map(commandDto),
     });
   });
@@ -403,5 +427,24 @@ export async function entryRoutes(app: FastifyInstance): Promise<void> {
       devices: devices.map((d) => ({ id: d.id, serialNo: d.serialNo })),
       commands: commands.map(commandDto),
     });
+  });
+
+  // ---- exit override (Security) ---------------------------------------------
+  // A single-entry visitor whose exit code route failed (host unreachable,
+  // phone dead, SMS down). Loads the code-gated exit terminals; the reason is
+  // mandatory and recorded with operator, visitor and time.
+  app.post("/entries/:id/exit-override", { preHandler: requirePermission("exit_override:update") }, async (request, reply) => {
+    const parsed = z.object({ reason: z.string().trim().min(3).max(300) }).safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "a reason is required for an exit override" });
+    const { id } = request.params as { id: string };
+    return reply.code(202).send(await exitOverride(id, parsed.data.reason, actorId(request)));
+  });
+
+  // ---- widen a pass by a zone ----------------------------------------------
+  app.post("/entries/:id/widen", { preHandler: requirePermission("zone_widen:update") }, async (request, reply) => {
+    const parsed = z.object({ zoneId: z.string().min(1) }).safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "zoneId is required" });
+    const { id } = request.params as { id: string };
+    return reply.code(202).send(await widenZone(id, parsed.data.zoneId, actorId(request)));
   });
 }

@@ -12,13 +12,15 @@ import {
   type DeviceList,
   type DirectoryList,
   type Entry,
-  type OperatorOptionList,
   type Paged,
   type PersonDetail,
   type ZoneList,
   type PassTypeList,
 } from "@/lib/api";
 import { DocumentsCard } from "@/components/documents-card";
+import { IssuePassForm } from "@/components/issue-pass-form";
+import { PassGates } from "@/components/pass-gates";
+import { BlacklistControl } from "@/components/blacklist-control";
 import { EMPTY_PROFILE, ProfileFields, draftFromPerson, profilePayload } from "@/components/profile-fields";
 import { useEventStream } from "@/lib/events";
 import { useApi, refresh } from "@/lib/swr";
@@ -60,11 +62,6 @@ export default function PersonDetailPage() {
   const [chosenDeviceIds, setChosenDeviceIds] = useState<string[] | null>(null);
   const [accessDeviceIds, setAccessDeviceIds] = useState<string[]>([]);
   const [accessZoneIds, setAccessZoneIds] = useState<string[]>([]);
-  const [retentionPolicy, setRetentionPolicy] = useState("ONE_DAY");
-  const [customEndDate, setCustomEndDate] = useState("");
-  const [entryMode, setEntryMode] = useState("MULTI_ENTRY");
-  const [purposeOfVisit, setPurposeOfVisit] = useState("");
-  const [personToMeetId, setPersonToMeetId] = useState("");
   const [editing, setEditing] = useState(false);
   const [profile, setProfile] = useState({ name: "", category: "VISITOR", passTypeId: "" });
   const [draft, setDraft] = useState(EMPTY_PROFILE);
@@ -76,7 +73,6 @@ export default function PersonDetailPage() {
   const { data: companies } = useApi<DirectoryList>("/api/companies");
   const { data: departments } = useApi<DirectoryList>("/api/departments");
   const { data: passTypes } = useApi<PassTypeList>("/api/pass-types");
-  const { data: operators } = useApi<OperatorOptionList>("/api/operators/active");
   const { data: commandList } = useApi<Paged<Command>>(`/api/commands?personId=${id}&pageSize=25`);
 
   const devices: Device[] = deviceList?.items ?? [];
@@ -89,7 +85,6 @@ export default function PersonDetailPage() {
   // no picker is shown at all -- identical to how a single-device site has
   // always worked.
   const deviceIds = chosenDeviceIds ?? devices.map((d) => d.id);
-  const unregisteredCount = deviceList?.unregistered.length ?? 0;
   const queryDeviceId = deviceIds[0] ?? devices[0]?.id ?? "";
 
   function toggleDevice(id: string) {
@@ -116,37 +111,6 @@ export default function PersonDetailPage() {
 
   const activeEntry = person?.entries.find((e) => ACTIVE_STATES.includes(e.state)) ?? null;
 
-  // Per-device provisioning state for the active authorization, derived from
-  // the commands the page already has. One row per terminal the entry was
-  // provisioned onto -- so "on the IN gate, still pending at the OUT gate" is
-  // readable rather than hidden behind a single entry-level badge.
-  const entryDeviceStatus = (() => {
-    if (!activeEntry) return [];
-    const byDevice = new Map<string, { id: string; deviceLabel: string; statuses: string[] }>();
-    for (const c of commands) {
-      if (c.entryId !== activeEntry.id) continue;
-      if (c.type !== "PROVISION" && c.type !== "PUSH_PHOTO") continue;
-      const key = c.device.id;
-      const row = byDevice.get(key) ?? {
-        id: key,
-        deviceLabel: c.device.name ?? c.device.serialNo ?? key,
-        statuses: [],
-      };
-      row.statuses.push(c.status);
-      byDevice.set(key, row);
-    }
-    return [...byDevice.values()].map((row) => {
-      if (row.statuses.includes("FAILED")) {
-        return { ...row, label: "failed — never reached this terminal", tone: "danger" as const };
-      }
-      // Both halves have to land: the user must exist before the photo can
-      // attach to it, and a user with no face opens nothing.
-      const done = row.statuses.filter((st) => st === "SUCCESS").length;
-      return done >= 2
-        ? { ...row, label: "loaded", tone: "ok" as const }
-        : { ...row, label: `waiting for the terminal (${done}/2 confirmed)`, tone: "warn" as const };
-    });
-  })();
 
   async function run(label: string, action: () => Promise<unknown>, message: string) {
     setError(null);
@@ -302,6 +266,7 @@ export default function PersonDetailPage() {
       </Card>
 
       {can("documents:view") && <DocumentsCard personId={id} />}
+      <BlacklistControl person={person} onChanged={() => void refresh(`/api/people/${id}`)} />
 
       <div className="grid gap-4 lg:grid-cols-3">
         <Card title="Enrollment photo">
@@ -396,30 +361,7 @@ export default function PersonDetailPage() {
                 <Stat label="Person to meet" value={activeEntry.personToMeet?.name ?? activeEntry.personToMeet?.email ?? "not specified"} />
               </div>
 
-              {/* WHICH terminals this person is actually loaded on, per device,
-                  read from the entry's own commands.
-                  "PROVISIONED" is a single word covering any number of
-                  rosters, so on a two-gate site it cannot answer the question
-                  that matters: a person confirmed at the IN gate and pending at
-                  the OUT gate can enter and not leave, and the state badge
-                  looks identical either way. */}
-              <div className="rounded-[var(--radius)] bg-[var(--surface-muted)] p-3">
-                <p className="mb-2 text-xs font-medium">Loaded on</p>
-                {entryDeviceStatus.length === 0 ? (
-                  <p className="text-xs text-[var(--text-muted)]">
-                    No provisioning commands recorded for this authorization.
-                  </p>
-                ) : (
-                  <ul className="space-y-1 text-xs">
-                    {entryDeviceStatus.map((d) => (
-                      <li key={d.id} className="flex flex-wrap items-center gap-2">
-                        <span>{d.deviceLabel}</span>
-                        <Badge tone={d.tone}>{d.label}</Badge>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
+              <PassGates entryId={activeEntry.id} />
 
               <div className="flex flex-wrap gap-2">
                 {activeEntry.dayBlocked ? (
@@ -524,160 +466,7 @@ export default function PersonDetailPage() {
                 </p>
               )}
 
-              {/* A terminal that is checking in but was never registered gets
-                  NOTHING — it is not in this list, so it is not provisioned
-                  onto, and with only one registered device there is no picker
-                  here to hint that anything is missing. On a two-gate site
-                  that means a person loaded on the IN gate and unknown at the
-                  OUT gate: they walk in, and then cannot get out. Said here,
-                  where the provisioning decision is actually made, rather than
-                  only on the Devices page. */}
-              {unregisteredCount > 0 && (
-                <Alert tone="warn">
-                  {unregisteredCount === 1
-                    ? "A terminal is checking in that has not been registered"
-                    : `${unregisteredCount} terminals are checking in that have not been registered`}
-                  , so provisioning cannot load this person onto{" "}
-                  {unregisteredCount === 1 ? "it" : "them"}. On a two-gate site that leaves someone
-                  able to enter and not to leave.{" "}
-                  <Link href="/devices" className="underline">
-                    Register {unregisteredCount === 1 ? "it" : "them"} first
-                  </Link>
-                  .
-                </Alert>
-              )}
-
-              {/* Only shown once a second device exists. A single-device site
-                  never sees this -- provisioning still targets its one device
-                  automatically, exactly as it always has. */}
-              {devices.length > 1 && (
-                <Field label="Devices" hint="Provisions the person onto every device checked here">
-                  <div className="flex flex-wrap gap-3">
-                    {devices.map((d) => (
-                      <label key={d.id} className="flex items-center gap-2 text-sm">
-                        <input
-                          type="checkbox"
-                          checked={deviceIds.includes(d.id)}
-                          onChange={() => toggleDevice(d.id)}
-                        />
-                        {d.name ?? d.serialNo}
-                        {d.role !== "BOTH" && ` (${d.role})`}
-                        {d.online ? "" : " (offline)"}
-                      </label>
-                    ))}
-                  </div>
-                </Field>
-              )}
-
-              <div className="grid gap-3 sm:grid-cols-2">
-                <Field label="Retention window">
-                  <Select
-                    value={retentionPolicy}
-                    onChange={(e) => setRetentionPolicy(e.target.value)}
-                  >
-                    <option value="ONE_DAY">One day</option>
-                    <option value="ONE_WEEK">One week</option>
-                    <option value="ONE_MONTH">One month</option>
-                    <option value="QUARTERLY">Quarterly</option>
-                    <option value="CUSTOM">Custom end date</option>
-                  </Select>
-                </Field>
-                <Field label="Entry mode">
-                  <Select value={entryMode} onChange={(e) => setEntryMode(e.target.value)}>
-                    <option value="MULTI_ENTRY">Multi entry</option>
-                    <option value="SINGLE_ENTRY">Single entry</option>
-                  </Select>
-                </Field>
-              </div>
-
-              {retentionPolicy === "CUSTOM" && (
-                <Field label="Custom end date" hint="Valid through 11:59 PM IST on this date.">
-                  <Input
-                    type="date"
-                    required
-                    value={customEndDate}
-                    onChange={(e) => setCustomEndDate(e.target.value)}
-                  />
-                </Field>
-              )}
-
-              <Field label="Person to meet" hint="Optional">
-                <Select value={personToMeetId} onChange={(e) => setPersonToMeetId(e.target.value)}>
-                  <option value="">Not specified</option>
-                  {operators?.items.map((operator) => (
-                    <option key={operator.id} value={operator.id}>
-                      {operator.name ?? operator.email}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-
-              <Field
-                label="Purpose of visit"
-                hint="Why they are being let in, in your own words. Recorded against this authorization permanently — it is what an incident review reads."
-              >
-                <Input
-                  required
-                  maxLength={200}
-                  value={purposeOfVisit}
-                  onChange={(e) => setPurposeOfVisit(e.target.value)}
-                  placeholder="e.g. Lift maintenance, Block C"
-                />
-              </Field>
-
-              <Button
-                variant="primary"
-                loading={busy === "provision"}
-                disabled={
-                  !person.biometric ||
-                  !person.isActive ||
-                  deviceIds.length === 0 ||
-                  purposeOfVisit.trim() === "" ||
-                  (retentionPolicy === "CUSTOM" && !customEndDate)
-                }
-                onClick={() =>
-                  run(
-                    "provision",
-                    () =>
-                      api(`/api/people/${id}/provision`, {
-                        method: "POST",
-                        body: {
-                          deviceIds,
-                          retentionPolicy,
-                          ...(retentionPolicy === "CUSTOM"
-                            ? { retentionExpiresAt: customEndDate }
-                            : {}),
-                          entryMode,
-                          ...(personToMeetId ? { personToMeetId } : {}),
-                          purposeOfVisit: purposeOfVisit.trim(),
-                        },
-                      }),
-                    devices.length > 1
-                      ? "Provision queued — each device collects it on its next poll (1–3 s after activity)."
-                      : "Provision queued — the device collects it on its next poll (1–3 s after activity).",
-                  )
-                }
-              >
-                {devices.length > 1 ? "Provision to devices" : "Provision to device"}
-              </Button>
-
-              {/* Named explicitly, even with one device. "Provision to device"
-                  is a claim about which rosters this lands on, and an operator
-                  should be able to read it back rather than infer it. */}
-              <p className="text-xs text-[var(--text-muted)]">
-                Will be loaded onto:{" "}
-                {deviceIds.length === 0
-                  ? "no device selected"
-                  : devices
-                      .filter((d) => deviceIds.includes(d.id))
-                      .map((d) => `${d.name ?? d.serialNo}${d.role === "BOTH" ? "" : ` (${d.role})`}`)
-                      .join(", ")}
-              </p>
-
-              <p className="text-xs text-[var(--text-muted)]">
-                The terminal enforces neither of these itself — the expiry sweeper removes a lapsed
-                person and the daily reset releases a single-entry one, both server-side jobs.
-              </p>
+              <IssuePassForm person={person} onIssued={(message) => { setNotice(message); void refresh(`/api/people/${id}`); }} />
             </div>
           )}
         </Card>

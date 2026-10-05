@@ -1,10 +1,10 @@
-import { EntryState, type Device, type PunchEvent } from "@prisma/client";
+import { EntryMode, EntryState, Prisma, type Device, type PunchEvent } from "@prisma/client";
 import { AuditAction, auditRow } from "../db/audit.js";
 import { prisma } from "../db/index.js";
 import { userIdKey } from "../user-id.js";
 import { publish } from "../events/bus.js";
-import { deprovisionLapsedOnExit } from "../jobs/expiry.js";
-import { blockSingleEntryOnExit } from "./entry-modes.js";
+import { gateTick, locationAfter, unloadAllGates, usedUpByPunch } from "./gates.js";
+import { getSettings } from "./settings.js";
 
 // Punch → entry state machine (Phase 2 Milestone 7).
 //
@@ -106,6 +106,9 @@ interface WorkingEntry {
   dayBlocked: boolean;
   inAt: Date | null;
   outAt: Date | null;
+  entryMode: EntryMode;
+  retentionExpiresAt: Date | null;
+  locationZoneId: string | null;
   touched: boolean;
 }
 
@@ -149,9 +152,22 @@ export async function processPunches(
   // actually happened, and a batch can carry a whole IN/OUT cycle.
   const openEntries = await prisma.entry.findMany({
     where: { personId: { in: people.map((v) => v.id) }, state: { in: [...OPEN_STATES] } },
-    select: { id: true, personId: true, state: true, dayBlocked: true, inAt: true, outAt: true },
+    select: {
+      id: true, personId: true, state: true, dayBlocked: true, inAt: true, outAt: true,
+      entryMode: true, retentionExpiresAt: true, locationZoneId: true,
+    },
     orderBy: { createdAt: "desc" },
   });
+  // The zone tree, for "passing out of the yard puts you in the premise".
+  // A handful of rows, read once per batch.
+  const zones = await prisma.zone.findMany({ select: { id: true, parentZoneId: true } });
+  const parentById = new Map(zones.map((z) => [z.id, z.parentZoneId]));
+  const parentOf = (zoneId: string) => parentById.get(zoneId) ?? null;
+  // SINGLE entry: a terminal used by this punch drops the face this long after.
+  const unloadAfterMs = openEntries.some((e) => e.entryMode === EntryMode.SINGLE_ENTRY)
+    ? (await getSettings()).unloadAfterPunchMinutes * 60_000
+    : 0;
+  const usedUp: { entryId: string; at: Date }[] = [];
   const entryByPerson = new Map<string, WorkingEntry>();
   for (const e of openEntries) {
     // Newest first, so the first row seen for a person is their current
@@ -207,16 +223,32 @@ export async function processPunches(
       );
     }
 
-    if (direction === "IN" && entry.state === EntryState.PROVISIONED) {
-      entry.state = EntryState.INSIDE;
-      entry.inAt = punch.punchedAtUtc;
+    // SINGLE entry uses this terminal up whatever the state machine thinks:
+    // a suppressed duplicate can hide the other half of a movement, but this
+    // punch is proof the terminal was just used.
+    if (entry.state !== EntryState.PENDING_DEPROVISION && usedUpByPunch(entry.entryMode, device.role, direction)) {
+      usedUp.push({ entryId: entry.id, at: new Date(punch.punchedAtUtc.getTime() + unloadAfterMs) });
+    }
+
+    if (direction === "IN" && (entry.state === EntryState.PROVISIONED || entry.state === EntryState.INSIDE)) {
+      // In through an inner gate (premise -> yard) is a move, not a new visit.
+      entry.locationZoneId = locationAfter("IN", device.zoneId, entry.locationZoneId, parentOf);
+      if (entry.state === EntryState.PROVISIONED) {
+        entry.state = EntryState.INSIDE;
+        entry.inAt = punch.punchedAtUtc;
+        transitions += 1;
+      }
       entry.touched = true;
-      transitions += 1;
     } else if (direction === "OUT" && entry.state === EntryState.INSIDE) {
-      entry.state = EntryState.PROVISIONED;
-      entry.outAt = punch.punchedAtUtc;
+      // Out of the yard leaves you in the premise; out of the outermost zone
+      // (or a terminal with no zone) leaves you outside.
+      entry.locationZoneId = locationAfter("OUT", device.zoneId, entry.locationZoneId, parentOf);
+      if (entry.locationZoneId === null) {
+        entry.state = EntryState.PROVISIONED;
+        entry.outAt = punch.punchedAtUtc;
+        transitions += 1;
+      }
       entry.touched = true;
-      transitions += 1;
     } else {
       // Not an error. A second IN while already INSIDE is what a missing OUT
       // looks like from here (§4.10), and a punch during PENDING_DEPROVISION
@@ -245,9 +277,34 @@ export async function processPunches(
           // inside-now board can render "inside since" straight off the row.
           // The complete movement history is punch_event, which is why these
           // two can be overwritten without losing anything.
-          data: { state: e.state, inAt: e.inAt, outAt: e.outAt },
+          data: { state: e.state, inAt: e.inAt, outAt: e.outAt, locationZoneId: e.locationZoneId },
         }),
       ),
+    // One statement for every terminal this batch used up (CLAUDE.md #4).
+    // Never moves a removal later than one already scheduled.
+    ...(usedUp.length
+      ? [
+          prisma.$executeRaw`
+            UPDATE "pass_gate" g
+               SET "unload_at" = (v.at AT TIME ZONE 'UTC'), "updated_at" = (NOW() AT TIME ZONE 'UTC')
+              FROM unnest(${usedUp.map((u) => u.entryId)}::text[], ${usedUp.map((u) => u.at.toISOString())}::timestamptz[]) AS v(entry_id, at)
+             WHERE g."entry_id" = v.entry_id
+               AND g."device_id" = ${device.id}
+               AND g."state" IN ('PENDING', 'LOADING', 'LOADED')
+               AND (g."unload_at" IS NULL OR g."unload_at" > (v.at AT TIME ZONE 'UTC'))
+          `,
+          prisma.auditLog.createMany({
+            data: usedUp.map((u) =>
+              auditRow({
+                action: AuditAction.GATE_UNLOAD_SCHEDULED,
+                entityType: "entry",
+                entityId: u.entryId,
+                detail: { deviceId: device.id, unloadAt: u.at.toISOString(), reason: "SINGLE_ENTRY_USED" },
+              }),
+            ) as Prisma.AuditLogCreateManyInput[],
+          }),
+        ]
+      : []),
     ...[...linked.entries()].map(([entryId, ids]) =>
       prisma.punchEvent.updateMany({
         where: { id: { in: ids } },
@@ -284,26 +341,20 @@ export async function processPunches(
     }
   }
 
-  // Someone whose window closed while they were still on site. The sweeper
-  // skipped them by design — de-provisioning a person who is INSIDE strands
-  // them at the exit barrier — so walking out is the moment it becomes safe,
-  // and doing it here means they leave with the right access rather than
-  // waiting up to a full sweep interval.
-  const exited = [...entryByPerson.values()]
-    .filter((e) => e.touched && e.state === EntryState.PROVISIONED)
+  // Someone whose pass ended while they were still on site. Their exit gate
+  // was kept so they could leave; walking out is the moment the whole pass
+  // can close, and doing it now means no face lingers until the next tick.
+  const now = new Date();
+  const lapsed = [...entryByPerson.values()]
+    .filter((e) => e.touched && e.state === EntryState.PROVISIONED && e.retentionExpiresAt && e.retentionExpiresAt <= now)
     .map((e) => e.id);
-  const removed = await deprovisionLapsedOnExit(exited, log);
-  if (removed > 0) {
-    log.info({ count: removed }, "person left after their window had lapsed — de-provisioned on exit");
-  }
-
-  // SINGLE_ENTRY: leaving consumes the day. Ordered after the expiry check on
-  // purpose — a person being removed from the device entirely does not also
-  // need blocking, and `blockSingleEntryOnExit` skips anything no longer
-  // PROVISIONED, so the de-provision above takes precedence naturally.
-  const blocked = await blockSingleEntryOnExit(exited, log);
-  if (blocked > 0) {
-    log.info({ count: blocked }, "SINGLE_ENTRY person punched out — blocked until the daily reset");
+  if (lapsed.length) {
+    await prisma.$transaction(async (tx) => {
+      await tx.entry.updateMany({ where: { id: { in: lapsed }, state: EntryState.PROVISIONED }, data: { state: EntryState.PENDING_DEPROVISION } });
+      await unloadAllGates(lapsed, now, tx);
+    });
+    await gateTick(log, now);
+    log.info({ count: lapsed.length }, "person left after their pass had ended — removal queued on exit");
   }
 
   return { processed: punches.length, transitions, unmatched: unlinked.length };

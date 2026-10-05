@@ -1,9 +1,8 @@
 import { PgBoss } from "pg-boss";
 import { config } from "../config/index.js";
 import { scanTick } from "../services/backfill.js";
-import { runDailyReset } from "../services/entry-modes.js";
 import { reconcileSweep } from "../services/reconcile.js";
-import { sweepExpiredEntries } from "./expiry.js";
+import { gateTick } from "../services/gates.js";
 import { runRetention } from "./retention.js";
 
 // Scheduled jobs, on pg-boss over the same PostgreSQL the app already uses —
@@ -19,8 +18,7 @@ import { runRetention } from "./retention.js";
 // drives the sweep directly as a function and never has a scheduler racing
 // its assertions.
 
-const SWEEP_QUEUE = "entry-expiry-sweep";
-const RESET_QUEUE = "entry-daily-reset";
+const GATE_QUEUE = "gate-engine-tick";
 const RECONCILE_QUEUE = "device-reconcile";
 const RETENTION_QUEUE = "retention-sweep";
 const SCAN_QUEUE = "device-roster-scan";
@@ -55,23 +53,11 @@ export async function startJobs(log: Logger): Promise<void> {
   });
 
   await instance.start();
-  await instance.createQueue(SWEEP_QUEUE);
-
-  await instance.work(SWEEP_QUEUE, async () => {
-    const result = await sweepExpiredEntries(log);
-    if (result.deprovisioned > 0 || result.deferredInside > 0) {
-      log.info({ ...result }, "expiry sweep complete");
-    }
-  });
-
-  // The daily reset checks far more often than it acts. It resets once per
-  // DEVICE-local day, deciding from the device's own stored date rather than
-  // from this schedule firing — so a service that was down at midnight still
-  // catches up, and running it often is harmless.
-  await instance.createQueue(RESET_QUEUE);
-  await instance.work(RESET_QUEUE, async () => {
-    const result = await runDailyReset(log);
-    if (result.devicesReset > 0) log.info({ ...result }, "daily reset complete");
+  // The gate engine: loads scheduled faces, removes used-up and ended ones.
+  // A security control, not housekeeping — see services/gates.ts.
+  await instance.createQueue(GATE_QUEUE);
+  await instance.work(GATE_QUEUE, async () => {
+    await gateTick(log);
   });
 
   // Reconciliation asks the device about a slice of the roster. It is the
@@ -103,8 +89,11 @@ export async function startJobs(log: Logger): Promise<void> {
 
   // Idempotent: re-scheduling the same queue replaces the existing entry, so
   // a restart cannot accumulate duplicate schedules.
-  await instance.schedule(SWEEP_QUEUE, config.expirySweepCron);
-  await instance.schedule(RESET_QUEUE, config.dailyResetCron);
+  await instance.schedule(GATE_QUEUE, config.gateTickCron);
+  // The retired expiry/daily-reset queues may still hold a schedule from an
+  // earlier release; remove them so nothing calls code that no longer exists.
+  await instance.unschedule("entry-expiry-sweep").catch(() => undefined);
+  await instance.unschedule("entry-daily-reset").catch(() => undefined);
   await instance.schedule(RECONCILE_QUEUE, config.reconcileCron);
   await instance.schedule(RETENTION_QUEUE, config.retentionCron);
   await instance.schedule(SCAN_QUEUE, SCAN_TICK_CRON);
@@ -112,9 +101,7 @@ export async function startJobs(log: Logger): Promise<void> {
   boss = instance;
   log.info(
     {
-      expirySweep: config.expirySweepCron,
-      dailyResetCheck: config.dailyResetCron,
-      dailyResetHour: config.dailyResetHour,
+      gateTick: config.gateTickCron,
       reconcile: config.reconcileCron,
       retention: config.retentionCron,
     },
@@ -129,7 +116,3 @@ export async function stopJobs(): Promise<void> {
   await instance.stop({ graceful: true });
 }
 
-/** Run the sweep now, outside the schedule. */
-export async function runExpirySweepNow(log: Logger): Promise<void> {
-  await sweepExpiredEntries(log);
-}

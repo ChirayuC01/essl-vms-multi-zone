@@ -13,8 +13,8 @@
 | 2 | Roles and settings | `ACCEPTED` (owner, 2026-10-05) |
 | 2b | Configurable access: custom roles, feature × action grid, per-user allow/deny | `ACCEPTED` (owner, 2026-10-05) |
 | 3 | Pass types, visitor profile, documents, ID redaction | `ACCEPTED` (owner, 2026-10-05) |
-| 4 | Gate-load engine | `IN_PROGRESS` |
-| 5 | Messaging outbox and visitor portal | `NOT_STARTED` |
+| 4 | Gate-load engine | `ACCEPTED` — verified by owner (2026-10-05) |
+| 5 | Messaging outbox and visitor portal | `IN_PROGRESS` |
 | 6 | Visit requests, host review, walk-ins | `NOT_STARTED` |
 | 7 | Exit code, out-pass, outage recovery | `NOT_STARTED` |
 | 8 | Reports and audit coverage | `NOT_STARTED` |

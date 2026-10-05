@@ -2,10 +2,11 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { api, ApiError, getApiBase, getToken, type DeviceList, type OperatorOptionList, type PersonDetail } from "@/lib/api";
-import { refresh, useApi } from "@/lib/swr";
+import { api, ApiError, getApiBase, getToken, type PersonDetail } from "@/lib/api";
+import { refresh } from "@/lib/swr";
+import { IssuePassForm } from "@/components/issue-pass-form";
 import { formatDateTime, titleCase } from "@/lib/format";
-import { Alert, Button, Card, Field, Input, Select, Stat } from "@/components/ui";
+import { Alert, Button, Card, Field, Input, Stat } from "@/components/ui";
 
 // Quick provision by PIN (returning visitors).
 //
@@ -28,34 +29,11 @@ export default function QuickProvisionPage() {
   const [problem, setProblem] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [policy, setPolicy] = useState("ONE_DAY");
-  const [customEndDate, setCustomEndDate] = useState("");
-  const [mode, setMode] = useState("MULTI_ENTRY");
-  const [purpose, setPurpose] = useState("");
-  const [personToMeetId, setPersonToMeetId] = useState("");
-
-  // No device picker on this screen, deliberately -- the whole point is
-  // speed at the gate desk. On a multi-device site (an IN gate and an OUT
-  // gate) this authorizes onto every registered device automatically; with
-  // one device it behaves exactly as it always has.
-  const { data: deviceList } = useApi<DeviceList>("/api/devices");
-  const { data: operators } = useApi<OperatorOptionList>("/api/operators/active");
-  const deviceIds = (deviceList?.items ?? []).map((d) => d.id);
-  // A terminal checking in but never registered is not in that list, so this
-  // screen cannot load anybody onto it. On a two-gate site that is somebody
-  // who can enter and not leave, so it is said here rather than only on the
-  // Devices page.
-  const unregisteredCount = deviceList?.unregistered.length ?? 0;
 
   const lookup = async (value: string) => {
     setProblem(null);
     setDone(null);
     setPerson(null);
-    // Cleared per lookup: a purpose left over from the previous visitor would
-    // otherwise be silently attached to this one, and it is the field an
-    // incident review trusts.
-    setPurpose("");
-    setPersonToMeetId("");
     if (!value.trim()) return;
     setBusy(true);
     try {
@@ -67,33 +45,6 @@ export default function QuickProvisionPage() {
     }
   };
 
-  const provision = async () => {
-    if (!person) return;
-    setBusy(true);
-    setProblem(null);
-    try {
-      await api(`/api/people/${person.id}/provision`, {
-        method: "POST",
-        body: {
-          ...(deviceIds.length > 0 ? { deviceIds } : {}),
-          retentionPolicy: policy,
-          ...(policy === "CUSTOM" ? { retentionExpiresAt: customEndDate } : {}),
-          entryMode: mode,
-          ...(personToMeetId ? { personToMeetId } : {}),
-          purposeOfVisit: purpose.trim(),
-        },
-      });
-      setDone(
-        `${person.name} is queued for the barrier. The device loads them on its next poll — usually within seconds.`,
-      );
-      setPerson(await api<PersonDetail>(`/api/people/by-pin/${person.esslUserId}`));
-      await refresh("/api/entries");
-    } catch (err) {
-      setProblem(err instanceof ApiError ? err.message : "provision failed");
-    } finally {
-      setBusy(false);
-    }
-  };
 
   const active = person?.entries.find((e) => ACTIVE.includes(e.state));
 
@@ -200,90 +151,17 @@ export default function QuickProvisionPage() {
           ) : (
             person.isActive && (
               <div className="mt-4 border-t border-[var(--border)] pt-4">
-                <div className="flex flex-wrap items-end gap-3">
-                  <Field label="Keep on device for">
-                    <Select value={policy} onChange={(e) => setPolicy(e.target.value)}>
-                      <option value="ONE_DAY">One day</option>
-                      <option value="ONE_WEEK">One week</option>
-                      <option value="ONE_MONTH">One month</option>
-                      <option value="QUARTERLY">Three months</option>
-                      <option value="CUSTOM">Custom end date</option>
-                    </Select>
-                  </Field>
-                  {policy === "CUSTOM" && (
-                    <Field label="Custom end date" hint="Valid through 11:59 PM IST on this date.">
-                      <Input
-                        type="date"
-                        required
-                        value={customEndDate}
-                        onChange={(e) => setCustomEndDate(e.target.value)}
-                      />
-                    </Field>
-                  )}
-                  <Field label="Entry mode">
-                    <Select value={mode} onChange={(e) => setMode(e.target.value)}>
-                      <option value="MULTI_ENTRY">Come and go freely</option>
-                      <option value="SINGLE_ENTRY">One visit today</option>
-                    </Select>
-                  </Field>
-                </div>
-                {/* Full width and below the two pickers: it is the one field
-                    here that has to be typed, and a gate desk will type it
-                    dozens of times a day. */}
-                <div className="mt-3">
-                  <Field label="Person to meet" hint="Optional">
-                    <Select value={personToMeetId} onChange={(e) => setPersonToMeetId(e.target.value)}>
-                      <option value="">Not specified</option>
-                      {operators?.items.map((operator) => (
-                        <option key={operator.id} value={operator.id}>
-                          {operator.name ?? operator.email}
-                        </option>
-                      ))}
-                    </Select>
-                  </Field>
-                </div>
-                <div className="mt-3">
-                  <Field label="Purpose of visit">
-                    <Input
-                      required
-                      maxLength={200}
-                      value={purpose}
-                      onChange={(e) => setPurpose(e.target.value)}
-                      placeholder="e.g. Lift maintenance, Block C"
-                    />
-                  </Field>
-                </div>
-                <div className="mt-3">
-                  <Button
-                    variant="primary"
-                    disabled={busy || purpose.trim() === "" || (policy === "CUSTOM" && !customEndDate)}
-                    onClick={() => void provision()}
-                  >
-                    {busy ? "Provisioning…" : "Yes — provision now"}
-                  </Button>
-                </div>
-                {unregisteredCount > 0 && (
-                  <div className="mt-3">
-                    <Alert tone="warn">
-                      {unregisteredCount === 1
-                        ? "A terminal is checking in that has not been registered"
-                        : `${unregisteredCount} terminals are checking in that have not been registered`}
-                      , and this authorizes onto registered terminals only.{" "}
-                      <Link href="/devices" className="underline">
-                        Register {unregisteredCount === 1 ? "it" : "them"}
-                      </Link>{" "}
-                      before provisioning, or this person may be able to enter and not to leave.
-                    </Alert>
-                  </div>
-                )}
-                <p className="mt-3 text-xs text-[var(--text-muted)]">
-                  Authorizes onto{" "}
-                  {deviceIds.length === 1
-                    ? "the registered terminal"
-                    : `all ${deviceIds.length} registered terminals`}
-                  . No re-enrollment: the stored photo is pushed back and the terminal rebuilds the
-                  face template from it.
-                </p>
+                {/* Keyed by person: a purpose typed for the previous visitor must
+                    never carry over to this one (an incident review trusts it). */}
+                <IssuePassForm
+                  key={person.id}
+                  person={person}
+                  onIssued={async (message) => {
+                    setDone(message);
+                    setPerson(await api<PersonDetail>(`/api/people/by-pin/${person.esslUserId}`));
+                    await refresh("/api/entries");
+                  }}
+                />
               </div>
             )
           )}

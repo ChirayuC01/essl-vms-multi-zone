@@ -2,7 +2,7 @@
 
 import { useCallback } from "react";
 import Link from "next/link";
-import { type Board, type BoardEntry } from "@/lib/api";
+import { type Board, type BoardEntry, type ZoneList } from "@/lib/api";
 import { useEventStream } from "@/lib/events";
 import { useApi, refresh } from "@/lib/swr";
 import { formatDuration, formatTime, formatWindow, titleCase } from "@/lib/format";
@@ -29,6 +29,8 @@ export default function InsidePage() {
   const onEntry = useCallback(() => void refresh("/api/entries/board"), []);
   const { connected } = useEventStream({ onEntry, onPunch: onEntry });
 
+  const { data: zoneList } = useApi<ZoneList>("/api/zones");
+  const zoneName = (id: string | null | undefined) => (id ? zoneList?.items.find((z) => z.id === id)?.name ?? null : null);
   const { data, error } = useApi<Board>("/api/entries/board", {
     // Polled harder while the stream is down: this screen's whole value is
     // being current, and stale-but-silent is the one failure mode to avoid.
@@ -56,7 +58,7 @@ export default function InsidePage() {
           <Stat
             label="Past their window"
             value={overdue.length}
-            sub={overdue.length > 0 ? "de-provision deferred" : "none"}
+            sub={overdue.length > 0 ? "overstayed" : "none"}
           />
           <Stat
             label="Blocked for today"
@@ -69,12 +71,12 @@ export default function InsidePage() {
       {overdue.length > 0 && (
         <Alert tone="warn">
           <strong>
-            {overdue.length} {overdue.length === 1 ? "person is" : "people are"} inside past their
-            retention window.
+            {overdue.length} {overdue.length === 1 ? "person is" : "people are"} inside after
+            their pass ended (overstayed).
           </strong>{" "}
-          They are deliberately not removed — taking a credential away mid-visit would strand
-          someone at the exit barrier. They are de-provisioned automatically when they punch out.
-          If one never does, that is worth chasing in person.
+          Their entry terminals were cleared, but any exit terminal already loaded is kept so they
+          can leave; the pass closes when they punch out. A single-entry visitor still waiting for
+          an exit code can be released from their page (Security override). Worth chasing in person.
         </Alert>
       )}
 
@@ -82,9 +84,9 @@ export default function InsidePage() {
         {inside.length === 0 ? (
           <Empty>Nobody is on site. Entries appear here the moment someone punches in.</Empty>
         ) : (
-          <Table head={["Person", "PIN", "Purpose", "In at", "Here for", "Window", "Mode"]}>
+          <Table head={["Person", "PIN", "Location", "Purpose", "In at", "Here for", "Window", "Mode"]}>
             {inside.map((entry) => (
-              <BoardRow key={entry.id} entry={entry} now={now} showDuration />
+              <BoardRow key={entry.id} entry={entry} now={now} location={zoneName(entry.locationZoneId) ?? "on site"} showDuration />
             ))}
           </Table>
         )}
@@ -95,11 +97,11 @@ export default function InsidePage() {
         </p>
       </Card>
 
-      <Card title={`Blocked until the daily reset (${dayBlocked.length})`}>
+      <Card title={`Blocked by an operator (${dayBlocked.length})`}>
         {dayBlocked.length === 0 ? (
-          <Empty>Nobody has used up a single-entry visit today.</Empty>
+          <Empty>Nobody is blocked.</Empty>
         ) : (
-          <Table head={["Person", "PIN", "Purpose", "Out at", "Blocked for", "Window", "Mode"]}>
+          <Table head={["Person", "PIN", "Location", "Purpose", "Out at", "Blocked for", "Window", "Mode"]}>
             {dayBlocked.map((entry) => (
               <BoardRow key={entry.id} entry={entry} now={now} />
             ))}
@@ -107,8 +109,9 @@ export default function InsidePage() {
         )}
         <p className="mt-3 text-xs text-[var(--text-muted)]">
           These people are still loaded on the terminal and still recognised by it — it identifies
-          them and then denies entry. Blocking never disturbs the stored face, which is why the
-          daily reset restores access instantly.
+          them and then denies entry. Blocking never disturbs the stored face; Unblock on their page
+          restores access instantly. (Single entry no longer blocks: the face simply leaves each
+          terminal shortly after use.)
         </p>
       </Card>
     </div>
@@ -119,10 +122,12 @@ function BoardRow({
   entry,
   now,
   showDuration = false,
+  location = "—",
 }: {
   entry: BoardEntry;
   now: number;
   showDuration?: boolean;
+  location?: string;
 }) {
   const lapsed =
     entry.retentionExpiresAt !== null && new Date(entry.retentionExpiresAt).getTime() <= now;
@@ -147,6 +152,7 @@ function BoardRow({
         </div>
       </td>
       <td className="px-2 py-2 font-mono text-xs">{entry.person.esslUserId}</td>
+      <td className="px-2 py-2 text-xs">{location}</td>
       {/* Not truncated and not wrapped in a tooltip: an operator scanning this
           board for "who is in Block C" needs to read it, not hover it. */}
       <td className="px-2 py-2 text-xs">
@@ -156,7 +162,7 @@ function BoardRow({
       <td className="px-2 py-2 whitespace-nowrap">{formatDuration(anchor, now)}</td>
       <td className="px-2 py-2 whitespace-nowrap">
         <Badge tone={lapsed ? "warn" : "neutral"}>
-          {formatWindow(entry.retentionExpiresAt, now)}
+          {lapsed ? "overstayed" : formatWindow(entry.retentionExpiresAt, now)}
         </Badge>
       </td>
       <td className="px-2 py-2 whitespace-nowrap">

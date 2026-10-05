@@ -13,6 +13,7 @@ import { hasPermission, requirePermission } from "./permissions.js";
 import { assignEmployeeDevices, removeEmployeeDevice } from "../services/employee-access.js";
 import { describeGaps, profileGaps } from "../services/pass-types.js";
 import { isMasked, maskId } from "../services/redact.js";
+import { blacklistPerson, liftBlacklist } from "../services/passes.js";
 
 // Person registration API (Phase 1 Milestone 3).
 //
@@ -177,6 +178,8 @@ function personSummary(v: SummaryInput) {
     credentialNumber: maskId(v.credentialNumber),
     credentialExpiresAt: v.credentialExpiresAt,
     passTypeId: v.passTypeId,
+    blacklistedAt: v.blacklistedAt,
+    blacklistReason: v.blacklistReason,
     esslUserId: v.esslUserId,
     isActive: v.isActive,
     resignedAt: v.resignedAt,
@@ -760,5 +763,20 @@ export async function personRoutes(app: FastifyInstance): Promise<void> {
       width: dims.width,
       height: dims.height,
     });
+  });
+
+  // ---- blacklist (Security In-charge) ----------------------------------------
+  // Removes the visitor from every terminal at once and refuses any new pass
+  // until lifted. Both directions need a reason and are audited.
+  app.post("/people/:id/blacklist", { preHandler: requirePermission("blacklist:update") }, async (request, reply) => {
+    const parsed = z.object({ reason: z.string().trim().min(3).max(300) }).safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "a reason is required to blacklist" });
+    return reply.code(202).send(await blacklistPerson((request.params as { id: string }).id, parsed.data.reason, actorId(request)));
+  });
+  app.post("/people/:id/blacklist/lift", { preHandler: requirePermission("blacklist:update") }, async (request, reply) => {
+    const parsed = z.object({ reason: z.string().trim().max(300).optional() }).safeParse(request.body ?? {});
+    if (!parsed.success) return reply.code(400).send({ error: "invalid reason" });
+    await liftBlacklist((request.params as { id: string }).id, parsed.data.reason, actorId(request));
+    return reply.send({ lifted: true });
   });
 }

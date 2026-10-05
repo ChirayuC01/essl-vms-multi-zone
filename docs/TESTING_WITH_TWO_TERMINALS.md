@@ -161,8 +161,19 @@ through.
 7. Watch the Commands page: each terminal's face is removed 10 minutes after
    its own punch.
 
-> A small command-line simulator that does steps 2–4 in one line is planned
-> for Phase 4 (see `PLAN.md`). Until then, use the commands above.
+### The shortcut: `sim-terminal.mjs` (since Phase 4)
+
+Steps 1–4 as one-liners, run from the `backend` folder:
+
+```powershell
+node scripts\sim-terminal.mjs hello VIRTOUTERIN          # appear under "Unregistered devices"
+node scripts\sim-terminal.mjs drain VIRTOUTERIN          # collect and confirm everything queued
+node scripts\sim-terminal.mjs in    VIRTOUTERIN V0001    # V0001 walks in through this terminal
+node scripts\sim-terminal.mjs out   VIRTOUTEROUT V0001   # V0001 walks out through this one
+node scripts\sim-terminal.mjs fail  VIRTOUTERIN -1001    # reject the next command, like a bad photo
+```
+
+Add `--url http://<pc-ip>:48102` if the backend isn't on this PC.
 
 ---
 

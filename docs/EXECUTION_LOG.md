@@ -530,3 +530,85 @@ result) · issues · next action.
 
 - Owner verified Phase 4 end to end ("verified everything and works as
   expected"). Marked `ACCEPTED`; committed. Phase 5 begins.
+
+### 2026-10-05 — Phase 5 — Messaging outbox, visitor portal, visit-request core
+
+- **Status:** `IMPLEMENTED_AWAITING_VERIFICATION`.
+- **Change:**
+  - **Migration `20261005140000_visit_requests_portal`:** enums
+    `VisitRequestStatus`, `VisitOrigin`, `MessageChannel`, `MessageStatus`;
+    tables `visit_request`, `visit_request_event`, `link_token`, `otp`,
+    `message`, `consent_record`; `person_document.person_id` becomes optional
+    and gains `visit_request_id`. Additive only.
+  - **Config:** `PUBLIC_PORTAL_URL` (links), `MESSAGE_TRANSPORT` (`console`).
+  - **`services/notify.ts`:** every message is a `message` row; the console
+    transport sends nothing.
+  - **`services/codes.ts`:** link tokens (32 bytes, SHA-256 stored) and
+    6-digit codes (hashed, expiry, attempt limit burns the code).
+  - **`services/rate-limit.ts`:** fixed-window in-memory limiter (+ unit test).
+  - **`services/visit-requests.ts`:** create (validates type, entry mode,
+    validity, zones), send/resend link (revokes the old one), cancel, portal
+    state, send/verify mobile code with returning-visitor match on the last
+    10 digits, consent against the notice version, save details (hidden fields
+    dropped, masked IDs keep the stored value), selfie, documents, submit
+    (consent + required fields + selfie; host notified).
+  - **`api/portal.ts`** (`/public-api`, outside auth and the licence gate,
+    60 req/min per client): `GET /v/:token`, `POST otp`, `POST otp/verify`,
+    `POST consent`, `PUT details`, `POST selfie` (480×640 JPEG only),
+    `POST|DELETE documents`, `POST submit`.
+  - **`api/visit-requests.ts`:** `POST /visit-requests`, `GET` list (own unless
+    `passes:view`), `GET /options` (types and zones for hosts), `GET /:id`,
+    `POST /:id/resend`, `POST /:id/cancel`, `GET /:id/selfie`,
+    `GET /:id/documents/:docId/file` (audited), `GET /messages`.
+  - **Access:** new cell `messages:view` (Administrator only by default).
+  - **Audit actions:** `VISIT_REQUEST_CREATED/CANCELLED/SUBMITTED`,
+    `VISIT_LINK_SENT`, `VISITOR_OTP_SENT/FAILED`, `VISITOR_MOBILE_VERIFIED`,
+    `VISITOR_CONSENTED`, `VISITOR_DETAILS_SAVED`, `VISITOR_SELFIE_SAVED`;
+    document actions reused against the request.
+  - **Web:** `/public-api/[...path]` proxy route; portal page `/v/[token]`
+    (code → notice → rules-driven form → camera with face oval → documents →
+    submit); console pages **Requests**, request detail, **Outbox**; nav
+    entries; `AuthProvider` skips the session check on `/v/`.
+  - **Plan change:** the visit-request core moved here from Phase 6
+    (`DECISIONS.md`).
+- **Verification (2026-10-05):**
+  - `prisma migrate diff`: no difference. Migration applied to `vms` and
+    `vms_test`.
+  - Unit tests **105/105** (new: rate limiter).
+  - e2e **435/435**; new section 31 (54 checks): entry-mode refusal; SMS +
+    email link; token stored only hashed; pre-verification page shows nothing
+    personal; unknown link 404; details refused before verification; code
+    metering; wrong codes, burn at the limit, expired code; verification;
+    field rules; consent version check; Aadhaar format; hidden field dropped;
+    required field named at submit; selfie size check; document type check;
+    submit, status, host notified, locked afterwards; host view masked, with
+    photo, document download and history; every step audited, no code or
+    token in the audit; resend/cancel/expiry of links; returning visitor
+    matched and prefilled masked, masked echo keeps the full number; host
+    sees only own requests, can load form options, cannot read the outbox;
+    portal per-client rate limit.
+  - Web lint and build PASS.
+  - Smoke test against the running dev servers: `GET
+    localhost:48101/public-api/v/<junk>` → 404 "this link is not valid" from
+    the backend, through the proxy.
+- **Issues found and fixed during the phase:**
+  1. The first test JPEG for the selfie check had an APP0 length 4 bytes
+     longer than its data, so its size could not be read; the fixture was
+     corrected.
+  2. A Host holds no pass-type or zone permission, so the request form could
+     not load them; it now has its own `GET /visit-requests/options`.
+  3. Owner testing (2026-10-06): Submit said "still needed: Name, Govt ID
+     type, Govt ID number" although the form was filled. The form had never
+     been saved, and Submit only checked what was saved. Submit now saves
+     the form first, then submits.
+- **Not in this phase (Phase 6):** Clear / Query / Reject, walk-ins, request
+  → person and pass, request expiry status.
+- **Next action:** owner walk-through, `VERIFICATION.md` § Phase 5.
+
+### 2026-10-06 — Phase 5 — verified and accepted
+
+- Owner verified Phase 5, including the phone run through a Cloudflare quick
+  tunnel. Two fixes from that testing are in the phase: Submit saves the form
+  first, and the web dev server allows `*.trycloudflare.com`
+  (`allowedDevOrigins`). Marked `ACCEPTED`; committed. Phase 6 begins.
+

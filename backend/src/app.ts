@@ -9,6 +9,8 @@ import { assertDatabaseReachable } from "./db/index.js";
 import { admsRoutes } from "./adms/routes.js";
 import { authRoutes, requireAuth } from "./api/auth.js";
 import { brandingAdminRoutes, brandingPublicRoutes } from "./api/branding.js";
+import { portalRoutes } from "./api/portal.js";
+import { visitRequestRoutes } from "./api/visit-requests.js";
 import { commandRoutes } from "./api/commands.js";
 import { deviceRoutes } from "./api/devices.js";
 import { directoryRoutes } from "./api/directories.js";
@@ -80,7 +82,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   // — never a wildcard with credentials, never a hardcoded client address.
   await app.register(cors, {
     origin: config.corsOrigins.length > 0 ? config.corsOrigins : true,
-    methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   });
   await app.register(jwt, { secret: config.jwtSecret });
 
@@ -131,6 +133,9 @@ export async function buildApp(): Promise<FastifyInstance> {
   // Also public — self-gated: only usable while zero operators exist.
   await app.register(setupRoutes, { prefix: "/api" });
   await app.register(brandingPublicRoutes, { prefix: "/api" });
+  // The visitor portal: token-scoped, no operator session, and deliberately
+  // outside the licence gate — a visitor must never be stranded mid-form.
+  await app.register(portalRoutes, { prefix: "/public-api" });
   await app.register(
     async (api) => {
       api.addHook("preHandler", requireAuth);
@@ -162,6 +167,7 @@ export async function buildApp(): Promise<FastifyInstance> {
       await api.register(reportRoutes);
       await api.register(licenseRoutes);
       await api.register(brandingAdminRoutes);
+      await api.register(visitRequestRoutes);
     },
     { prefix: "/api" },
   );

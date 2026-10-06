@@ -43,6 +43,14 @@ const schema = z.object({
   PORT: z.coerce.number().int().min(1).max(65535).default(47102),
   ADMS_PORT: z.coerce.number().int().min(1).max(65535).default(47102),
   PHOTO_STORAGE_PATH: z.string().min(1).default("./data/photos"),
+  // Where visitors open their links: the public address of the visitor portal
+  // (the site's own domain through the tunnel, Phase 9). Links in messages are
+  // built from it. The dev default is the local web console.
+  PUBLIC_PORTAL_URL: z.string().url().default("http://localhost:48101"),
+  // How messages leave: "console" writes them to the Outbox page (and the
+  // log) without sending anything — for development and until the site's SMS
+  // and email providers are confirmed.
+  MESSAGE_TRANSPORT: z.enum(["console"]).default("console"),
   // Person documents (Govt ID copies, vehicle papers). Local disk, like photos.
   DOCUMENT_STORAGE_PATH: z.string().min(1).default("./data/documents"),
   JWT_SECRET: z.string().min(16, "JWT_SECRET must be at least 16 characters"),
@@ -176,6 +184,8 @@ export const config = {
   photoStoragePath: path.isAbsolute(env.PHOTO_STORAGE_PATH)
     ? env.PHOTO_STORAGE_PATH
     : path.resolve(backendRoot, env.PHOTO_STORAGE_PATH),
+  publicPortalUrl: env.PUBLIC_PORTAL_URL.replace(/\/+$/, ""),
+  messageTransport: env.MESSAGE_TRANSPORT,
   documentStoragePath: path.isAbsolute(env.DOCUMENT_STORAGE_PATH)
     ? env.DOCUMENT_STORAGE_PATH
     : path.resolve(backendRoot, env.DOCUMENT_STORAGE_PATH),

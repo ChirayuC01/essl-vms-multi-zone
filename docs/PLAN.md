@@ -14,8 +14,8 @@
 | 2b | Configurable access: custom roles, feature × action grid, per-user allow/deny | `ACCEPTED` (owner, 2026-10-05) |
 | 3 | Pass types, visitor profile, documents, ID redaction | `ACCEPTED` (owner, 2026-10-05) |
 | 4 | Gate-load engine | `ACCEPTED` — verified by owner (2026-10-05) |
-| 5 | Messaging outbox and visitor portal | `IN_PROGRESS` |
-| 6 | Visit requests, host review, walk-ins | `NOT_STARTED` |
+| 5 | Messaging outbox and visitor portal (+ the visit-request core) | `ACCEPTED` — verified by owner (2026-10-06) |
+| 6 | Visit requests, host review, walk-ins | `IN_PROGRESS` |
 | 7 | Exit code, out-pass, outage recovery | `NOT_STARTED` |
 | 8 | Reports and audit coverage | `NOT_STARTED` |
 | 9 | Tunnel, hardening, packaging, acceptance | `NOT_STARTED` |
@@ -434,7 +434,9 @@ The old fixed completion rule (Company + Department + Aadhaar/PAN) is replaced b
 - Link tokens: 32 random bytes, stored hashed, with expiry. One live token per request.
 
 **Public API** under `/public-api/*`, unauthenticated but token-scoped. It gets its own rate limit (a small in-memory limiter, no new dependency), and no operator data is reachable from it.
-- Next.js `rewrites()` proxies `/public-api` to the backend, so the portal is same-origin.
+- A Next.js route handler (`web/src/app/public-api/[...path]/route.ts`) proxies `/public-api` to the backend, reading `API_BASE_URL` at request time, so the portal is same-origin. (Not `rewrites()`: those are fixed at build time, and the installer sets the backend port after the build.)
+
+**Moved forward from Phase 6:** a portal needs something for the link to point at, so the core of `VisitRequest` lands here: a host raises a request (which sends the link), the visitor completes and submits it, the host can see it, resend the link or cancel. Phase 6 adds Clear / Query / Reject, walk-ins and turning a cleared request into a pass.
 
 **Portal pages** under `web/src/app/v/[token]/`:
 1. mobile OTP

@@ -56,6 +56,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // expired, or signed with a secret the backend no longer uses, must not
   // look like a valid session.
   useEffect(() => {
+    // The visitor portal has no operator session; asking would bounce the
+    // visitor to the console's sign-in page. Nothing on the portal reads
+    // the session, so it is simply never resolved there.
+    if (window.location.pathname.startsWith("/v/")) return;
     let cancelled = false;
     api<Operator>("/api/auth/me")
       .then((me) => {

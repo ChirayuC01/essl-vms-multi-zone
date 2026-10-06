@@ -91,6 +91,31 @@ enum GateReason {
   MIGRATED
 }
 
+enum VisitRequestStatus {
+  SENT
+  SUBMITTED
+  QUERIED
+  CLEARED
+  REJECTED
+  CANCELLED
+  EXPIRED
+}
+
+enum VisitOrigin {
+  PLANNED
+  WALK_IN
+}
+
+enum MessageChannel {
+  SMS
+  EMAIL
+}
+
+enum MessageStatus {
+  SENT
+  FAILED
+}
+
 enum PassKind {
   SHORT_TERM
   LONG_TERM
@@ -245,7 +270,10 @@ model PassType {
 // removal hides it and records who and when.
 model PersonDocument {
   id           String    @id @default(cuid())
-  personId     String    @map("person_id")
+  // Null while it belongs only to a visit request whose visitor is not yet a
+  // person (attached when the host clears the request, Phase 6).
+  personId     String?   @map("person_id")
+  visitRequestId String? @map("visit_request_id")
   kind         String
   fileName     String    @map("file_name")
   mime         String
@@ -258,9 +286,11 @@ model PersonDocument {
   removedById  String?   @map("removed_by")
   createdAt    DateTime  @default(now()) @map("created_at")
 
-  person Person @relation(fields: [personId], references: [id])
+  person       Person?       @relation(fields: [personId], references: [id])
+  visitRequest VisitRequest? @relation(fields: [visitRequestId], references: [id])
 
   @@index([personId])
+  @@index([visitRequestId])
   @@map("person_document")
 }
 
@@ -668,6 +698,7 @@ model AppUser {
 
   authorizedEntries      Entry[]                @relation("EntryAuthorizedBy")
   hostedEntries          Entry[]                @relation("EntryPersonToMeet")
+  hostedRequests         VisitRequest[]         @relation("VisitRequestHost")
   auditLogs              AuditLog[]
   initiatedCommands      SyncCommand[]
   assignedEmployeeAccess EmployeeDeviceAccess[] @relation("EmployeeAccessAssignedBy")
@@ -776,4 +807,144 @@ model AdmissionQueue {
   createdAt      DateTime @default(now()) @map("created_at")
 
   @@map("admission_queue")
+}
+
+// ---------------------------------------------------------------------------
+// Visit requests and the visitor portal (two-zone rebuild, Phase 5).
+// ---------------------------------------------------------------------------
+
+// A host's invitation to a visitor, completed by the visitor through the
+// portal and decided by the host (Phase 6). Nothing here is ever deleted;
+// every change is a VisitRequestEvent.
+model VisitRequest {
+  id                   String             @id @default(cuid())
+  hostId               String             @map("host_id")
+  origin               VisitOrigin        @default(PLANNED)
+  status               VisitRequestStatus @default(SENT)
+  visitorName          String             @map("visitor_name")
+  visitorMobile        String             @map("visitor_mobile")
+  visitorEmail         String?            @map("visitor_email")
+  companyName          String?            @map("company_name")
+  purpose              String
+  passTypeId           String?            @map("pass_type_id")
+  zoneIds              String[]           @default([]) @map("zone_ids")
+  exitCodeZoneIds      String[]           @default([]) @map("exit_code_zone_ids")
+  entryMode            EntryMode          @default(SINGLE_ENTRY) @map("entry_mode")
+  expectedAt           DateTime           @map("expected_at")
+  validUntil           DateTime           @map("valid_until")
+  // A returning visitor, matched by their verified mobile number.
+  personId             String?            @map("person_id")
+  // What the visitor submitted (profile fields), validated against the pass
+  // type. Identity numbers are stored here in full; every API shows them masked.
+  submission           Json?
+  // The live selfie, on local disk.
+  selfiePath           String?            @map("selfie_path")
+  mobileVerifiedAt     DateTime?          @map("mobile_verified_at")
+  consentedAt          DateTime?          @map("consented_at")
+  // What the host asked the visitor to fix (Phase 6).
+  queryText            String?            @map("query_text")
+  passId               String?            @map("pass_id")
+  createdAt            DateTime           @default(now()) @map("created_at")
+  updatedAt            DateTime           @updatedAt @map("updated_at")
+
+  host      AppUser             @relation("VisitRequestHost", fields: [hostId], references: [id])
+  events    VisitRequestEvent[]
+  tokens    LinkToken[]
+  consents  ConsentRecord[]
+  documents PersonDocument[]
+
+  @@index([hostId, status])
+  @@index([status])
+  @@index([visitorMobile])
+  @@map("visit_request")
+}
+
+// Append-only history of a request: every status change, query text and
+// decision, with who did it (an operator, the visitor, or the system).
+model VisitRequestEvent {
+  id         String              @id @default(cuid())
+  requestId  String              @map("request_id")
+  actorId    String?             @map("actor_id")
+  actorKind  String              @map("actor_kind") // OPERATOR | VISITOR | SYSTEM
+  fromStatus VisitRequestStatus? @map("from_status")
+  toStatus   VisitRequestStatus  @map("to_status")
+  note       String?
+  detail     Json?
+  createdAt  DateTime            @default(now()) @map("created_at")
+
+  request VisitRequest @relation(fields: [requestId], references: [id])
+
+  @@index([requestId, createdAt])
+  @@map("visit_request_event")
+}
+
+// A link sent to a visitor. Only the hash is stored; the token itself exists
+// only in the message. One live link per request and purpose.
+model LinkToken {
+  id        String    @id @default(cuid())
+  requestId String    @map("request_id")
+  purpose   String    // PREREG | OUT_PASS (Phase 7)
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  request VisitRequest @relation(fields: [requestId], references: [id])
+
+  @@index([requestId, purpose])
+  @@map("link_token")
+}
+
+// A one-time code. Only its hash is stored; wrong attempts are counted and a
+// code is burned after too many (both limits are settings).
+model Otp {
+  id         String    @id @default(cuid())
+  purpose    String    // MOBILE_VERIFY | EXIT_CODE (Phase 7)
+  // What the code proves: the request id (mobile) or the pass id (exit).
+  subjectId  String    @map("subject_id")
+  codeHash   String    @map("code_hash")
+  expiresAt  DateTime  @map("expires_at")
+  attempts   Int       @default(0)
+  consumedAt DateTime? @map("consumed_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  @@index([purpose, subjectId, createdAt])
+  @@map("otp")
+}
+
+// Every SMS and email the system sends (Phase 5 outbox). With the console
+// transport the body is kept readable for testing; a real transport stores
+// it with one-time codes redacted.
+model Message {
+  id          String         @id @default(cuid())
+  channel     MessageChannel
+  recipient   String
+  template    String
+  body        String
+  status      MessageStatus
+  error       String?
+  transport   String
+  relatedType String?        @map("related_type")
+  relatedId   String?        @map("related_id")
+  createdAt   DateTime       @default(now()) @map("created_at")
+
+  @@index([createdAt])
+  @@index([relatedType, relatedId])
+  @@map("message")
+}
+
+// A visitor's acceptance of the site's privacy notice (DPDP), tied to the
+// exact notice version they were shown.
+model ConsentRecord {
+  id            String   @id @default(cuid())
+  requestId     String   @map("request_id")
+  noticeVersion String   @map("notice_version")
+  ipAddress     String?  @map("ip_address")
+  userAgent     String?  @map("user_agent")
+  acceptedAt    DateTime @default(now()) @map("accepted_at")
+
+  request VisitRequest @relation(fields: [requestId], references: [id])
+
+  @@index([requestId])
+  @@map("consent_record")
 }

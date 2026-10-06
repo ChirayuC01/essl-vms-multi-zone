@@ -43,6 +43,7 @@ import { sweepExpiredEntries } from "../src/jobs/expiry.js";
 import { gateTick } from "../src/services/gates.js";
 import { localDate } from "../src/services/entry-modes.js";
 import { ACTIVE_ENTRY_STATES } from "../src/services/entries.js";
+import { resetLimits } from "../src/services/rate-limit.js";
 
 const SN = "E2ESIMDEVICE01";
 // IDs are TEXT. Numeric-looking ones are still the common case, and at least
@@ -257,7 +258,13 @@ async function resetDatabase(): Promise<void> {
     prisma.employeeDeviceAccess.deleteMany({}),
     prisma.attendanceDaySummary.deleteMany({}),
     prisma.personBiometric.deleteMany({}),
+    prisma.consentRecord.deleteMany({}),
+    prisma.visitRequestEvent.deleteMany({}),
+    prisma.linkToken.deleteMany({}),
     prisma.personDocument.deleteMany({}),
+    prisma.visitRequest.deleteMany({}),
+    prisma.otp.deleteMany({}),
+    prisma.message.deleteMany({}),
     prisma.person.deleteMany({}),
     prisma.passType.deleteMany({}),
     prisma.auditLog.deleteMany({}),
@@ -3939,6 +3946,166 @@ async function main() {
       await close(p1);
       await close(p2);
     }
+  }
+
+  // ======================================================================
+  section("31. Visit requests and the visitor portal");
+  // ======================================================================
+  {
+    const vr = (method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE", url: string, payload?: object, as = token) =>
+      app.inject({ method, url, headers: auth(as), ...(payload ? { payload } : {}) });
+    const pub = (method: "GET" | "POST" | "PUT" | "DELETE", url: string, payload?: object) =>
+      app.inject({ method, url: `/public-api/v/${url}`, ...(payload ? { payload } : {}) });
+    const outbox = async (template: string) =>
+      (JSON.parse((await vr("GET", "/api/messages?pageSize=100")).body).items as { template: string; channel: string; recipient: string; body: string }[]).filter((m) => m.template === template);
+    const linkFrom = (body: string) => /\/v\/([A-Za-z0-9_-]+)/.exec(body)?.[1] ?? "";
+    const codeFrom = (body: string) => /^(\d{6})/.exec(body)?.[1] ?? "";
+    resetLimits();
+
+    await vr("PATCH", "/api/settings", { privacyNoticeText: "E2E privacy notice: we collect your name, photo and ID to manage your visit.", otpMaxAttempts: 3, documentMaxCount: 3, documentMaxMb: 5 });
+    const portalType = JSON.parse((await vr("POST", "/api/pass-types", {
+      name: "E2E Portal Visitor",
+      kind: "SHORT_TERM",
+      fieldRules: { govtIdNumber: "required", govtIdType: "required", vehicleNumber: "hidden", companyId: "required" },
+    })).body) as { id: string };
+    const portalZone = await prisma.zone.findFirstOrThrow({ where: { name: "E2E Premise" } });
+    const soon = new Date(Date.now() + 2 * 3_600_000);
+    const later = new Date(Date.now() + 6 * 3_600_000);
+    const newRequest = (mobile: string, extra: object = {}, as = token) =>
+      vr("POST", "/api/visit-requests", {
+        visitorName: "Portal Visitor", visitorMobile: mobile, visitorEmail: "portal.visitor@example.com", purpose: "E2E meeting",
+        passTypeId: portalType.id, zoneIds: [portalZone.id], entryMode: "SINGLE_ENTRY", expectedAt: soon.toISOString(), validUntil: later.toISOString(), ...extra,
+      }, as);
+
+    check("a request whose pass type forbids its entry mode is refused", (await vr("POST", "/api/pass-types", { name: "E2E Single Only", entryModes: ["SINGLE_ENTRY"] })).statusCode === 201
+      && (await newRequest("9123400000", { passTypeId: (await prisma.passType.findFirstOrThrow({ where: { name: "E2E Single Only" } })).id, entryMode: "MULTI_ENTRY" })).statusCode === 400);
+    const created = await newRequest("+91 91234 00001");
+    check("a host raises a visit request", created.statusCode === 201, created.body);
+    const reqId = JSON.parse(created.body).id as string;
+    const links = await outbox("VISIT_LINK");
+    check("the link goes out by SMS and email", links.some((m) => m.channel === "SMS" && m.recipient === "+91 91234 00001") && links.some((m) => m.channel === "EMAIL"), JSON.stringify(links.map((m) => m.channel)));
+    const link = linkFrom(links[0]!.body);
+    check("the link carries a long random token, and only its hash is stored", link.length >= 40 && (await prisma.linkToken.count({ where: { tokenHash: link } })) === 0);
+
+    const first = JSON.parse((await pub("GET", link)).body) as Record<string, unknown>;
+    check("before the mobile is verified, the link shows almost nothing", first.mobileVerified === false && !("visitorName" in first) && first.mobileHint === "******0001", JSON.stringify(first));
+    check("an unknown link is refused", (await pub("GET", "x".repeat(43))).statusCode === 404);
+    check("details cannot be saved before the mobile is verified", (await pub("PUT", `${link}/details`, { govtIdType: "Passport" })).statusCode === 403);
+
+    // --- mobile code: attempts, burning, expiry, metering
+    check("the visitor asks for a code", (await pub("POST", `${link}/otp`)).statusCode === 200);
+    check("a second code inside a minute is refused", (await pub("POST", `${link}/otp`)).statusCode === 429);
+    const code1 = codeFrom((await outbox("MOBILE_OTP"))[0]!.body);
+    check("the code is a 6-digit number and is stored only hashed", code1.length === 6 && (await prisma.otp.count({ where: { codeHash: code1 } })) === 0);
+    const wrong = code1 === "000000" ? "111111" : "000000";
+    const w1 = await pub("POST", `${link}/otp/verify`, { code: wrong });
+    await pub("POST", `${link}/otp/verify`, { code: wrong });
+    const w3 = await pub("POST", `${link}/otp/verify`, { code: wrong });
+    check("wrong codes are refused, and the limit burns the code", w1.statusCode === 400 && /not right/.test(w1.body) && /too many/.test(w3.body), w3.body);
+    check("...after which even the right code no longer works", (await pub("POST", `${link}/otp/verify`, { code: code1 })).statusCode === 400);
+    resetLimits();
+    await pub("POST", `${link}/otp`);
+    const code2 = codeFrom((await outbox("MOBILE_OTP"))[0]!.body);
+    await prisma.otp.updateMany({ where: { subjectId: reqId, consumedAt: null }, data: { expiresAt: new Date(Date.now() - 1000) } });
+    check("an expired code is refused", /expired/.test((await pub("POST", `${link}/otp/verify`, { code: code2 })).body));
+    resetLimits();
+    await pub("POST", `${link}/otp`);
+    const code3 = codeFrom((await outbox("MOBILE_OTP"))[0]!.body);
+    const verifiedRes = await pub("POST", `${link}/otp/verify`, { code: code3 });
+    const state = JSON.parse(verifiedRes.body) as { mobileVerified: boolean; returning: boolean; notice: { version: string }; fields: Record<string, { rule: string }> };
+    check("the right code verifies the mobile", verifiedRes.statusCode === 200 && state.mobileVerified === true, verifiedRes.body);
+    check("a new visitor is not matched to anyone", state.returning === false);
+    check("the form follows the pass type's rules", state.fields.govtIdNumber?.rule === "required" && state.fields.vehicleNumber?.rule === "hidden");
+
+    // --- consent, details, selfie, documents, submit
+    check("submitting before consenting is refused", /privacy notice/.test((await pub("POST", `${link}/submit`)).body));
+    check("consent to an outdated notice is refused", (await pub("POST", `${link}/consent`, { noticeVersion: "2000-01-01T00:00:00.000Z", accept: true })).statusCode === 409);
+    check("the visitor accepts the current notice", (await pub("POST", `${link}/consent`, { noticeVersion: state.notice.version, accept: true })).statusCode === 200);
+    const consent = await prisma.consentRecord.findFirst({ where: { requestId: reqId } });
+    check("the consent is recorded against the exact notice version", consent?.noticeVersion === state.notice.version);
+    check("a malformed Aadhaar is refused", (await pub("PUT", `${link}/details`, { aadharNumber: "12345" })).statusCode === 400);
+    const saved = await pub("PUT", `${link}/details`, { name: "Portal Visitor", companyId: "Visiting Co", govtIdType: "Passport", vehicleNumber: "MH12AB0001", email: "" });
+    check("partial details save", saved.statusCode === 200, saved.body);
+    check("a hidden field is dropped", !("vehicleNumber" in ((await prisma.visitRequest.findUniqueOrThrow({ where: { id: reqId } })).submission as object)));
+    check("submitting with a required field missing names it", /Govt ID number/.test((await pub("POST", `${link}/submit`)).body));
+    await pub("PUT", `${link}/details`, { govtIdNumber: "Z1234567QX" });
+    check("submitting without a photo is refused", /photo/.test((await pub("POST", `${link}/submit`)).body));
+    const jpegOf = (w: number, h: number) => Buffer.concat([
+      Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01]), Buffer.alloc(8, 0),
+      Buffer.from([0xff, 0xc0, 0x00, 0x11, 0x08, h >> 8, h & 0xff, w >> 8, w & 0xff, 0x03]), Buffer.alloc(200, 0x20), Buffer.from([0xff, 0xd9]),
+    ]);
+    const selfie = (bytes: Buffer) => app.inject({ method: "POST", url: `/public-api/v/${link}/selfie`, headers: { "content-type": "image/jpeg" }, payload: bytes });
+    const badSelfie = await selfie(jpegOf(300, 300));
+    check("a photo that did not come through the camera step (not 480x640) is refused", badSelfie.statusCode === 400 && /480x640/.test(badSelfie.body), badSelfie.body);
+    const goodSelfie = await selfie(jpegOf(480, 640));
+    check("the camera-step photo is saved", goodSelfie.statusCode === 200, goodSelfie.body);
+    const doc = (bytes: Buffer, name: string) => app.inject({ method: "POST", url: `/public-api/v/${link}/documents?kind=Govt%20ID&fileName=${name}`, headers: { "content-type": "application/octet-stream" }, payload: bytes });
+    check("an HTML file named .pdf is refused on the portal too", (await doc(Buffer.from("<html></html>"), "id.pdf")).statusCode === 415);
+    const portalPdf = await doc(Buffer.from("%PDF-1.4\n%%EOF\n"), "passport.pdf");
+    check("a PDF uploads", portalPdf.statusCode === 201, portalPdf.body);
+    const submitted = await pub("POST", `${link}/submit`);
+    check("the visitor submits", submitted.statusCode === 200, submitted.body);
+    check("the request is now SUBMITTED", (await prisma.visitRequest.findUniqueOrThrow({ where: { id: reqId } })).status === "SUBMITTED");
+    check("the host is told", (await outbox("REQUEST_SUBMITTED")).length === 1);
+    check("after submitting, details can no longer change", (await pub("PUT", `${link}/details`, { govtIdType: "PAN" })).statusCode === 409);
+
+    const detail = await vr("GET", `/api/visit-requests/${reqId}`);
+    const d = JSON.parse(detail.body) as { details: { govtIdNumber: string }; missing: string[]; events: { toStatus: string }[]; documents: { id: string }[]; hasSelfie: boolean };
+    check("the host sees the submission, the ID masked", d.details.govtIdNumber === "Z1******QX" && !detail.body.includes("Z1234567QX"), detail.body);
+    check("...with nothing missing, the photo and the document", d.missing.length === 0 && d.hasSelfie && d.documents.length === 1);
+    check("...and the request's history", d.events.map((e) => e.toStatus).join(",") === "SENT,SUBMITTED");
+    check("the photo is served to the host", (await vr("GET", `/api/visit-requests/${reqId}/selfie`)).headers["content-type"] === "image/jpeg");
+    const reqDoc = await vr("GET", `/api/visit-requests/${reqId}/documents/${d.documents[0]!.id}/file`);
+    check("a portal document downloads as an attachment", reqDoc.statusCode === 200 && /attachment/.test(String(reqDoc.headers["content-disposition"])));
+    const trail = await prisma.auditLog.findMany({ where: { entityType: "visit_request", entityId: reqId } });
+    const actions = new Set(trail.map((t) => t.action));
+    check("every step is audited", ["VISIT_REQUEST_CREATED", "VISIT_LINK_SENT", "VISITOR_OTP_SENT", "VISITOR_OTP_FAILED", "VISITOR_MOBILE_VERIFIED", "VISITOR_CONSENTED", "VISITOR_DETAILS_SAVED", "VISITOR_SELFIE_SAVED", "DOCUMENT_UPLOADED", "VISIT_REQUEST_SUBMITTED", "DOCUMENT_DOWNLOADED"].every((a) => actions.has(a)), [...actions].join(","));
+    const trailText = JSON.stringify(trail);
+    check("no audit row holds a code or the link token", ![code1, code2, code3, link].some((secret) => trailText.includes(secret)));
+
+    // --- links: resend replaces, cancel withdraws, expiry refuses
+    check("a submitted request has no link to resend", (await vr("POST", `/api/visit-requests/${reqId}/resend`)).statusCode === 409);
+    check("cancelling needs a reason", (await vr("POST", `/api/visit-requests/${reqId}/cancel`, {})).statusCode === 400);
+    check("the host cancels", (await vr("POST", `/api/visit-requests/${reqId}/cancel`, { reason: "meeting moved" })).statusCode === 200);
+    check("...and the link stops working", (await pub("GET", link)).statusCode === 410);
+
+    const second = JSON.parse((await newRequest("9123400002")).body).id as string;
+    const oldLink = linkFrom((await outbox("VISIT_LINK"))[0]!.body);
+    await vr("POST", `/api/visit-requests/${second}/resend`);
+    const newLink = linkFrom((await outbox("VISIT_LINK"))[0]!.body);
+    check("a resend replaces the link", newLink !== oldLink && (await pub("GET", oldLink)).statusCode === 410 && (await pub("GET", newLink)).statusCode === 200);
+    await prisma.linkToken.updateMany({ where: { requestId: second }, data: { expiresAt: new Date(Date.now() - 1000) } });
+    check("an expired link is refused", /expired/.test((await pub("GET", newLink)).body));
+
+    // --- a returning visitor: matched by verified mobile, prefilled, IDs masked
+    const returningPerson = await prisma.person.findFirstOrThrow({ where: { esslUserId: "V9003" } });
+    const third = JSON.parse((await newRequest(`+91-${returningPerson.mobile}`)).body).id as string;
+    const thirdLink = linkFrom((await outbox("VISIT_LINK"))[0]!.body);
+    resetLimits();
+    await pub("POST", `${thirdLink}/otp`);
+    const back = await pub("POST", `${thirdLink}/otp/verify`, { code: codeFrom((await outbox("MOBILE_OTP"))[0]!.body) });
+    const backState = JSON.parse(back.body) as { returning: boolean; details: { name: string; govtIdNumber: string } };
+    check("a returning visitor is recognised by their verified mobile", backState.returning === true && (await prisma.visitRequest.findUniqueOrThrow({ where: { id: third } })).personId === returningPerson.id, back.body);
+    check("...their saved details prefill the form, the ID masked", backState.details.name === returningPerson.name && backState.details.govtIdNumber === "CI******7B" && !back.body.includes("CI12345A7B"), back.body);
+    await pub("PUT", `${thirdLink}/details`, { govtIdNumber: backState.details.govtIdNumber, govtIdType: "Passport" });
+    check("echoing the masked ID back keeps the full number on file", ((await prisma.visitRequest.findUniqueOrThrow({ where: { id: third } })).submission as { govtIdNumber: string }).govtIdNumber === "CI12345A7B");
+
+    // --- who sees what
+    const hostTok = JSON.parse((await app.inject({ method: "POST", url: "/api/auth/login", payload: { email: "host@vms.local", password: "role-password" } })).body).token as string;
+    const own = JSON.parse((await newRequest("9123400004", {}, hostTok)).body).id as string;
+    const hostList = JSON.parse((await vr("GET", "/api/visit-requests", undefined, hostTok)).body) as { items: { id: string }[] };
+    check("a host lists only their own requests", hostList.items.length === 1 && hostList.items[0]!.id === own, JSON.stringify(hostList.items.map((i) => i.id)));
+    check("...and cannot open someone else's", (await vr("GET", `/api/visit-requests/${reqId}`, undefined, hostTok)).statusCode === 404);
+    const hostOptions = await vr("GET", "/api/visit-requests/options", undefined, hostTok);
+    check("a host can load the request form's visitor types and zones", hostOptions.statusCode === 200 && JSON.parse(hostOptions.body).passTypes.some((t: { id: string }) => t.id === portalType.id), hostOptions.body.slice(0, 200));
+    check("the outbox is Admin-only by default", (await vr("GET", "/api/messages", undefined, hostTok)).statusCode === 403);
+
+    // --- the portal's own rate limit
+    resetLimits();
+    let limited = 0;
+    for (let i = 0; i < 65; i++) if ((await pub("GET", "y".repeat(43))).statusCode === 429) limited++;
+    check("a client hammering the portal is slowed down", limited === 5, `${limited} refused`);
+    resetLimits();
   }
 
   // --- teardown ---------------------------------------------------------

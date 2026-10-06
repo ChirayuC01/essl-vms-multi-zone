@@ -119,3 +119,12 @@ export function titleCase(value: string): string {
     .join(" ");
 }
 
+
+/** Visit request status → badge tone. SUBMITTED is the one waiting on the host. */
+export function requestTone(status: string): "info" | "ok" | "warn" | "danger" | "neutral" {
+  if (status === "SUBMITTED") return "info";
+  if (status === "CLEARED") return "ok";
+  if (status === "QUERIED") return "warn";
+  if (status === "REJECTED") return "danger";
+  return "neutral";
+}

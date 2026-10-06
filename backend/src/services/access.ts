@@ -93,6 +93,7 @@ export const RESOURCES = {
   access: { label: "Roles and access", group: "Administration", actions: ["view", "create", "update"], notes: { create: "add a role", update: "edit grids and user overrides" } },
   pass_types: { label: "Pass types", group: "Administration", actions: ["view", "create", "update"], notes: { update: "rules, validity, deactivate" } },
   settings: { label: "System settings", group: "Administration", actions: ["view", "update"] },
+  messages: { label: "Message outbox", group: "Administration", actions: ["view"], notes: { view: "read every SMS and email sent, including links and codes while no provider is set up" } },
   branding: { label: "Branding", group: "Administration", actions: ["update"] },
   license: { label: "Licence", group: "Administration", actions: ["view", "update"], notes: { update: "install a key" } },
 } as const satisfies Record<string, ResourceDef>;

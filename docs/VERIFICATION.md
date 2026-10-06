@@ -17,6 +17,7 @@ Hardware assumed: **two physical terminals** plus virtual ones as needed. See
 | 2b | §Phase 2b below | Owner approved commit 2026-10-05; step results not recorded |
 | 3 | §Phase 3 below | Owner approved commit 2026-10-05; step results not recorded |
 | 4 | §Phase 4 below | **VERIFIED** by owner (2026-10-05) |
+| 5 | §Phase 5 below | **VERIFIED** by owner (2026-10-06), including the phone run over a quick tunnel |
 
 Record results here as `PASS` / `FAIL — note` per step when walking through.
 
@@ -608,3 +609,120 @@ pass still loads every registered terminal, as before.
 form.
 
 **Pass:** Steps 1–8 hold.
+
+---
+
+## Phase 5 — Visit requests and the visitor portal
+
+No terminals are needed for this phase: nothing is loaded onto a gate until
+Phase 6 turns a cleared request into a pass. Restart the dev backend and the
+web dev server first (new routes; the migration is already applied to `vms`).
+
+Nothing is really sent: every SMS and email lands on the **Outbox** page
+(Administrator). That is where you read links and codes.
+
+### Step 1 — Setup
+
+1. **Settings → Privacy notice:** enter some text and save. (Without a notice
+   the portal stops at the notice step — that is deliberate.)
+2. **Pass types:** have a visitor type for the test, e.g. "Visitor" with
+   Govt ID type + Govt ID number **required**, Vehicle number optional.
+3. **Operators:** your Host test user should have a **mobile** and an
+   **email** set, so you can see the "visitor submitted" notification.
+
+### Step 2 — Raise a request
+
+Sign in as the Host (or as Admin) → **Requests** → **New visit request**:
+your own mobile, an email, the visitor type, single entry, zone Office, a time
+later today, a purpose → **Send request**.
+
+✅ The request appears with status **sent**.
+✅ **Outbox** (as Admin): one SMS and one email to the visitor, containing a
+link `http://localhost:48101/v/…`.
+
+### Step 3 — The link shows nothing before the code
+
+Open the link in a private browser window.
+
+✅ Only the site name, host, visit time and "number ending ####". No name.
+✅ A made-up link (change a character) says "not valid".
+
+### Step 4 — Mobile code
+
+**Send code** → read it in the Outbox.
+
+✅ Asking for another code within a minute is refused.
+✅ A wrong code says "not right". After the attempt limit (Settings, default
+5) it says "too many" and even the right code stops working; send a new one.
+✅ The right code moves on to the privacy notice.
+
+### Step 5 — Notice, details, photo, documents, submit
+
+1. Tick and **Continue** on the notice.
+2. Fill the details. Leave Govt ID number empty and **Submit**: ✅ refused,
+   naming "Govt ID number". Fill it. (**Save details** keeps a half-filled
+   form; **Submit** saves the form itself first.)
+3. **Open camera** (the browser allows the camera on `localhost`): ✅ face oval
+   shown, preview mirrored. **Take photo** → "Photo saved".
+4. Attach a PDF. ✅ A `.txt` renamed to `.pdf` is refused.
+5. **Submit my details**. ✅ "Thank you … your details are with …".
+6. ✅ Reloading the link shows the same thank-you page; nothing can be edited.
+
+### Step 6 — What the host sees
+
+**Requests** → the request:
+
+✅ Status **submitted**, "Mobile … · verified", privacy notice accepted (time).
+✅ Details with the Govt ID **masked** (first 2 and last 2 characters).
+✅ The photo, and the document (downloads as a file).
+✅ History: sent → submitted by the visitor.
+✅ Outbox: "has submitted their details" to the host's mobile and email.
+
+### Step 7 — New link and cancel
+
+Raise a second request. Open its link once, then on the request page click
+**Send a new link**.
+
+✅ The first link now says "replaced or withdrawn"; the new one works.
+✅ **Cancel request** needs a reason; afterwards the link says withdrawn and
+the status is **cancelled**.
+
+### Step 8 — Returning visitor
+
+Raise a request for the mobile of a **visitor already registered** (with a
+Govt ID saved). Open the link and confirm the code.
+
+✅ "Welcome back", with their name and details filled in and the ID number
+masked. Leaving the masked number as it is keeps their saved number (the
+request page shows the same masked value).
+
+### Step 9 — On a phone (real camera, from outside the LAN)
+
+The camera only works on HTTPS, so use a temporary Cloudflare quick tunnel:
+
+1. Install `cloudflared` and run `cloudflared tunnel --url http://localhost:48101`.
+   It prints an `https://….trycloudflare.com` address. (The web dev server already
+   allows `*.trycloudflare.com` via `allowedDevOrigins` in
+   `web/next.config.ts`; without it the phone page loads but the dev server
+   refuses its `/_next/` requests with "Unauthorized".)
+2. In `backend/.env` set `PUBLIC_PORTAL_URL=` that address; restart the
+   backend.
+3. Raise a new request with your mobile; open the link from the Outbox on
+   your phone (mobile data, not Wi-Fi, proves it works from outside).
+4. ✅ Code, notice, form, front camera with the oval, submit — all work on
+   the phone.
+5. Stop `cloudflared` afterwards and set `PUBLIC_PORTAL_URL` back. A quick
+   tunnel publishes the **whole** web app for as long as it runs; the
+   production tunnel (Phase 9) publishes only the portal paths.
+
+### Step 10 — Access and audit
+
+✅ Signed in as a Host: **Requests** shows only that host's requests; there is
+no **Outbox**; opening another host's request URL says not found.
+✅ **Reports → Audit trail**: the request's rows — created, link sent, code
+sent, code failed, mobile verified, consented, details saved, photo saved,
+document uploaded, submitted (visitor rows have no operator; they carry the
+visitor's address). No row contains a code or a link.
+
+**Pass:** Steps 1–10 hold.
+

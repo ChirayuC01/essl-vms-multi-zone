@@ -89,6 +89,19 @@ export const AuditAction = {
   ZONE_WIDENED: "ZONE_WIDENED",
   BLACKLISTED: "BLACKLISTED",
   BLACKLIST_LIFTED: "BLACKLIST_LIFTED",
+  // Visit requests and the visitor portal (Phase 5). Visitor-side rows have
+  // no actor (the visitor is not an operator); detail.by says "VISITOR" and
+  // carries the client address. Codes and link tokens are never recorded.
+  VISIT_REQUEST_CREATED: "VISIT_REQUEST_CREATED",
+  VISIT_REQUEST_CANCELLED: "VISIT_REQUEST_CANCELLED",
+  VISIT_REQUEST_SUBMITTED: "VISIT_REQUEST_SUBMITTED",
+  VISIT_LINK_SENT: "VISIT_LINK_SENT",
+  VISITOR_OTP_SENT: "VISITOR_OTP_SENT",
+  VISITOR_OTP_FAILED: "VISITOR_OTP_FAILED",
+  VISITOR_MOBILE_VERIFIED: "VISITOR_MOBILE_VERIFIED",
+  VISITOR_CONSENTED: "VISITOR_CONSENTED",
+  VISITOR_DETAILS_SAVED: "VISITOR_DETAILS_SAVED",
+  VISITOR_SELFIE_SAVED: "VISITOR_SELFIE_SAVED",
 } as const;
 export type AuditActionName = (typeof AuditAction)[keyof typeof AuditAction];
 

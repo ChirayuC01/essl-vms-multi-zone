@@ -545,3 +545,61 @@ export interface PersonDocument {
   uploadedById: string | null;
   createdAt: string;
 }
+
+// ---- visit requests (Phase 5) ------------------------------------------------
+
+export type VisitRequestStatus = "SENT" | "SUBMITTED" | "QUERIED" | "CLEARED" | "REJECTED" | "CANCELLED" | "EXPIRED";
+
+export interface VisitRequestRow {
+  id: string;
+  status: VisitRequestStatus;
+  origin: "PLANNED" | "WALK_IN";
+  visitorName: string;
+  visitorMobile: string;
+  companyName: string | null;
+  purpose: string;
+  passTypeName: string | null;
+  entryMode: "SINGLE_ENTRY" | "MULTI_ENTRY";
+  expectedAt: string;
+  validUntil: string;
+  host: { id: string; name: string | null; email: string };
+  returning: boolean;
+  createdAt: string;
+}
+
+export interface VisitRequestDetail extends Omit<VisitRequestRow, "passTypeName"> {
+  visitorEmail: string | null;
+  passType: { id: string; name: string } | null;
+  zones: { id: string; name: string }[];
+  exitCodeZoneIds: string[];
+  personId: string | null;
+  mobileVerifiedAt: string | null;
+  consents: { noticeVersion: string; acceptedAt: string; ipAddress: string | null }[];
+  details: Record<string, unknown> | null;
+  missing: string[];
+  hasSelfie: boolean;
+  documents: { id: string; kind: string; fileName: string; mime: string; sizeBytes: number; createdAt: string }[];
+  link: { expiresAt: string; revokedAt: string | null; createdAt: string } | null;
+  queryText: string | null;
+  events: { id: string; actorKind: string; actorName: string | null; fromStatus: VisitRequestStatus | null; toStatus: VisitRequestStatus; note: string | null; createdAt: string }[];
+}
+
+export interface VisitRequestOptions {
+  passTypes: { id: string; name: string; entryModes: ("SINGLE_ENTRY" | "MULTI_ENTRY")[]; maxValidityDays: number | null }[];
+  zones: { id: string; name: string; parentZoneId: string | null; exitCodeDefault: boolean }[];
+}
+
+export interface OutboxMessage {
+  id: string;
+  channel: "SMS" | "EMAIL";
+  recipient: string;
+  template: string;
+  body: string;
+  status: "SENT" | "FAILED";
+  error: string | null;
+  transport: string;
+  relatedType: string | null;
+  relatedId: string | null;
+  createdAt: string;
+}
+

@@ -81,6 +81,17 @@ published to the internet only through a Cloudflare Tunnel whose ingress allows
   unloading gates.
 - **Audit** — every state change writes `audit_log`; system actions have a null
   actor. `sync_command.initiated_by` attributes device writes to operators.
+- **Visitor portal** (Phase 5). Backend routes under `/public-api` (`api/portal.ts`)
+  sit outside the operator auth scope and the licence gate; the link token in
+  the path is the only credential and reaches one visit request. The web app
+  serves the pages at `/v/<token>` and proxies `/public-api/*` to the backend
+  with a route handler (`web/src/app/public-api/[...path]/route.ts`), passing
+  the visitor's address as `X-Forwarded-For` (trusted only from loopback).
+  Rate limits are in memory (`services/rate-limit.ts`), fine for the single
+  backend process. Messages go through `services/notify.ts`, which always
+  writes a `message` row; `MESSAGE_TRANSPORT=console` sends nothing.
+  Links are built from `PUBLIC_PORTAL_URL`. Visitor selfies and documents
+  live under `DOCUMENT_STORAGE_PATH/requests/<id>/`.
 - **Licensing** — offline Ed25519 keys bound to the installation, 30-day trial,
   expiry blocks operator API (HTTP 402) but never ADMS or jobs
   (`legacy/LICENSING.md`).
@@ -96,8 +107,8 @@ Delivered phase by phase; see `PLAN.md` for the exact fields.
 | `Role`, `RolePermission`, `UserPermissionOverride` | Configurable access grid (`services/access.ts`, `api/access.ts`) — **done** | 2b |
 | `PassType`, Person fields, `PersonDocument` | Per-type validation (`services/pass-types.ts`), redaction (`services/redact.ts`), documents (`services/documents.ts`, `api/documents.ts`) — **done** | 3 |
 | `Entry` extended into a pass, `PassGate` | Per-terminal load/unload schedule (`services/gates.ts`, `services/passes.ts`) — **done** | 4 |
-| `Message`, `Otp`, link tokens, `ConsentRecord` | Outbox, OTPs, portal | 5 |
-| `VisitRequest`, `VisitRequestEvent` | Request workflow with full history | 6 |
+| `Message`, `Otp`, `LinkToken`, `ConsentRecord`, `VisitRequest`, `VisitRequestEvent` | Outbox (`services/notify.ts`), codes and links (`services/codes.ts`), portal and request core (`services/visit-requests.ts`, `api/portal.ts`, `api/visit-requests.ts`) — **done** | 5 |
+| (request review) | Clear / Query / Reject, walk-ins, request → pass | 6 |
 | `Outage` | Outage detection and automatic release | 7 |
 
 ## 5. Database rules

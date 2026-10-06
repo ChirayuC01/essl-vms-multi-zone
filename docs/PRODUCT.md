@@ -104,8 +104,8 @@ Daily sub-contractor passes stay outside the system.
 1. **Host** raises a request: visitor name, mobile, company, purpose, zone(s),
    pass type, entry mode, date and time, and for a single-entry yard pass,
    whether the yard exit also needs the exit code.
-2. **System** sends the visitor a link (SMS + email).
-3. **Visitor** opens it, verifies mobile by OTP, reads and accepts the privacy
+2. **System** sends the visitor a link (SMS + email). *(Phase 5 — implemented.)*
+3. **Visitor** opens it *(Phase 5 — implemented, §11)*, verifies mobile by OTP, reads and accepts the privacy
    notice, enters Govt ID and vehicle number, takes a live selfie with a face
    guide, optionally uploads documents.
 4. **Host** reviews and chooses:
@@ -304,6 +304,27 @@ the Devices page.
 Links and OTPs go by SMS and email. Until the site confirms a provider (MSG91
 and an SMTP account are expected), messages go to an **outbox** readable by an
 Admin in the console, which is how the flows are tested locally.
+
+**Implemented in Phase 5:**
+- **Requests** page: a host raises a request (visitor name, mobile, optional
+  email and company, visitor type, entry mode, zones, exit-code exits, visit
+  time, valid until, purpose). The visitor gets the link by SMS (and email if
+  given). The host sees status, details (IDs masked), photo, documents and
+  history; can send a new link (the old one stops working) or cancel with a
+  reason. A host sees only their own requests; anyone who can see passes sees
+  all.
+- **Visitor portal** (`/v/<link>`), on the visitor's phone:
+  1. confirm the mobile with an SMS code (the page shows nothing personal
+     before this);
+  2. read and accept the privacy notice;
+  3. fill the fields the visitor type asks for (a returning visitor sees
+     their saved details, ID numbers masked);
+  4. take a live photo inside a face oval (camera only);
+  5. optionally attach documents;
+  6. submit — the host is notified.
+- **Outbox** page (Administrator by default): every SMS and email recorded.
+- Limits (settings): link validity, code validity, wrong-code attempts,
+  document size, count and types. Codes: one a minute, five an hour.
 
 The visitor portal (link, OTP, form, selfie, documents, out-pass) is the only
 part reachable from the internet, published through a Cloudflare Tunnel on the

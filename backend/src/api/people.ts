@@ -33,7 +33,7 @@ import { blacklistPerson, liftBlacklist } from "../services/passes.js";
 // Separators are stripped before validating, so "1234 5678 9012" and
 // "123456789012" cannot become two rows for one person under the unique
 // constraint. Real Aadhaar numbers never begin 0 or 1.
-const aadharNumber = z
+export const aadharNumber = z
   .string()
   .trim()
   .transform((v) => v.replace(/[\s-]/g, ""))
@@ -41,7 +41,7 @@ const aadharNumber = z
     z.string().regex(/^[2-9][0-9]{11}$/, "aadhar number must be 12 digits and cannot start with 0 or 1"),
   );
 
-const mobileNumber = z
+export const mobileNumber = z
   .string()
   .trim()
   .regex(/^[0-9+\-\s]{6,20}$/, "mobile must be 6-20 digits/+/-");
@@ -59,12 +59,12 @@ const identityFields = {
 
 // A masked value echoed back by the console means "unchanged" (CLAUDE.md
 // #12), so it is dropped before validation rather than stored or rejected.
-const unlessMasked = <T extends z.ZodTypeAny>(schema: T) => z.preprocess((v) => (isMasked(v) ? undefined : v), schema);
+export const unlessMasked = <T extends z.ZodTypeAny>(schema: T) => z.preprocess((v) => (isMasked(v) ? undefined : v), schema);
 const text = (max: number) => z.string().trim().max(max).transform((v) => v || null);
 
 // Two-zone profile fields (Phase 3). Which are required depends on the
 // person's pass type; null clears an optional one.
-const profileFields = {
+export const profileFields = {
   email: z.string().trim().toLowerCase().email().max(200).nullable().optional(),
   designation: text(100).nullable().optional(),
   govtIdType: text(40).nullable().optional(),

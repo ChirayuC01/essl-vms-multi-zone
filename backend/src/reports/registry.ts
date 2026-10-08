@@ -45,7 +45,7 @@ export interface ReportDef {
   key: string;
   title: string;
   description: string;
-  group: "Movement" | "People" | "Exceptions" | "Operations";
+  group: "Movement" | "People" | "Visits" | "Exceptions" | "Operations";
   permission: PermissionKey;
   filters: FilterName[];
   columns: ReportColumn[];
@@ -762,6 +762,216 @@ export const REPORTS: ReportDef[] = [
          ${dateAtLeast(Prisma.sql`s."local_date"::date`, f.from)}
          ${dateAtMost(Prisma.sql`s."local_date"::date`, f.to)}
        ORDER BY s."local_date" DESC`,
+  },
+  // --------------------------------------------------------------- visits (two-zone rebuild, Phase 8)
+  {
+    key: "visit-requests",
+    title: "Visit requests",
+    description: "Every request with its status, how many times it was queried (with the questions), and the final decision.",
+    group: "Visits",
+    permission: "reports:view",
+    filters: ["dateRange", "actor", "company"],
+    columns: [
+      { key: "created_at", label: "Raised" },
+      { key: "origin", label: "Origin" },
+      { key: "visitor", label: "Visitor" },
+      { key: "mobile", label: "Mobile" },
+      { key: "company", label: "Company" },
+      { key: "visitor_type", label: "Visitor type" },
+      { key: "host", label: "Host" },
+      { key: "expected_at", label: "Visit" },
+      { key: "status", label: "Status" },
+      { key: "queries", label: "Queries" },
+      { key: "query_history", label: "Questions asked" },
+      { key: "decided_at", label: "Decided" },
+      { key: "decision_note", label: "Decision note" },
+    ],
+    base: (f) => Prisma.sql`
+      SELECT v."created_at", v."origin", v."visitor_name" AS visitor, v."visitor_mobile" AS mobile,
+             COALESCE(c."name", v."company_name") AS company, pt."name" AS visitor_type,
+             COALESCE(h."name", h."email") AS host, v."expected_at", v."status",
+             (SELECT COUNT(*) FROM "visit_request_event" e WHERE e."request_id" = v."id" AND e."to_status" = 'QUERIED')::int AS queries,
+             (SELECT string_agg(e."note", ' | ' ORDER BY e."created_at") FROM "visit_request_event" e WHERE e."request_id" = v."id" AND e."to_status" = 'QUERIED') AS query_history,
+             d."created_at" AS decided_at, d."note" AS decision_note
+        FROM "visit_request" v
+        JOIN "app_user" h ON h."id" = v."host_id"
+        LEFT JOIN "company" c ON c."id" = v."company_id"
+        LEFT JOIN "pass_type" pt ON pt."id" = v."pass_type_id"
+        LEFT JOIN LATERAL (
+          SELECT e."created_at", e."note" FROM "visit_request_event" e
+           WHERE e."request_id" = v."id" AND e."to_status" IN ('CLEARED', 'REJECTED', 'CANCELLED', 'EXPIRED')
+           ORDER BY e."created_at" DESC LIMIT 1) d ON TRUE
+       WHERE TRUE
+         ${dateAtLeast(istDate(Prisma.sql`v."created_at"`), f.from)}
+         ${dateAtMost(istDate(Prisma.sql`v."created_at"`), f.to)}
+         ${eqActor(Prisma.sql`v."host_id"`, f.actorId)}
+         ${eqValue(Prisma.sql`v."company_id"`, f.companyId)}
+       ORDER BY v."created_at" DESC`,
+  },
+  {
+    key: "pass-type-usage",
+    title: "Visitor type usage",
+    description: "Passes issued per visitor type: single and multi entry, distinct people, and how many were actually used.",
+    group: "Visits",
+    permission: "reports:view",
+    filters: ["dateRange"],
+    columns: [
+      { key: "visitor_type", label: "Visitor type" },
+      { key: "passes", label: "Passes" },
+      { key: "single_entry", label: "Single entry" },
+      { key: "multi_entry", label: "Multi entry" },
+      { key: "people", label: "People" },
+      { key: "used", label: "Used (came in)" },
+    ],
+    base: (f) => Prisma.sql`
+      SELECT COALESCE(pt."name", '(no type)') AS visitor_type,
+             COUNT(*)::int AS passes,
+             COUNT(*) FILTER (WHERE e."entry_mode" = 'SINGLE_ENTRY')::int AS single_entry,
+             COUNT(*) FILTER (WHERE e."entry_mode" = 'MULTI_ENTRY')::int AS multi_entry,
+             COUNT(DISTINCT e."person_id")::int AS people,
+             COUNT(*) FILTER (WHERE e."in_at" IS NOT NULL)::int AS used
+        FROM "entry" e
+        LEFT JOIN "pass_type" pt ON pt."id" = e."pass_type_id"
+       WHERE TRUE
+         ${dateAtLeast(istDate(Prisma.sql`e."created_at"`), f.from)}
+         ${dateAtMost(istDate(Prisma.sql`e."created_at"`), f.to)}
+       GROUP BY 1
+       ORDER BY passes DESC, visitor_type`,
+  },
+  {
+    key: "zone-presence",
+    title: "Inside now, by zone",
+    description: "Everyone a pass shows as inside, where they are, and whether their pass has already ended (overstayed).",
+    group: "Visits",
+    permission: "onsite:view",
+    filters: [],
+    columns: [
+      ...PERSON_COLS,
+      { key: "location", label: "Where" },
+      { key: "in_at", label: "Came in" },
+      { key: "entry_mode", label: "Mode" },
+      { key: "pass_ends", label: "Pass ends" },
+      { key: "overstayed", label: "Overstayed" },
+    ],
+    base: () => Prisma.sql`
+      SELECT p."name" AS person, (SELECT c."name" FROM "company" c WHERE c."id" = p."company_id") AS company,
+             p."essl_user_id" AS pin, COALESCE(z."name", 'inside') AS location, e."in_at", e."entry_mode",
+             e."retention_expires_at" AS pass_ends,
+             (e."retention_expires_at" <= (NOW() AT TIME ZONE 'UTC')) AS overstayed
+        FROM "entry" e
+        JOIN "person" p ON p."id" = e."person_id"
+        LEFT JOIN "zone" z ON z."id" = e."location_zone_id"
+       WHERE e."state" = 'INSIDE'
+       ORDER BY overstayed DESC, e."in_at"`,
+  },
+
+  // ------------------------------------------------------------ exceptions (Phase 8)
+  {
+    key: "exit-overrides",
+    title: "Exit overrides",
+    description: "Single-entry visitors released at the exit without the code: who did it, when, and why.",
+    group: "Exceptions",
+    permission: "audit:view",
+    filters: ["dateRange", "actor"],
+    columns: [
+      { key: "created_at", label: "When" },
+      { key: "operator", label: "Operator" },
+      { key: "visitor", label: "Visitor" },
+      { key: "pin", label: "ID" },
+      { key: "reason", label: "Reason" },
+    ],
+    base: (f) => Prisma.sql`
+      SELECT a."created_at", COALESCE(u."name", u."email", 'system') AS operator, p."name" AS visitor,
+             COALESCE(a."detail"->>'esslUserId', p."essl_user_id") AS pin, a."detail"->>'reason' AS reason
+        FROM "audit_log" a
+        LEFT JOIN "app_user" u ON u."id" = a."actor_id"
+        LEFT JOIN "person" p ON p."id" = a."detail"->>'personId'
+       WHERE a."action" = 'EXIT_OVERRIDE'
+         ${dateAtLeast(istDate(Prisma.sql`a."created_at"`), f.from)}
+         ${dateAtMost(istDate(Prisma.sql`a."created_at"`), f.to)}
+         ${eqActor(Prisma.sql`a."actor_id"`, f.actorId)}
+       ORDER BY a."created_at" DESC`,
+  },
+  {
+    key: "blacklist-history",
+    title: "Blacklist history",
+    description: "Every blacklisting and lifting, with the operator and the reason.",
+    group: "Exceptions",
+    permission: "audit:view",
+    filters: ["dateRange", "actor"],
+    columns: [
+      { key: "created_at", label: "When" },
+      { key: "event", label: "Event" },
+      { key: "operator", label: "Operator" },
+      ...PERSON_COLS,
+      { key: "reason", label: "Reason" },
+    ],
+    base: (f) => Prisma.sql`
+      SELECT a."created_at", CASE a."action" WHEN 'BLACKLISTED' THEN 'blacklisted' ELSE 'lifted' END AS event,
+             COALESCE(u."name", u."email", 'system') AS operator, p."name" AS person,
+             (SELECT c."name" FROM "company" c WHERE c."id" = p."company_id") AS company, p."essl_user_id" AS pin,
+             a."detail"->>'reason' AS reason
+        FROM "audit_log" a
+        LEFT JOIN "app_user" u ON u."id" = a."actor_id"
+        LEFT JOIN "person" p ON p."id" = a."entity_id"
+       WHERE a."action" IN ('BLACKLISTED', 'BLACKLIST_LIFTED')
+         ${dateAtLeast(istDate(Prisma.sql`a."created_at"`), f.from)}
+         ${dateAtMost(istDate(Prisma.sql`a."created_at"`), f.to)}
+         ${eqActor(Prisma.sql`a."actor_id"`, f.actorId)}
+       ORDER BY a."created_at" DESC`,
+  },
+  {
+    key: "outage-releases",
+    title: "Outages and releases",
+    description: "Each system outage and the single-entry visitors released when it ended — to reconcile against the manual admin-card register.",
+    group: "Exceptions",
+    permission: "outages:view",
+    filters: ["dateRange"],
+    columns: [
+      { key: "started_at", label: "Outage from" },
+      { key: "ended_at", label: "Until" },
+      { key: "minutes", label: "Minutes" },
+      { key: "visitor", label: "Released visitor" },
+      { key: "pin", label: "ID" },
+      { key: "mobile", label: "Mobile" },
+      { key: "in_at", label: "Came in" },
+    ],
+    base: (f) => Prisma.sql`
+      SELECT o."started_at", o."ended_at", ROUND(EXTRACT(EPOCH FROM (o."ended_at" - o."started_at")) / 60)::int AS minutes,
+             p."name" AS visitor, p."essl_user_id" AS pin, p."mobile", e."in_at"
+        FROM "outage" o
+        LEFT JOIN "entry" e ON e."released_by_outage_id" = o."id"
+        LEFT JOIN "person" p ON p."id" = e."person_id"
+       WHERE TRUE
+         ${dateAtLeast(istDate(Prisma.sql`o."started_at"`), f.from)}
+         ${dateAtMost(istDate(Prisma.sql`o."started_at"`), f.to)}
+       ORDER BY o."started_at" DESC, p."name"`,
+  },
+
+  // ------------------------------------------------------------ operations (Phase 8)
+  {
+    key: "messages-sent",
+    title: "Messages sent",
+    description: "Every SMS and email the system sent or recorded, and whether it went. Message text is not shown here (it can hold codes).",
+    group: "Operations",
+    permission: "messages:view",
+    filters: ["dateRange"],
+    columns: [
+      { key: "created_at", label: "When" },
+      { key: "channel", label: "Channel" },
+      { key: "recipient", label: "To" },
+      { key: "template", label: "Message" },
+      { key: "status", label: "Status" },
+      { key: "transport", label: "Transport" },
+      { key: "error", label: "Error" },
+    ],
+    base: (f) => Prisma.sql`
+      SELECT m."created_at", m."channel", m."recipient", m."template", m."status", m."transport", m."error"
+        FROM "message" m
+       WHERE TRUE
+         ${dateAtLeast(istDate(Prisma.sql`m."created_at"`), f.from)}
+         ${dateAtMost(istDate(Prisma.sql`m."created_at"`), f.to)}
+       ORDER BY m."created_at" DESC`,
   },
 ];
 

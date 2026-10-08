@@ -201,7 +201,7 @@ Further rules:
 - **Exit override** (Security) — when the code route fails, Security releases
   a single-entry visitor at the exit: the code-gated exit terminals load at
   once. Reason mandatory; logged with operator, visitor, time and reason.
-  Implemented, Phase 4. The report comes in Phase 8.
+  Implemented, Phase 4. Report: **Exit overrides** (Phase 8).
 - **Security photo retake** — replace a poor selfie at the gate; re-pushed to
   the loaded terminals. Implemented, Phase 6 (person page → pass panel).
 - **Outage procedure** — while the system is down, site staff release people
@@ -344,7 +344,23 @@ part reachable from the internet, published through a Cloudflare Tunnel on the
 site's own domain. The operator console and the terminal endpoints stay on the
 LAN.
 
-## 12. Known limits
+## 12. Reports (Phase 8 — implemented, plus the 0.4.x set)
+
+Reports page, grouped. New for the two-zone product:
+
+| Report | Who (default) | Answers |
+|---|---|---|
+| Visit requests | report viewers | every request: origin, visitor, company, type, host, visit time, status, number of queries **with the questions**, decision time and note; filter by date, host, company |
+| Visitor type usage | report viewers | passes per visitor type: single/multi, people, how many were used |
+| Inside now, by zone | on-site viewers | who is inside, in which zone, pass end, **overstayed** |
+| Exit overrides | audit viewers (Security In-charge) | operator, visitor, time, reason |
+| Blacklist history | audit viewers | every blacklisting and lift, operator, reason |
+| Outages and releases | Security, Security In-charge | each outage and who was released — for the admin-card register |
+| Messages sent | Administrator | every SMS/email, recipient, status — **without the text** (it can hold codes) |
+
+Every report exports to CSV; no saved ID number appears in any of them.
+
+## 13. Known limits
 
 - A terminal does **not** report a person it recognised but refused (expired,
   blacklisted, wrong zone). Attempted entries cannot be reported.

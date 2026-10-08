@@ -115,6 +115,10 @@ export const AuditAction = {
   // Outage recovery (Phase 7): the gap found, and each pass it released.
   OUTAGE_DETECTED: "OUTAGE_DETECTED",
   OUTAGE_RELEASE: "OUTAGE_RELEASE",
+  // Found by the Phase 8 audit sweep: device settings (role, ID patterns,
+  // timezone, status codes) and retention runs changed state unrecorded.
+  DEVICE_UPDATED: "DEVICE_UPDATED",
+  RETENTION_RUN: "RETENTION_RUN",
 } as const;
 export type AuditActionName = (typeof AuditAction)[keyof typeof AuditAction];
 

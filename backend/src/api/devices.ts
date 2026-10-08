@@ -263,6 +263,17 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
     }
 
     const updated = await prisma.device.update({ where: { id }, data });
+    // Every changed setting, old and new (the zone has its own action below).
+    const changes = Object.fromEntries(
+      (["name", "role", "timezoneOffsetMinutes", "inStatusCodes", "outStatusCodes", "employeeIdPatterns", "visitorIdPatterns", "duplicatePunchPeriodMinutes"] as const)
+        .filter((k) => JSON.stringify(device[k]) !== JSON.stringify(updated[k]))
+        .map((k) => [k, { from: device[k], to: updated[k] }]),
+    );
+    if (Object.keys(changes).length) {
+      await prisma.auditLog.create({
+        data: auditRow({ action: AuditAction.DEVICE_UPDATED, entityType: "device", entityId: id, detail: JSON.parse(JSON.stringify(changes)), actorId: actorId(request) }),
+      });
+    }
     if (zoneChanged) {
       await prisma.auditLog.create({
         data: auditRow({

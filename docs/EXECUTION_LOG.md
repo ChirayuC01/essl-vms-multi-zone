@@ -774,3 +774,41 @@ result) · issues · next action.
 
 - Owner verified Phase 7. Marked `ACCEPTED`; committed. Phase 8 begins.
 
+### 2026-10-08 — Phase 8 — Reports and audit coverage
+
+- **Status:** `IMPLEMENTED_AWAITING_VERIFICATION`.
+- **Change:**
+  - **Reports** (`reports/registry.ts`, new group "Visits"): `visit-requests`
+    (queries counted with their texts, last decision and note; host and
+    company filters), `pass-type-usage`, `zone-presence` (overstayed flag),
+    `exit-overrides`, `blacklist-history`, `outage-releases`,
+    `messages-sent` (no message text). Each follows its own access cell.
+  - **Audit sweep:**
+    - `src/api/route-guards.test.ts` scans every route file: a route without
+      a `preHandler` permission fails unless it is a named exception with a
+      reason (login, own password, public branding, self-authenticating SSE,
+      first-run setup, reports that check per report, the token portal).
+    - e2e wraps `app.inject`: every successful non-GET `/api` or
+      `/public-api` call must add an audit row; section 34 fails on any that
+      didn't, apart from named no-change cases (login, an identical settings
+      patch).
+  - **Gaps it found and fixed:** device setting changes (`PATCH
+    /api/devices/:id`) now write `DEVICE_UPDATED` with each field's old and
+    new value; retention runs write `RETENTION_RUN` (always for a manual run,
+    with the operator; for a scheduled run when anything was deleted).
+- **Verification (2026-10-08):**
+  - Unit **107/107** (new route-guard test).
+  - e2e **518/518**; new section 34 (audit coverage over every exercised
+    state-changing route) and section 35 (13 checks: query history, decision
+    note, walk-in origin, host filter, overrides with reasons, blacklist and
+    lift, outage releases, zone presence, type usage, messages without text
+    and no codes in CSV, no ID numbers in the visit export, Host sees no
+    control reports). Section 21 still runs and exports every report.
+  - No migration this phase; web unchanged (the Reports page renders the
+    catalogue it is given).
+- **Next action:** owner walk-through, `VERIFICATION.md` § Phase 8.
+
+### 2026-10-08 — Phase 8 — verified and accepted
+
+- Owner verified Phase 8. Marked `ACCEPTED`; committed. Phase 9 begins.
+

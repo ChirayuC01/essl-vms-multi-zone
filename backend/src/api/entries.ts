@@ -321,7 +321,7 @@ export async function entryRoutes(app: FastifyInstance): Promise<void> {
   // Run a pass now. Bounded the same way the scheduled run is, so calling it
   // repeatedly is how a large backlog is cleared, not one enormous statement.
   app.post("/maintenance/retention", { preHandler: requirePermission("maintenance:update") }, async (request, reply) => {
-    return reply.send(await runRetention(request.log));
+    return reply.send(await runRetention(request.log, new Date(), actorId(request)));
   });
 
   // ---- run the sweep now ---------------------------------------------------

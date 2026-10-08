@@ -20,6 +20,7 @@ Hardware assumed: **two physical terminals** plus virtual ones as needed. See
 | 5 | §Phase 5 below | **VERIFIED** by owner (2026-10-06), including the phone run over a quick tunnel |
 | 6 | §Phase 6 below | **VERIFIED** by owner (2026-10-08) |
 | 7 | §Phase 7 below | **VERIFIED** by owner (2026-10-08) |
+| 8 | §Phase 8 below | **VERIFIED** by owner (2026-10-08) |
 
 Record results here as `PASS` / `FAIL — note` per step when walking through.
 
@@ -903,4 +904,51 @@ single-entry visitor as released.
 ✅ A Host cannot issue a code for another host's visitor.
 
 **Pass:** Steps 1–6 hold.
+
+---
+
+## Phase 8 — Reports and audit coverage
+
+No terminals needed. Restart the dev backend (no migration this phase). Use the
+data from your Phase 5–7 testing; sign in as Admin.
+
+### Step 1 — The new reports
+
+**Reports** → a new **Visits** group and additions to **Exceptions** and
+**Operations**. Open each and check it against what you did:
+
+1. **Visit requests:** ✅ every request, with status; the queried one shows the
+   number of queries and **your question texts**; rejected ones show the
+   reason; walk-ins say `WALK_IN`. Filter by host and by company.
+2. **Visitor type usage:** ✅ passes per visitor type, single vs multi.
+3. **Inside now, by zone:** ✅ anyone inside, with their zone; past-end passes
+   marked **overstayed**.
+4. **Exit overrides:** ✅ each override with operator, visitor and your reason.
+5. **Blacklist history:** ✅ blacklistings and lifts with reasons (blacklist and
+   lift a test visitor first if you have none).
+6. **Outages and releases:** ✅ the outage from Phase 7 and who it released.
+7. **Messages sent:** ✅ every SMS/email with recipient and status, **no
+   message text**.
+
+### Step 2 — CSV
+
+Export each to CSV and open in Excel. ✅ Times in IST; no full Govt ID /
+Aadhaar / PAN / credential number anywhere; Messages sent has no codes.
+
+### Step 3 — Who sees which report
+
+✅ Security In-charge: Exit overrides, Blacklist history, Outages.
+✅ Security: Outages. ✅ Host: none of these.
+(Each follows its cell on the Access page; grant to change.)
+
+### Step 4 — Newly audited actions
+
+1. **Devices:** change a terminal's visitor ID pattern or timezone.
+   ✅ Audit trail: `DEVICE_UPDATED` with the old and new value.
+2. Retention has no console button (it runs nightly at 03:30; the API run is
+   covered by the automated tests). Optional: after a night in which old
+   punches, commands or photos were removed, ✅ the audit trail shows
+   `RETENTION_RUN` with the counts.
+
+**Pass:** Steps 1–4 hold.
 

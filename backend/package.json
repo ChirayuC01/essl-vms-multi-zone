@@ -9,7 +9,7 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/adms/parsers.test.ts src/adms/commands.test.ts src/api/auth.test.ts src/api/jpeg.test.ts src/api/license.test.ts src/services/entries.test.ts src/services/punches.test.ts src/services/entry-modes.test.ts src/services/gates.test.ts src/services/rate-limit.test.ts src/services/backfill.test.ts src/api/reports.test.ts src/api/people.test.ts src/user-id.test.ts src/services/attendance.test.ts src/services/zones.test.ts src/services/settings.test.ts src/services/access.test.ts src/services/redact.test.ts src/services/pass-types.test.ts src/services/documents.test.ts scripts/license/license-tools.test.mjs",
+    "test": "tsx --test src/adms/parsers.test.ts src/adms/commands.test.ts src/api/auth.test.ts src/api/jpeg.test.ts src/api/license.test.ts src/services/entries.test.ts src/services/punches.test.ts src/services/entry-modes.test.ts src/services/gates.test.ts src/services/rate-limit.test.ts src/api/route-guards.test.ts src/services/backfill.test.ts src/api/reports.test.ts src/api/people.test.ts src/user-id.test.ts src/services/attendance.test.ts src/services/zones.test.ts src/services/settings.test.ts src/services/access.test.ts src/services/redact.test.ts src/services/pass-types.test.ts src/services/documents.test.ts scripts/license/license-tools.test.mjs",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:seed": "prisma db seed",

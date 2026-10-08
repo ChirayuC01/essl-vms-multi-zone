@@ -343,6 +343,36 @@ async function testPhoto(pin: string = PIN): Promise<Buffer> {
   return jpeg;
 }
 
+// --- audit coverage (Phase 8) -------------------------------------------
+// CLAUDE.md #11: every state change is audited. Every state-changing operator
+// or portal call this run makes is watched: if it succeeds and no audit row
+// appeared, the route is reported. Section 34 asserts none did.
+const unaudited = new Map<string, number>();
+const exercised = new Set<string>();
+const routeOf = (url: string) =>
+  url
+    .split("?")[0]!
+    .split("/")
+    .map((seg) => (/^c[a-z0-9]{20,}$/.test(seg) || /^[A-Za-z0-9_-]{30,}$/.test(seg) || /^\d+$/.test(seg) ? ":id" : seg))
+    .join("/");
+function watchAudits(app: FastifyInstance): void {
+  const inject = app.inject.bind(app) as (opts: object) => Promise<{ statusCode: number }>;
+  (app as unknown as { inject: (opts: object) => Promise<unknown> }).inject = async (opts: object) => {
+    const o = opts as { method?: string; url?: string };
+    const method = (o.method ?? "GET").toUpperCase();
+    const url = o.url ?? "";
+    const tracked = method !== "GET" && (url.startsWith("/api/") || url.startsWith("/public-api/"));
+    const before = tracked ? await prisma.auditLog.count() : 0;
+    const res = await inject(opts);
+    if (tracked && res.statusCode < 300) {
+      const route = `${method} ${routeOf(url)}`;
+      exercised.add(route);
+      if ((await prisma.auditLog.count()) === before) unaudited.set(route, (unaudited.get(route) ?? 0) + 1);
+    }
+    return res;
+  };
+}
+
 // --- the run -------------------------------------------------------------
 async function main() {
   console.log(`Verifying against ${config.databaseUrl.replace(/:[^:@]*@/, ":***@")}\n`);
@@ -353,6 +383,7 @@ async function main() {
 
   await resetDatabase();
   let app = await buildApp();
+  watchAudits(app);
   await app.ready();
   let device = new SimulatedDevice(app, SN);
   const token = await apiToken(app);
@@ -815,6 +846,7 @@ async function main() {
   stopQueueMaintenance();
   await app.close();
   app = await buildApp();
+  watchAudits(app);
   await app.ready();
   device = new SimulatedDevice(app, SN);
   console.log("  (application torn down and rebuilt)");
@@ -4419,6 +4451,64 @@ async function main() {
     await gateTick(silentLog);
     check("the released pass closes once its faces are removed", (await prisma.entry.findUniqueOrThrow({ where: { id: cEntry } })).state === "REGISTERED");
     void zYd;
+  }
+
+  // ======================================================================
+  section("35. Phase 8 reports, against the data the run created");
+  // ======================================================================
+  {
+    const rep = async (key: string, query = "") => {
+      const res = await app.inject({ method: "GET", url: `/api/reports/${key}?pageSize=200${query}`, headers: auth(token) });
+      return { status: res.statusCode, rows: (res.statusCode === 200 ? JSON.parse(res.body).rows : []) as Record<string, unknown>[] };
+    };
+    const csv = async (key: string) => (await app.inject({ method: "GET", url: `/api/reports/${key}?format=csv`, headers: auth(token) })).body;
+
+    const vr = await rep("visit-requests");
+    const looped = vr.rows.find((r) => r.queries === 2);
+    check("visit requests: the twice-queried request shows both questions", typeof looped?.query_history === "string" && /Round 1/.test(looped.query_history as string) && /Round 2/.test(looped.query_history as string), JSON.stringify(looped ?? {}).slice(0, 300));
+    check("...a rejected request carries its decision note", vr.rows.some((r) => r.status === "REJECTED" && r.decision_note === "not expected today"));
+    check("...walk-ins are marked as such", vr.rows.some((r) => r.origin === "WALK_IN"));
+    const hostOnly = await rep("visit-requests", `&actorId=${(await prisma.appUser.findUniqueOrThrow({ where: { email: "host@vms.local" } })).id}`);
+    check("...and filter by host", hostOnly.rows.length > 0 && hostOnly.rows.length < vr.rows.length);
+
+    const ov = await rep("exit-overrides");
+    check("exit overrides list operator, visitor and reason", ov.rows.length > 0 && ov.rows.every((r) => typeof r.reason === "string" && r.reason.length > 0 && r.operator), JSON.stringify(ov.rows[0] ?? {}));
+    const bl = await rep("blacklist-history");
+    check("blacklist history has both blacklistings and lifts", bl.rows.some((r) => r.event === "blacklisted") && bl.rows.some((r) => r.event === "lifted"));
+    const out = await rep("outage-releases");
+    check("outage report lists the released visitor", out.rows.some((r) => r.pin === "XC3" && typeof r.minutes === "number"));
+    const zp = await rep("zone-presence");
+    check("inside-by-zone shows where the multi-entry visitor is", zp.rows.some((r) => r.pin === "XC2" && r.location === "E2E Premise"), JSON.stringify(zp.rows).slice(0, 300));
+    const usage = await rep("pass-type-usage");
+    check("visitor type usage counts passes per type", usage.rows.some((r) => r.visitor_type === "E2E Reviewed Visitor" && (r.passes as number) >= 2));
+    const sent = await rep("messages-sent");
+    check("messages sent lists them without their text", sent.rows.length > 0 && !("body" in sent.rows[0]!));
+    const sentCsv = await csv("messages-sent");
+    const codesInOutbox = (await prisma.message.findMany({ where: { template: { in: ["MOBILE_OTP", "EXIT_CODE"] } }, select: { body: true } }))
+      .map((m) => /(\d{6})/.exec(m.body)?.[1]).filter((c): c is string => Boolean(c));
+    check("...and no one-time code reaches the export", codesInOutbox.length > 0 && codesInOutbox.every((c) => !sentCsv.includes(c)));
+    const vrCsv = await csv("visit-requests");
+    check("no saved ID number appears in the visit-request export", !["R7654322", "W1111111", "CI12345A7B"].some((n) => vrCsv.includes(n)));
+
+    // Access: each report follows its own cell.
+    const hostTokR = JSON.parse((await app.inject({ method: "POST", url: "/api/auth/login", payload: { email: "host@vms.local", password: "role-password" } })).body).token as string;
+    const hostCat = JSON.parse((await app.inject({ method: "GET", url: "/api/reports", headers: auth(hostTokR) })).body).items as { key: string }[];
+    check("a Host sees none of the control reports", !hostCat.some((r) => ["exit-overrides", "outage-releases", "messages-sent", "blacklist-history"].includes(r.key)));
+  }
+
+  // ======================================================================
+  section("34. Audit coverage — every successful state change left an audit row");
+  // ======================================================================
+  {
+    // A success that changes nothing writes nothing, by design; each is listed
+    // with why it is not a state change.
+    const NO_CHANGE: Record<string, string> = {
+      "POST /api/auth/login": "signing in is not a state change (refusals are logged)",
+      "PATCH /api/settings": "a patch identical to the stored settings writes nothing",
+    };
+    const gaps = [...unaudited.entries()].filter(([route]) => !NO_CHANGE[route]).map(([route, n]) => `${route} (${n}x)`);
+    console.log(`  (${exercised.size} distinct state-changing routes exercised)`);
+    check("every state-changing route the run exercised wrote an audit row", gaps.length === 0, gaps.join("; "));
   }
 
   // --- teardown ---------------------------------------------------------

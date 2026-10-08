@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { CommandStatus, EntryState, Prisma, type DeviceRole } from "@prisma/client";
 import { config } from "../config/index.js";
 import { prisma } from "../db/index.js";
+import { AuditAction, auditRow } from "../db/audit.js";
 import { photoPathFor, userIdFromPhotoFile, userIdKey } from "../user-id.js";
 import { summarizeAttendance } from "../services/attendance.js";
 
@@ -277,6 +278,7 @@ const daysAgo = (days: number, now: Date): Date =>
 export async function runRetention(
   log: Logger,
   now: Date = new Date(),
+  actorId?: string,
 ): Promise<RetentionResult> {
   const result: RetentionResult = {
     punchesSummarised: 0,
@@ -320,8 +322,12 @@ export async function runRetention(
     );
   }
 
-  if (result.punchesDeleted > 0 || result.commandsDeleted > 0 || result.auditDeleted > 0) {
-    log.info({ ...result }, "retention pass complete — punches summarised before deletion");
+  const didWork = Object.values(result).some((n) => n > 0);
+  if (didWork) log.info({ ...result }, "retention pass complete — punches summarised before deletion");
+  // Deleting is a state change: recorded whenever anything went, and for every
+  // run an operator started (even an empty one), with who.
+  if (didWork || actorId) {
+    await prisma.auditLog.create({ data: auditRow({ action: AuditAction.RETENTION_RUN, entityType: "retention", entityId: "retention", detail: { ...result }, actorId }) });
   }
   return result;
 }

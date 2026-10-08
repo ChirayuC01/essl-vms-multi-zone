@@ -7,8 +7,10 @@ import { retentionStatus, runRetention } from "../jobs/retention.js";
 import { dayBlockedEntries } from "../services/entry-modes.js";
 import { exitOverride, passGates, retakePassPhoto, widenZone } from "../services/passes.js";
 import { jpegDimensions } from "./jpeg.js";
+import { reissueExitCode } from "../services/exit-codes.js";
+import { listOutages } from "../services/outages.js";
 import { actorId } from "./auth.js";
-import { hasPermission, requirePermission } from "./permissions.js";
+import { hasPermission, requireAnyPermission, requirePermission } from "./permissions.js";
 import {
   ACTIVE_ENTRY_STATES,
   deprovisionEntry,
@@ -439,6 +441,23 @@ export async function entryRoutes(app: FastifyInstance): Promise<void> {
     if (!parsed.success) return reply.code(400).send({ error: "a reason is required for an exit override" });
     const { id } = request.params as { id: string };
     return reply.code(202).send(await exitOverride(id, parsed.data.reason, actorId(request)));
+  });
+
+  // ---- exit code, issued at the console (Phase 7) ---------------------------
+  // Security (who may release at the exit anyway), or the visitor's own host.
+  // The code is returned once, to show on screen; it is never stored.
+  app.post("/entries/:id/exit-code", { preHandler: requireAnyPermission("exit_override:update", "visit_requests:update") }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const security = await hasPermission(request, "exit_override:update");
+    const host = !security && (await hasPermission(request, "visit_requests:update")) &&
+      (await prisma.entry.count({ where: { id, personToMeetId: actorId(request) ?? "" } })) > 0;
+    if (!security && !host) return reply.code(403).send({ error: "only Security or the visitor's host can issue an exit code" });
+    return reply.send(await reissueExitCode(id, actorId(request)!));
+  });
+
+  // ---- outages and the passes they released (Phase 7) ----------------------
+  app.get("/outages", { preHandler: requirePermission("outages:view") }, async (_request, reply) => {
+    return reply.send({ items: await listOutages() });
   });
 
   // ---- Security retake: a better photo for a live pass ----------------------

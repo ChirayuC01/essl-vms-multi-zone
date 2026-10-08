@@ -29,6 +29,7 @@ export function PassGates({ entryId }: { entryId: string }) {
   const [widenTo, setWidenTo] = useState("");
   const [problem, setProblem] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [exitCode, setExitCode] = useState<string | null>(null);
   if (!entry) return null;
 
   const zoneName = (id: string | null | undefined) => (id ? zoneList?.items.find((z) => z.id === id)?.name ?? "zone" : null);
@@ -72,6 +73,14 @@ export function PassGates({ entryId }: { entryId: string }) {
         </ul>
       )}
       {codeExitsMissing && <p className="text-xs text-[var(--text-muted)]">Exit terminals load after the exit code is verified, or a Security override.</p>}
+      {live && codeExitsMissing && can("exit_override:update") && (
+        <div className="flex flex-wrap items-center gap-2">
+          <Button onClick={() => void run("A new exit code was issued; earlier codes no longer work.", async () => setExitCode((await api<{ code: string }>(`${url}/exit-code`, { method: "POST" })).code))}>
+            Issue exit code
+          </Button>
+          {exitCode && <span className="text-sm">Give the visitor this code: <span className="font-mono text-lg font-semibold">{exitCode}</span> (shown once)</span>}
+        </div>
+      )}
       {live && codeExitsMissing && can("exit_override:update") && (
         <div className="flex flex-wrap items-end gap-2">
           <Input className="max-w-xs" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Reason (required), e.g. host unreachable" />

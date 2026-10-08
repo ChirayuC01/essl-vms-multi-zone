@@ -18,6 +18,7 @@ import {
   type VisitorContext,
 } from "../services/visit-requests.js";
 import { submitAndDecide } from "../services/visit-review.js";
+import { outPassState, verifyExitCode } from "../services/exit-codes.js";
 import { jpegDimensions } from "./jpeg.js";
 import { aadharNumber, panNumber, profileFields, unlessMasked } from "./people.js";
 
@@ -158,4 +159,12 @@ export async function portalRoutes(app: FastifyInstance): Promise<void> {
     void reply.header("Cache-Control", "no-store").header("Referrer-Policy", "no-referrer");
   });
   visitorStepRoutes(app, "/v/:token", (request) => requestForToken(tokenOf(request)), context);
+
+  // The out-pass (Phase 7): the visitor enters the exit code their host gave them.
+  app.get("/out/:token", async (request) => outPassState(tokenOf(request)));
+  app.post("/out/:token/verify", async (request) => {
+    const body = z.object({ code: z.string().trim().regex(/^\d{4,8}$/) }).safeParse(request.body);
+    if (!body.success) throw new ServiceError(400, "enter the exit code");
+    return verifyExitCode(tokenOf(request), body.data.code, context(request));
+  });
 }

@@ -4,6 +4,8 @@ import { scanTick } from "../services/backfill.js";
 import { reconcileSweep } from "../services/reconcile.js";
 import { gateTick } from "../services/gates.js";
 import { expireRequests } from "../services/visit-review.js";
+import { issueDueExitCodes } from "../services/exit-codes.js";
+import { outageCheck } from "../services/outages.js";
 import { runRetention } from "./retention.js";
 
 // Scheduled jobs, on pg-boss over the same PostgreSQL the app already uses —
@@ -58,7 +60,11 @@ export async function startJobs(log: Logger): Promise<void> {
   // A security control, not housekeeping — see services/gates.ts.
   await instance.createQueue(GATE_QUEUE);
   await instance.work(GATE_QUEUE, async () => {
+    // First: a gap since the last beat is an outage; release what it stranded
+    // (Phase 7). Then the engine, then any exit code a punch made due.
+    await outageCheck(log);
     await gateTick(log);
+    await issueDueExitCodes();
     // Visit requests whose visit window passed undecided (Phase 6).
     const expired = await expireRequests();
     if (expired) log.info({ expired }, "visit requests expired");

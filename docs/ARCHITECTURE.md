@@ -108,6 +108,7 @@ Delivered phase by phase; see `PLAN.md` for the exact fields.
 | `PassType`, Person fields, `PersonDocument` | Per-type validation (`services/pass-types.ts`), redaction (`services/redact.ts`), documents (`services/documents.ts`, `api/documents.ts`) — **done** | 3 |
 | `Entry` extended into a pass, `PassGate` | Per-terminal load/unload schedule (`services/gates.ts`, `services/passes.ts`) — **done** | 4 |
 | `Message`, `Otp`, `LinkToken`, `ConsentRecord`, `VisitRequest`, `VisitRequestEvent` | Outbox (`services/notify.ts`), codes and links (`services/codes.ts`), portal and request core (`services/visit-requests.ts`, `api/portal.ts`, `api/visit-requests.ts`) — **done** | 5 |
+| `Outage`, `entry.exit_code_sent_at`, `entry.released_by_outage_id`, `link_token.entry_id` | Exit code and out-pass (`services/exit-codes.ts`), outage recovery with the engine heartbeat (`services/outages.ts`) — **done** | 7 |
 | sequence `visitor_id_seq` | Clear / Query / Reject, walk-ins, request → person + pass, expiry, retake (`services/visit-review.ts`, `services/passes.ts`, `/walk-ins` routes) — **done** | 6 |
 | `Outage` | Outage detection and automatic release | 7 |
 

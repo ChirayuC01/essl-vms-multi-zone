@@ -374,6 +374,10 @@ model Entry {
   // The innermost zone the holder is in; null = outside (or unknown on a
   // terminal not placed in a zone).
   locationZoneId     String?         @map("location_zone_id")
+  // Phase 7: when the exit code was first issued (on the first IN punch), and
+  // the outage whose recovery released this pass, if any.
+  exitCodeSentAt     DateTime?       @map("exit_code_sent_at")
+  releasedByOutageId String?         @map("released_by_outage_id")
 
   person       Person        @relation(fields: [personId], references: [id])
   authorizedBy AppUser?      @relation("EntryAuthorizedBy", fields: [authorizedById], references: [id])
@@ -381,6 +385,8 @@ model Entry {
   punchEvents  PunchEvent[]
   syncCommands SyncCommand[]
   gates        PassGate[]
+  releasedBy   Outage?       @relation(fields: [releasedByOutageId], references: [id])
+  outPassLinks LinkToken[]
   passType     PassType?     @relation(fields: [passTypeId], references: [id])
 
   @@index([state])
@@ -888,17 +894,40 @@ model VisitRequestEvent {
 // only in the message. One live link per request and purpose.
 model LinkToken {
   id        String    @id @default(cuid())
-  requestId String    @map("request_id")
+  // PREREG links belong to a visit request; OUT_PASS links to a pass (which
+  // may have no request: a long-term pass issued by Security).
+  requestId String?   @map("request_id")
+  entryId   String?   @map("entry_id")
   purpose   String    // PREREG | OUT_PASS (Phase 7)
   tokenHash String    @unique @map("token_hash")
   expiresAt DateTime  @map("expires_at")
   revokedAt DateTime? @map("revoked_at")
   createdAt DateTime  @default(now()) @map("created_at")
 
-  request VisitRequest @relation(fields: [requestId], references: [id])
+  request VisitRequest? @relation(fields: [requestId], references: [id])
+  entry   Entry?        @relation(fields: [entryId], references: [id])
 
   @@index([requestId, purpose])
+  @@index([entryId, purpose])
   @@map("link_token")
+}
+
+// A gap in the server's own heartbeat longer than the outage setting (Phase
+// 7). During it nobody could be released by the system, so site staff let
+// people out with the terminal's admin card and kept a manual register; on
+// recovery the single-entry passes still marked inside are released and
+// listed here for reconciling against that register.
+model Outage {
+  id            String   @id @default(cuid())
+  startedAt     DateTime @map("started_at")
+  endedAt       DateTime @map("ended_at")
+  releasedCount Int      @default(0) @map("released_count")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  released Entry[]
+
+  @@index([startedAt])
+  @@map("outage")
 }
 
 // A one-time code. Only its hash is stored; wrong attempts are counted and a

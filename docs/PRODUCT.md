@@ -147,7 +147,7 @@ the validity period and are removed automatically when it ends. A **single
 entry** long-term pass has no host, so its exit code goes to the **Security
 desk**. A multi-entry one has no exit code.
 
-## 6. Gate-loading rules (Phase 4 — implemented; exit code itself Phase 7)
+## 6. Gate-loading rules (Phase 4 — implemented; exit code Phase 7 — implemented)
 
 Defaults shown; minutes are settings. A **gate engine** runs every minute and
 is the only thing that loads or removes faces. Each pass has one row per
@@ -208,7 +208,12 @@ Further rules:
   physically with the terminal's admin card and note them in a manual
   register. When the system comes back, passes affected by the outage are
   released automatically and the release is recorded, for reconciling against
-  the register. Phase 7.
+  the register. Implemented, Phase 7: **Outages** page (Security, Security
+  In-charge, Admin).
+- **Exit code** (Phase 7) — sent to the host when the visitor first comes in;
+  the visitor enters it on their out-pass link. Security can issue a new code
+  (shown once) on the visitor's pass panel — the route for long-term passes,
+  which have no host; the host can from the request page.
 
 ## 8. Roles and access (Phases 2 and 2b — implemented)
 

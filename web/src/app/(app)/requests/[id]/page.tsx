@@ -34,6 +34,7 @@ export default function RequestDetailPage({ params }: { params: Promise<{ id: st
   const [rejectReason, setRejectReason] = useState("");
   const [departmentId, setDepartmentId] = useState("");
   const [companyPick, setCompanyPick] = useState<string | null>(null);
+  const [exitCode, setExitCode] = useState<string | null>(null);
   const [widenTo, setWidenTo] = useState("");
   const { data: options } = useApi<VisitRequestOptions>(r?.canReview ? "/api/visit-requests/options" : null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -154,6 +155,27 @@ export default function RequestDetailPage({ params }: { params: Promise<{ id: st
         <Card title="Pass">
           <div className="space-y-3 text-sm">
             <p>Terminal ID <span className="font-mono">{r.pass.person.esslUserId}</span> · <Badge tone={r.pass.state === "PROVISIONED" || r.pass.state === "INSIDE" ? "ok" : "neutral"}>{r.pass.state.toLowerCase().replace("_", " ")}</Badge></p>
+            {r.canReview && r.entryMode === "SINGLE_ENTRY" && (r.pass.state === "PROVISIONED" || r.pass.state === "INSIDE") && (
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  onClick={() => void (async () => {
+                    setProblem(null);
+                    try {
+                      setExitCode((await api<{ code: string }>(`/api/entries/${r.pass!.id}/exit-code`, { method: "POST" })).code);
+                    } catch (err) {
+                      setProblem(err instanceof ApiError ? err.message : "could not issue a code");
+                    }
+                  })()}
+                >
+                  New exit code
+                </Button>
+                {exitCode ? (
+                  <span>Give your visitor this code when they leave: <span className="font-mono text-lg font-semibold">{exitCode}</span> (earlier codes no longer work)</span>
+                ) : (
+                  <span className="text-[var(--text-muted)]">The exit code was sent to you when the visitor came in.</span>
+                )}
+              </div>
+            )}
             {r.canReview && can("zone_widen:update") && (r.pass.state === "PROVISIONED" || r.pass.state === "INSIDE") && (
               <div className="flex flex-wrap items-end gap-2">
                 <Select className="max-w-xs" value={widenTo} onChange={(e) => setWidenTo(e.target.value)}>

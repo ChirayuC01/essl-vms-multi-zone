@@ -220,17 +220,24 @@ export function maskSubmission(submission: unknown): Record<string, unknown> | n
 // Visitor side
 // ---------------------------------------------------------------------------
 
-/** The request a link opens. Unknown, replaced and expired links all refuse, with a reason a visitor can act on. */
-export async function requestForToken(token: string, now = new Date()) {
+/**
+ * A live link of this purpose. Unknown, replaced and expired links all refuse,
+ * with a reason a visitor can act on.
+ */
+export async function liveLink(token: string, purpose: string, now = new Date()) {
   if (!/^[A-Za-z0-9_-]{20,100}$/.test(token)) throw new ServiceError(404, "this link is not valid");
-  const link = await prisma.linkToken.findUnique({
-    where: { tokenHash: hashLinkToken(token) },
-    include: { request: { include: { host: { select: { name: true, email: true } }, documents: { where: { removedAt: null }, orderBy: { createdAt: "asc" } } } } },
-  });
-  if (!link || link.purpose !== LINK_PURPOSE) throw new ServiceError(404, "this link is not valid");
+  const link = await prisma.linkToken.findUnique({ where: { tokenHash: hashLinkToken(token) } });
+  if (!link || link.purpose !== purpose) throw new ServiceError(404, "this link is not valid");
   if (link.revokedAt) throw new ServiceError(410, "this link has been replaced or withdrawn — use the latest link you were sent, or contact your host");
   if (link.expiresAt <= now) throw new ServiceError(410, "this link has expired — ask your host to send a new one");
-  return link.request;
+  return link;
+}
+
+/** The request a pre-registration link opens. */
+export async function requestForToken(token: string, now = new Date()) {
+  const link = await liveLink(token, LINK_PURPOSE, now);
+  if (!link.requestId) throw new ServiceError(404, "this link is not valid");
+  return requestById(link.requestId);
 }
 const withPortalData = { host: { select: { name: true, email: true } }, documents: { where: { removedAt: null }, orderBy: { createdAt: "asc" } } } as const;
 
@@ -240,7 +247,7 @@ export async function requestById(id: string) {
   if (!request) throw new ServiceError(404, "visit request not found");
   return request;
 }
-export type PortalRequest = Awaited<ReturnType<typeof requestForToken>>;
+export type PortalRequest = Awaited<ReturnType<typeof requestById>>;
 
 function editable(request: PortalRequest) {
   if (!EDITABLE.includes(request.status)) throw new ServiceError(409, `this visit is ${request.status.toLowerCase()} — the details can no longer be changed`);

@@ -6,6 +6,7 @@ import { prisma } from "../db/index.js";
 import { publish } from "../events/bus.js";
 import { classifyDeviceId, photoPathFor, punchQueryCandidates, userIdKey } from "../user-id.js";
 import { processPunches } from "../services/punches.js";
+import { issueDueExitCodes } from "../services/exit-codes.js";
 import { reconcileUserRecord } from "../services/reconcile.js";
 import { enqueue, publishCommand } from "./queue.js";
 import { adoptEmployeeOnDevice } from "../services/employee-access.js";
@@ -316,6 +317,9 @@ export async function ingestAttlog(
     // up seconds late reads as a bug to whoever is standing at the barrier.
     // This is the cdata path, not the 1–3 s getrequest hot path.
     const result = await processPunches(device, inserted, log);
+    // A single-entry holder's first IN makes their exit code due (Phase 7).
+    // Cheap when nothing is due; the engine tick is the safety net.
+    if (result.transitions > 0) await issueDueExitCodes();
     if (result.transitions > 0 || result.unmatched > 0) {
       log.info(
         { device: device.serialNo, ...result },

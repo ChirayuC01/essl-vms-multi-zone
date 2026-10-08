@@ -52,6 +52,7 @@ export const RESOURCES = {
   walkins: { label: "Walk-in registration", group: "Gate", actions: ["create"] },
   longterm_passes: { label: "Long-term passes", group: "Gate", actions: ["create"] },
   exit_override: { label: "Exit override", group: "Gate", actions: ["update"], notes: { update: "release without the exit code; reason required" } },
+  outages: { label: "Outages and releases", group: "Gate", actions: ["view"], notes: { view: "people released automatically after a system outage" } },
   blacklist: { label: "Blacklist", group: "Gate", actions: ["update"], notes: { update: "blacklist / lift" } },
   zone_widen: { label: "Widen a visitor's zones", group: "Gate", actions: ["update"] },
 

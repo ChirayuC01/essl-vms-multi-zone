@@ -45,6 +45,8 @@ import { localDate } from "../src/services/entry-modes.js";
 import { ACTIVE_ENTRY_STATES } from "../src/services/entries.js";
 import { resetLimits } from "../src/services/rate-limit.js";
 import { expireRequests } from "../src/services/visit-review.js";
+import { issueDueExitCodes } from "../src/services/exit-codes.js";
+import { outageCheck } from "../src/services/outages.js";
 
 const SN = "E2ESIMDEVICE01";
 // IDs are TEXT. Numeric-looking ones are still the common case, and at least
@@ -255,16 +257,17 @@ async function resetDatabase(): Promise<void> {
     prisma.syncCommand.deleteMany({}),
     prisma.punchEvent.deleteMany({}),
     prisma.passGate.deleteMany({}),
+    prisma.linkToken.deleteMany({}),
     prisma.entry.deleteMany({}),
     prisma.employeeDeviceAccess.deleteMany({}),
     prisma.attendanceDaySummary.deleteMany({}),
     prisma.personBiometric.deleteMany({}),
     prisma.consentRecord.deleteMany({}),
     prisma.visitRequestEvent.deleteMany({}),
-    prisma.linkToken.deleteMany({}),
     prisma.personDocument.deleteMany({}),
     prisma.visitRequest.deleteMany({}),
     prisma.otp.deleteMany({}),
+    prisma.outage.deleteMany({}),
     prisma.message.deleteMany({}),
     prisma.person.deleteMany({}),
     prisma.passType.deleteMany({}),
@@ -4295,6 +4298,127 @@ async function main() {
     const decided = new Set((await prisma.auditLog.findMany({ where: { entityType: "visit_request", action: { in: ["VISIT_REQUEST_QUERIED", "VISIT_REQUEST_CLEARED", "VISIT_REQUEST_REJECTED", "VISIT_REQUEST_EXPIRED"] } } })).map((a) => a.action));
     check("no company was ever created from a visit", (await prisma.company.count({ where: { name: { in: ["Visiting Co"] } } })) === 0);
     check("query, clear, reject and expiry are all audited", decided.size === 4, [...decided].join(","));
+  }
+
+  // ======================================================================
+  section("33. Exit code, out-pass, outage recovery");
+  // ======================================================================
+  {
+    const xc = (method: "GET" | "POST", url: string, payload?: object, as = token) =>
+      app.inject({ method, url, headers: auth(as), ...(payload ? { payload } : {}) });
+    const msgs = async () => JSON.parse((await xc("GET", "/api/messages?pageSize=100")).body).items as { template: string; body: string; recipient: string; relatedId: string | null }[];
+    const zOff = await prisma.zone.findFirstOrThrow({ where: { name: "E2E Premise" } });
+    const zYd = await prisma.zone.findFirstOrThrow({ where: { name: "E2E Yard" } });
+    const terms = await prisma.device.findMany({ where: { serialNo: { startsWith: "E2EZONE" } } });
+    const sims = terms.map((d) => new SimulatedDevice(app, d.serialNo));
+    const drain = async () => { for (const sim of sims) await sim.drain(20); };
+    let xSeq = 0;
+    const punchAt = async (serial: string, pin: string, statusCode: number) => {
+      xSeq += 1;
+      const local = new Date(Date.now() + TZ_OFFSET * 60_000 + xSeq * 1000).toISOString().replace("T", " ").slice(0, 19);
+      await app.inject({ method: "POST", url: `/iclock/cdata.aspx?SN=${serial}&table=ATTLOG`, payload: `${pin}\t${local}\t${statusCode}\t15\t0\t0` });
+    };
+    const hostX = await prisma.appUser.findUniqueOrThrow({ where: { email: "host@vms.local" } });
+    const hostXTok = JSON.parse((await app.inject({ method: "POST", url: "/api/auth/login", payload: { email: "host@vms.local", password: "role-password" } })).body).token as string;
+    const visitor = async (name: string, pin: string, mobile: string) => {
+      await testPhoto(pin);
+      const p = JSON.parse((await xc("POST", "/api/people", { ...registration(name, pin), mobile })).body) as { id: string };
+      return p.id;
+    };
+    const issueNow = async (personId: string, entryMode: "SINGLE_ENTRY" | "MULTI_ENTRY", host = hostX.id) => {
+      const res = await xc("POST", `/api/people/${personId}/provision`, {
+        purposeOfVisit: "E2E exit code", zoneIds: [zOff.id], entryMode, personToMeetId: host,
+        expectedInAt: new Date().toISOString(), validUntil: new Date(Date.now() + 2 * 3_600_000).toISOString(), retentionPolicy: "CUSTOM",
+      });
+      const id = JSON.parse(res.body).entry.id as string;
+      await gateTick(silentLog);
+      await drain();
+      return id;
+    };
+    const outerIn = "E2EZONEOUTERIN";
+    const outerOut = "E2EZONEOUTEROUT";
+    const outerOutId = terms.find((t) => t.serialNo === outerOut)!.id;
+
+    // --- the full single-entry exit
+    const sPerson = await visitor("Exit Visitor", "XC1", "9666000001");
+    const sEntry = await issueNow(sPerson, "SINGLE_ENTRY");
+    check("a single-entry office pass holds back the outer exit", (await prisma.passGate.count({ where: { entryId: sEntry, deviceId: outerOutId } })) === 0);
+    await punchAt(outerIn, "XC1", 0);
+    const afterIn = await msgs();
+    const hostCodeMsg = afterIn.find((m) => m.template === "EXIT_CODE" && m.relatedId === sEntry && m.recipient === "9000000001");
+    const outMsg = afterIn.find((m) => m.template === "OUT_PASS" && m.relatedId === sEntry);
+    const exitCode = /exit code is (\d{6})/.exec(hostCodeMsg?.body ?? "")?.[1] ?? "";
+    const outLink = /\/v\/out\/([A-Za-z0-9_-]+)/.exec(outMsg?.body ?? "")?.[1] ?? "";
+    check("the first IN sends the host the exit code", exitCode.length === 6 && hostCodeMsg?.recipient === "9000000001", hostCodeMsg?.body ?? "none");
+    check("...and the visitor an out-pass link", outLink.length > 20 && outMsg?.recipient === "9666000001");
+    check("the code is stored only hashed", (await prisma.otp.count({ where: { codeHash: exitCode } })) === 0);
+    await punchAt(outerIn, "XC1", 0);
+    check("a second IN sends nothing more (one SMS and one email to the host, once)", (await msgs()).filter((m) => m.template === "EXIT_CODE" && m.relatedId === sEntry).length === 2);
+    const outState = JSON.parse((await app.inject({ method: "GET", url: `/public-api/out/${outLink}` })).body) as { firstName: string; exitOpen: boolean };
+    check("the out-pass page shows only a first name, exit not yet open", outState.firstName === "Exit" && outState.exitOpen === false, JSON.stringify(outState));
+    resetLimits();
+    const wrongX = exitCode === "000000" ? "111111" : "000000";
+    const bad = await app.inject({ method: "POST", url: `/public-api/out/${outLink}/verify`, payload: { code: wrongX } });
+    check("a wrong exit code is refused and audited", bad.statusCode === 400 && (await prisma.auditLog.count({ where: { entityId: sEntry, action: "EXIT_OTP_FAILED" } })) === 1);
+    const good = await app.inject({ method: "POST", url: `/public-api/out/${outLink}/verify`, payload: { code: exitCode } });
+    const exitGate = await prisma.passGate.findFirst({ where: { entryId: sEntry, deviceId: outerOutId } });
+    check("the right code opens the code-gated exit", good.statusCode === 200 && exitGate?.reason === "EXIT_CODE", good.body);
+    await gateTick(silentLog);
+    await drain();
+    check("...which loads on the outer exit terminal", (await prisma.passGate.findFirst({ where: { entryId: sEntry, deviceId: outerOutId } }))?.state === "LOADED");
+    await punchAt(outerOut, "XC1", 1);
+    const leaving = await prisma.entry.findUniqueOrThrow({ where: { id: sEntry } });
+    const exitAfter = await prisma.passGate.findFirst({ where: { entryId: sEntry, deviceId: outerOutId } });
+    check("walking out leaves the visitor outside and schedules the exit face's removal", leaving.state === "PROVISIONED" && exitAfter?.unloadAt !== null && exitAfter!.unloadAt!.getTime() > Date.now());
+    check("verification is audited", (await prisma.auditLog.count({ where: { entityId: sEntry, action: { in: ["EXIT_OTP_ISSUED", "EXIT_OTP_VERIFIED"] } } })) === 2);
+    await xc("POST", `/api/entries/${sEntry}/deprovision`);
+    await drain();
+    await gateTick(silentLog);
+
+    // --- multi entry never gets a code
+    const mPerson = await visitor("Multi Visitor", "XC2", "9666000002");
+    const mEntry = await issueNow(mPerson, "MULTI_ENTRY");
+    await punchAt(outerIn, "XC2", 0);
+    await issueDueExitCodes();
+    check("a multi-entry pass gets no exit code, its exit loaded with the pass", !(await msgs()).some((m) => m.relatedId === mEntry && m.template === "EXIT_CODE") && (await prisma.passGate.findFirst({ where: { entryId: mEntry, deviceId: outerOutId } }))?.state === "LOADED");
+
+    // --- the console: Security, or the visitor's own host
+    const cPerson = await visitor("Console Visitor", "XC3", "9666000003");
+    const cEntry = await issueNow(cPerson, "SINGLE_ENTRY");
+    await punchAt(outerIn, "XC3", 0);
+    const firstHostCode = /exit code is (\d{6})/.exec((await msgs()).find((m) => m.template === "EXIT_CODE" && m.relatedId === cEntry)?.body ?? "")?.[1] ?? "";
+    const hostIssue = await xc("POST", `/api/entries/${cEntry}/exit-code`, {}, hostXTok);
+    const reissued = JSON.parse(hostIssue.body) as { code: string };
+    check("the host can issue a new exit code at the console, shown once", hostIssue.statusCode === 200 && /^\d{6}$/.test(reissued.code));
+    const cLink = /\/v\/out\/([A-Za-z0-9_-]+)/.exec((await msgs()).find((m) => m.template === "OUT_PASS" && m.relatedId === cEntry)?.body ?? "")?.[1] ?? "";
+    resetLimits();
+    check("...which replaces the earlier code", (await app.inject({ method: "POST", url: `/public-api/out/${cLink}/verify`, payload: { code: firstHostCode } })).statusCode === 400);
+    const otherHostEntry = await issueNow(await visitor("Not Yours", "XC4", "9666000004"), "SINGLE_ENTRY", (await prisma.appUser.findUniqueOrThrow({ where: { email: "e2e@vms.local" } })).id);
+    check("a host cannot issue a code for someone else's visitor", (await xc("POST", `/api/entries/${otherHostEntry}/exit-code`, {}, hostXTok)).statusCode === 403);
+    check("Security (exit override) can", (await xc("POST", `/api/entries/${otherHostEntry}/exit-code`)).statusCode === 200);
+    check("a multi-entry pass has no code to issue", (await xc("POST", `/api/entries/${mEntry}/exit-code`)).statusCode === 409);
+
+    // --- outage recovery
+    await punchAt(outerIn, "XC4", 0);
+    const insideSingle = await prisma.entry.findUniqueOrThrow({ where: { id: cEntry } });
+    const insideMulti = await prisma.entry.findUniqueOrThrow({ where: { id: mEntry } });
+    check("before the outage both visitors are inside", insideSingle.state === "INSIDE" && insideMulti.state === "INSIDE");
+    await outageCheck(undefined, new Date(Date.now() - 40 * 60_000)); // last beat 40 min ago
+    check("a short gap is not an outage", (await outageCheck(undefined, new Date(Date.now() - 39 * 60_000))) === null);
+    const outage = await outageCheck();
+    check("a heartbeat gap longer than the setting is recorded as an outage", outage !== null && outage.releasedCount >= 2, JSON.stringify(outage));
+    const relSingle = await prisma.entry.findUniqueOrThrow({ where: { id: cEntry }, include: { gates: true } });
+    check("single-entry insiders are released: off every terminal, linked to the outage", relSingle.state === "PENDING_DEPROVISION" && relSingle.releasedByOutageId === outage?.id && relSingle.locationZoneId === null && relSingle.gates.every((g) => g.state === "DONE" || (g.unloadAt !== null && g.unloadAt.getTime() <= Date.now())));
+    check("multi-entry passes are untouched", (await prisma.entry.findUniqueOrThrow({ where: { id: mEntry } })).state === "INSIDE");
+    check("each release is audited against the outage", (await prisma.auditLog.count({ where: { action: "OUTAGE_RELEASE", entityId: cEntry } })) === 1 && (await prisma.auditLog.count({ where: { action: "OUTAGE_DETECTED", entityId: outage!.id } })) === 1);
+    const listed = JSON.parse((await xc("GET", "/api/outages")).body) as { items: { id: string; released: { person: { esslUserId: string } }[] }[] };
+    check("the outage page lists who was released, for the manual register", listed.items[0]?.id === outage?.id && listed.items[0]!.released.some((r) => r.person.esslUserId === "XC3"));
+    check("the beat resumes: an immediate check finds no new outage", (await outageCheck()) === null);
+    await gateTick(silentLog);
+    await drain();
+    await gateTick(silentLog);
+    check("the released pass closes once its faces are removed", (await prisma.entry.findUniqueOrThrow({ where: { id: cEntry } })).state === "REGISTERED");
+    void zYd;
   }
 
   // --- teardown ---------------------------------------------------------

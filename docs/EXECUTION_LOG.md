@@ -726,3 +726,51 @@ result) · issues · next action.
   directory companies, Admin deciding any request). Marked `ACCEPTED`;
   committed. Phase 7 begins.
 
+### 2026-10-08 — Phase 7 — Exit code, out-pass, outage recovery
+
+- **Status:** `IMPLEMENTED_AWAITING_VERIFICATION`.
+- **Change:**
+  - **Migration `20261008120000_exit_code_outage`:** `outage` table;
+    `entry.exit_code_sent_at`, `entry.released_by_outage_id`;
+    `link_token.request_id` nullable + `entry_id` (out-pass links belong to a
+    pass); seeds `outages:view` to the Security and Security In-charge roles.
+    Additive.
+  - **`services/exit-codes.ts`:** `issueDueExitCodes` (single-entry passes
+    with a code-gated exit whose holder is inside and has no code yet; each
+    claimed first; host SMS/email with the code, visitor SMS with the
+    out-pass link; `EXIT_OTP_ISSUED`), `reissueExitCode` (console, returned
+    once), `outPassState` / `verifyExitCode` (wrong → `EXIT_OTP_FAILED`;
+    right → `EXIT_OTP_VERIFIED` and `loadExitGates(EXIT_CODE)`).
+  - **`services/outages.ts`:** `outageCheck` (heartbeat in `app_config`; a
+    gap over `outageGapMinutes` creates an `outage`, releases single-entry
+    insiders live during it through the normal pass-end path, audits
+    `OUTAGE_DETECTED` + `OUTAGE_RELEASE`), `listOutages`.
+  - **Wiring:** engine job = outage check → gate tick → due exit codes →
+    request expiry; ingestion issues due codes after a punch moves someone
+    inside.
+  - **Routes:** public `GET /public-api/out/:token`, `POST …/verify`;
+    `POST /api/entries/:id/exit-code` (exit override cell, or the visitor's
+    own host); `GET /api/outages` (`outages:view`, new cell).
+  - **Web:** out-pass page `/v/out/[token]` (inside the tunnel's `/v/` path);
+    **Outages** page; "Issue exit code" on the pass panel; "New exit code" on
+    the request's Pass card.
+- **Verification (2026-10-08):**
+  - `prisma migrate diff`: no difference; applied to `vms` and `vms_test`.
+  - Unit **106/106**; e2e **504/504**; new section 33 (26 checks): exit held
+    back; first IN sends host the code and visitor the link (once); code
+    stored hashed; out-pass shows first name only; wrong code refused and
+    audited; right code opens the exit (EXIT_CODE gate), loads, walk out
+    schedules removal; multi entry gets no code; host/Security issue a new
+    code (replaces the old; host refused for another's visitor; multi refused);
+    short gap not an outage; long gap recorded; single-entry insiders
+    released and linked; multi untouched; audits; outage list; heartbeat
+    resumes; released pass closes.
+  - Web lint and build PASS.
+- **Issues found and fixed during the phase:** the first test assumed one
+  host message; the host gets the code by SMS **and** email.
+- **Next action:** owner walk-through, `VERIFICATION.md` § Phase 7.
+
+### 2026-10-08 — Phase 7 — verified and accepted
+
+- Owner verified Phase 7. Marked `ACCEPTED`; committed. Phase 8 begins.
+

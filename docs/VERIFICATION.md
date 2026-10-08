@@ -19,6 +19,7 @@ Hardware assumed: **two physical terminals** plus virtual ones as needed. See
 | 4 | §Phase 4 below | **VERIFIED** by owner (2026-10-05) |
 | 5 | §Phase 5 below | **VERIFIED** by owner (2026-10-06), including the phone run over a quick tunnel |
 | 6 | §Phase 6 below | **VERIFIED** by owner (2026-10-08) |
+| 7 | §Phase 7 below | **VERIFIED** by owner (2026-10-08) |
 
 Record results here as `PASS` / `FAIL — note` per step when walking through.
 
@@ -835,3 +836,71 @@ Tick the setting again afterwards.
    walk-in steps carry the Security operator as the actor.
 
 **Pass:** Steps 1–10 hold.
+
+---
+
+## Phase 7 — Exit code, out-pass, outage recovery
+
+Same layout as Phases 4 and 6 (real pair = Office; Office has **exit code by
+default**). Restart the dev backend (new migration already applied to `vms`)
+and the web dev server. The Host test user needs a **mobile**.
+
+> Note: a dev backend that was stopped for more than 10 minutes records an
+> **outage** on start and releases any single-entry visitor still marked
+> inside. That is Step 5's feature, not a fault.
+
+### Step 1 — Exit code on arrival
+
+As the Host, raise a single-entry Office request for yourself, complete it
+and Clear it (Phase 6). When the face loads, walk in through **Outer IN**.
+
+✅ Outbox: to the Host, "… has arrived … Their exit code is 123456" (SMS and
+email); to the visitor, an **out-pass** link `…/v/out/…`.
+✅ Outer OUT is still **not** loaded (person page → pass panel).
+
+### Step 2 — Leaving with the code
+
+Open the out-pass link (phone through the quick tunnel, or the PC browser).
+
+✅ It greets you by first name only.
+✅ A wrong code: "not right". The right code: "Your exit is open".
+✅ Within a minute Outer OUT shows **loaded**; you walk out by face; the exit
+face is removed 10 minutes later and the pass shows you outside.
+
+### Step 3 — New code from the console
+
+1. Another single-entry visit; walk in. On the request page (Host) → **Pass**
+   → **New exit code**: ✅ a code is shown once; the earlier SMS code no
+   longer works on the out-pass page.
+2. As Security: People → visitor → pass panel → **Issue exit code**: ✅ same,
+   for any visitor. This is how a long-term single-entry pass (no host) gets
+   its code.
+3. A multi-entry pass: ✅ no exit code message on entry; its exit was loaded
+   all along.
+
+### Step 4 — Override still works
+
+With a visitor inside waiting for the code, Security → **Release at exit
+(override)** with a reason. ✅ Exit loads; the out-pass page then says the exit
+is open.
+
+### Step 5 — Outage
+
+1. Have one **single-entry** and one **multi-entry** visitor inside.
+2. Stop the dev backend for **more than 10 minutes** (or set Settings →
+   Outage after = 2 and stop it for 3).
+3. Start it again and wait a minute.
+
+✅ **Outages** (nav): one outage with the start/end times, listing the
+single-entry visitor as released.
+✅ That visitor's faces are removed from every terminal and the pass closes.
+✅ The multi-entry visitor is untouched, still inside.
+✅ Audit trail: `OUTAGE_DETECTED`, one `OUTAGE_RELEASE` per person.
+
+### Step 6 — Access
+
+✅ Security and Security In-charge see **Outages**; a Host does not.
+✅ A Host cannot issue a code for another host's visitor.
+
+**Pass:** Steps 1–6 hold.
+

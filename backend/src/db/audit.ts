@@ -108,6 +108,13 @@ export const AuditAction = {
   VISIT_REQUEST_QUERIED: "VISIT_REQUEST_QUERIED",
   VISIT_REQUEST_REJECTED: "VISIT_REQUEST_REJECTED",
   VISIT_REQUEST_EXPIRED: "VISIT_REQUEST_EXPIRED",
+  // Exit code (Phase 7). Codes themselves are never recorded.
+  EXIT_OTP_ISSUED: "EXIT_OTP_ISSUED",
+  EXIT_OTP_VERIFIED: "EXIT_OTP_VERIFIED",
+  EXIT_OTP_FAILED: "EXIT_OTP_FAILED",
+  // Outage recovery (Phase 7): the gap found, and each pass it released.
+  OUTAGE_DETECTED: "OUTAGE_DETECTED",
+  OUTAGE_RELEASE: "OUTAGE_RELEASE",
 } as const;
 export type AuditActionName = (typeof AuditAction)[keyof typeof AuditAction];
 

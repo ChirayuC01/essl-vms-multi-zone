@@ -29,3 +29,10 @@ test("a patch is refused for unknown keys, bad values, or the server-set notice 
   assert.equal(settingsPatchSchema.safeParse({ documentTypes: ["exe"] }).success, false);
   assert.equal(settingsPatchSchema.safeParse({ privacyNoticeVersion: "x" }).success, false);
 });
+
+test("a digit visitor prefix is allowed (numeric-only terminals), but never empty or a leading 0", () => {
+  assert.equal(settingsPatchSchema.safeParse({ visitorIdPrefix: "9" }).success, true);
+  assert.equal(settingsPatchSchema.safeParse({ visitorIdPrefix: "V" }).success, true);
+  assert.equal(settingsPatchSchema.safeParse({ visitorIdPrefix: "" }).success, false);
+  assert.equal(settingsPatchSchema.safeParse({ visitorIdPrefix: "0" }).success, false);
+});

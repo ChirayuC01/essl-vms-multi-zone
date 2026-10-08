@@ -16,6 +16,7 @@ const NAV: { href: string; label: string; permission?: string }[] = [
   { href: "/", label: "Dashboard", permission: "dashboard:view" },
   { href: "/inside", label: "Inside Now", permission: "onsite:view" },
   { href: "/requests", label: "Requests", permission: "visit_requests:view" },
+  { href: "/walk-in", label: "Walk-in", permission: "walkins:create" },
   { href: "/provision", label: "Provision", permission: "passes:create" },
   { href: "/people", label: "People", permission: "people:view" },
   { href: "/commands", label: "Command Queue", permission: "commands:view" },

@@ -6,6 +6,7 @@ import { useAuth } from "@/lib/auth";
 import { formatDateTime } from "@/lib/format";
 import { refresh, useApi } from "@/lib/swr";
 import { Alert, Badge, Button, Input, Select } from "@/components/ui";
+import { WebcamCapture } from "@/components/webcam-capture";
 
 // Where one pass stands on each terminal, plus the Security actions on it.
 // "PROVISIONED" is one word for any number of terminals; this is the answer
@@ -77,6 +78,14 @@ export function PassGates({ entryId }: { entryId: string }) {
           <Button variant="danger" disabled={reason.trim().length < 3} onClick={() => void run("Exit released: the exit terminals are loading.", () => api(`${url}/exit-override`, { method: "POST", body: { reason: reason.trim() } }))}>
             Release at exit (override)
           </Button>
+        </div>
+      )}
+      {live && can("passes:update") && (
+        <div className="space-y-1">
+          <p className="text-xs text-[var(--text-muted)]">Face not recognised at the gate? Retake the photo; terminals already holding the face get the new one.</p>
+          <WebcamCapture
+            onCapture={(file) => void run("Photo replaced: it is being sent to the terminals.", () => api(`${url}/photo`, { method: "POST", blob: { data: file, contentType: "image/jpeg" } }))}
+          />
         </div>
       )}
       {live && can("zone_widen:update") && widenable.length > 0 && (

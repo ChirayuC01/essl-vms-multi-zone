@@ -28,7 +28,10 @@ const fields = {
   /** A gap in the server's own heartbeat longer than this is treated as an outage. */
   outageGapMinutes: z.number().int().min(2).max(1440).default(10),
   /** Prefix of system-issued visitor terminal IDs. Must fit the visitor ID patterns. */
-  visitorIdPrefix: z.string().regex(/^[A-Za-z0-9]{0,8}$/, "letters and digits only, up to 8").default("V"),
+  // A digit prefix (e.g. "9") gives all-numeric IDs for terminals that accept
+  // only numbers. Never a leading 0: a numeric terminal drops it, and the ID
+  // on the terminal would no longer match the one on file.
+  visitorIdPrefix: z.string().regex(/^[A-Za-z1-9][A-Za-z0-9]{0,7}$/, "1-8 letters or digits, not starting with 0").default("V"),
   /** How long a visitor's pre-registration link stays usable. */
   linkExpiryHours: z.number().int().min(1).max(720).default(72),
   /** How long a one-time code stays valid. */

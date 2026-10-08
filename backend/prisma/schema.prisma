@@ -301,7 +301,8 @@ model Company {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  people Person[]
+  people        Person[]
+  visitRequests VisitRequest[]
 
   @@map("company")
 }
@@ -824,6 +825,10 @@ model VisitRequest {
   visitorName          String             @map("visitor_name")
   visitorMobile        String             @map("visitor_mobile")
   visitorEmail         String?            @map("visitor_email")
+  // Chosen from the directory by the host or Security, never typed by the
+  // visitor (Phase 6): free text made duplicate companies. company_name is
+  // a display snapshot (and holds the free text of earlier requests).
+  companyId            String?            @map("company_id")
   companyName          String?            @map("company_name")
   purpose              String
   passTypeId           String?            @map("pass_type_id")
@@ -848,6 +853,7 @@ model VisitRequest {
   updatedAt            DateTime           @updatedAt @map("updated_at")
 
   host      AppUser             @relation("VisitRequestHost", fields: [hostId], references: [id])
+  company   Company?            @relation(fields: [companyId], references: [id])
   events    VisitRequestEvent[]
   tokens    LinkToken[]
   consents  ConsentRecord[]

@@ -44,6 +44,7 @@ import { gateTick } from "../src/services/gates.js";
 import { localDate } from "../src/services/entry-modes.js";
 import { ACTIVE_ENTRY_STATES } from "../src/services/entries.js";
 import { resetLimits } from "../src/services/rate-limit.js";
+import { expireRequests } from "../src/services/visit-review.js";
 
 const SN = "E2ESIMDEVICE01";
 // IDs are TEXT. Numeric-looking ones are still the common case, and at least
@@ -4024,8 +4025,9 @@ async function main() {
     const consent = await prisma.consentRecord.findFirst({ where: { requestId: reqId } });
     check("the consent is recorded against the exact notice version", consent?.noticeVersion === state.notice.version);
     check("a malformed Aadhaar is refused", (await pub("PUT", `${link}/details`, { aadharNumber: "12345" })).statusCode === 400);
-    const saved = await pub("PUT", `${link}/details`, { name: "Portal Visitor", companyId: "Visiting Co", govtIdType: "Passport", vehicleNumber: "MH12AB0001", email: "" });
+    const saved = await pub("PUT", `${link}/details`, { name: "Portal Visitor", govtIdType: "Passport", vehicleNumber: "MH12AB0001", email: "" });
     check("partial details save", saved.statusCode === 200, saved.body);
+    check("the visitor cannot type a company (it comes from the directory)", (await pub("PUT", `${link}/details`, { companyId: "Visiting Co" })).statusCode === 400);
     check("a hidden field is dropped", !("vehicleNumber" in ((await prisma.visitRequest.findUniqueOrThrow({ where: { id: reqId } })).submission as object)));
     check("submitting with a required field missing names it", /Govt ID number/.test((await pub("POST", `${link}/submit`)).body));
     await pub("PUT", `${link}/details`, { govtIdNumber: "Z1234567QX" });
@@ -4106,6 +4108,193 @@ async function main() {
     for (let i = 0; i < 65; i++) if ((await pub("GET", "y".repeat(43))).statusCode === 429) limited++;
     check("a client hammering the portal is slowed down", limited === 5, `${limited} refused`);
     resetLimits();
+  }
+
+  // ======================================================================
+  section("32. Host review, walk-ins, photo retake");
+  // ======================================================================
+  {
+    const rv = (method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE", url: string, payload?: object, as = token) =>
+      app.inject({ method, url, headers: auth(as), ...(payload ? { payload } : {}) });
+    const pv = (method: "GET" | "POST" | "PUT", url: string, payload?: object) =>
+      app.inject({ method, url: `/public-api/v/${url}`, ...(payload ? { payload } : {}) });
+    const lastMsg = async (template: string) =>
+      (JSON.parse((await rv("GET", "/api/messages?pageSize=100")).body).items as { template: string; body: string; recipient: string }[]).find((m) => m.template === template);
+    const linkOf = (body = "") => /\/v\/([A-Za-z0-9_-]+)/.exec(body)?.[1] ?? "";
+    const codeOf = (body = "") => /^(\d{6})/.exec(body)?.[1] ?? "";
+    const camera = Buffer.concat([
+      Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01]), Buffer.alloc(8, 0),
+      Buffer.from([0xff, 0xc0, 0x00, 0x11, 0x08, 0x02, 0x80, 0x01, 0xe0, 0x03]), Buffer.alloc(200, 0x20), Buffer.from([0xff, 0xd9]),
+    ]);
+    const hostTok = JSON.parse((await app.inject({ method: "POST", url: "/api/auth/login", payload: { email: "host@vms.local", password: "role-password" } })).body).token as string;
+    const hostUser = await prisma.appUser.findUniqueOrThrow({ where: { email: "host@vms.local" } });
+    await prisma.appUser.update({ where: { id: hostUser.id }, data: { phone: "9000000001" } });
+    const zOffice = await prisma.zone.findFirstOrThrow({ where: { name: "E2E Premise" } });
+    const reviewCo = await prisma.company.create({ data: { name: "Review Co" } });
+    const gateCo = await prisma.company.create({ data: { name: "Gate Co" } });
+    const reviewType = JSON.parse((await rv("POST", "/api/pass-types", { name: "E2E Reviewed Visitor", kind: "SHORT_TERM", fieldRules: { govtIdNumber: "required", companyId: "required" } })).body) as { id: string };
+    await rv("PATCH", "/api/settings", { visitorIdPrefix: "V", walkInRequiresHostClear: true });
+    const zoneTerms = await prisma.device.findMany({ where: { serialNo: { startsWith: "E2EZONE" } } });
+    const zoneSims = zoneTerms.map((d) => new SimulatedDevice(app, d.serialNo));
+    const start = new Date(Date.now() + 2 * 3_600_000);
+    const end = new Date(Date.now() + 8 * 3_600_000);
+    const raise = (mobile: string, as = hostTok) =>
+      rv("POST", "/api/visit-requests", {
+        visitorName: "Review Visitor", visitorMobile: mobile, purpose: "E2E review", passTypeId: reviewType.id, companyId: reviewCo.id,
+        zoneIds: [zOffice.id], entryMode: "SINGLE_ENTRY", expectedAt: start.toISOString(), validUntil: end.toISOString(),
+      }, as);
+    // The visitor's side, start to submit.
+    const visitorCompletes = async (link: string, details: object) => {
+      resetLimits();
+      await pv("POST", `${link}/otp`);
+      const st = JSON.parse((await pv("POST", `${link}/otp/verify`, { code: codeOf((await lastMsg("MOBILE_OTP"))?.body) })).body) as { notice: { version: string } };
+      await pv("POST", `${link}/consent`, { noticeVersion: st.notice.version, accept: true });
+      await pv("PUT", `${link}/details`, details);
+      await app.inject({ method: "POST", url: `/public-api/v/${link}/selfie`, headers: { "content-type": "image/jpeg" }, payload: camera });
+      return pv("POST", `${link}/submit`);
+    };
+    const status = async (id: string) => (await prisma.visitRequest.findUniqueOrThrow({ where: { id } })).status;
+
+    // --- query loop, twice
+    const rqId = JSON.parse((await raise("9555000001")).body).id as string;
+    const firstLink = linkOf((await lastMsg("VISIT_LINK"))?.body);
+    const sub1 = await visitorCompletes(firstLink, { name: "Review Visitor", govtIdType: "Passport", govtIdNumber: "R1234567" });
+    check("the visitor submits for review", sub1.statusCode === 200 && (await status(rqId)) === "SUBMITTED", sub1.body);
+    check("a query needs text", (await rv("POST", `/api/visit-requests/${rqId}/query`, {}, hostTok)).statusCode === 400);
+    // A second host (no "decide any request" cell) is refused; Admin holds every cell.
+    const salt2 = randomBytes(16);
+    await prisma.appUser.create({ data: { email: "host2@vms.local", role: "HOST", passwordHash: `scrypt$${salt2.toString("hex")}$${scryptSync("host2-password", salt2, 64).toString("hex")}` } });
+    const host2Tok = JSON.parse((await app.inject({ method: "POST", url: "/api/auth/login", payload: { email: "host2@vms.local", password: "host2-password" } })).body).token as string;
+    check("another host cannot see, let alone decide, this request", (await rv("POST", `/api/visit-requests/${rqId}/query`, { text: "fix it" }, host2Tok)).statusCode === 404);
+    for (const round of [1, 2]) {
+      const q = await rv("POST", `/api/visit-requests/${rqId}/query`, { text: `Round ${round}: the ID number looks wrong` }, hostTok);
+      const qLink = linkOf((await lastMsg("VISIT_LINK"))?.body);
+      const qState = JSON.parse((await pv("GET", qLink)).body) as { queryText: string; editable: boolean };
+      check(`query ${round}: the visitor gets a new link showing the question`, q.statusCode === 200 && (await status(rqId)) === "QUERIED" && qState.queryText === `Round ${round}: the ID number looks wrong` && qState.editable, JSON.stringify(qState));
+      check(`query ${round}: the previous link stops working`, (await pv("GET", firstLink)).statusCode === 410);
+      await pv("PUT", `${qLink}/details`, { govtIdNumber: `R765432${round}` });
+      check(`query ${round}: the visitor fixes and resubmits`, (await pv("POST", `${qLink}/submit`)).statusCode === 200 && (await status(rqId)) === "SUBMITTED");
+    }
+    const hist = (await prisma.visitRequestEvent.findMany({ where: { requestId: rqId }, orderBy: { createdAt: "asc" } })).map((e) => `${e.toStatus}${e.note ? `(${e.note.slice(0, 7)})` : ""}`);
+    check("every step of the loop is in the request's history", hist.join(",") === "SENT,SUBMITTED,QUERIED(Round 1),SUBMITTED,QUERIED(Round 2),SUBMITTED", hist.join(","));
+
+    // --- clear: refused while terminals would never recognise the ID as a visitor
+    const misfit = await rv("POST", `/api/visit-requests/${rqId}/clear`, {}, hostTok);
+    check("Clear is refused if the terminals' visitor patterns would not cover the new ID", misfit.statusCode === 409 && /visitor ID patterns/.test(misfit.body), misfit.body);
+    check("...and no person was created", (await prisma.person.count({ where: { mobile: "9555000001" } })) === 0);
+    await prisma.device.updateMany({ where: { serialNo: { startsWith: "E2EZONE" } }, data: { visitorIdPatterns: ["V*"] } });
+    for (const d of zoneTerms) invalidateDevice(d.serialNo);
+    const cleared = await rv("POST", `/api/visit-requests/${rqId}/clear`, {}, hostTok);
+    const c = JSON.parse(cleared.body) as { personId: string; esslUserId: string; entryId: string; returning: boolean };
+    check("the host clears: a person, a system visitor ID and a pass", cleared.statusCode === 200 && /^V\d{5}$/.test(c.esslUserId) && !c.returning, cleared.body);
+    writtenPhotos.push(photoPathFor(c.esslUserId));
+    const clearedPerson = await prisma.person.findUniqueOrThrow({ where: { id: c.personId }, include: { biometric: true, company: true } });
+    check("the person carries the visitor's details, the full ID kept server-side", clearedPerson.mobile === "9555000001" && clearedPerson.govtIdNumber === "R7654322" && clearedPerson.company?.name === "Review Co" && clearedPerson.detailsComplete);
+    check("the selfie became the enrollment photo", Boolean(clearedPerson.biometric) && (await readFile(photoPathFor(c.esslUserId))).equals(camera));
+    const pass = await prisma.entry.findUniqueOrThrow({ where: { id: c.entryId }, include: { gates: true } });
+    check("the pass follows the request: zones, host, validity, gates scheduled before the visit", pass.zoneIds.includes(zOffice.id) && pass.personToMeetId === hostUser.id && pass.retentionExpiresAt?.getTime() === end.getTime() && pass.gates.length > 0 && pass.gates.every((g) => g.state === "PENDING"));
+    check("the request is CLEARED and points at the pass", (await prisma.visitRequest.findUniqueOrThrow({ where: { id: rqId } })).passId === c.entryId && (await status(rqId)) === "CLEARED");
+    check("the visitor is told their visit is confirmed", (await lastMsg("VISIT_CONFIRMED"))?.recipient === "9555000001");
+    check("a cleared request cannot be cleared again", (await rv("POST", `/api/visit-requests/${rqId}/clear`, {}, hostTok)).statusCode === 409);
+
+
+    // --- retake: re-pushed to terminals that hold the face
+    await prisma.passGate.updateMany({ where: { entryId: c.entryId }, data: { loadAt: new Date(Date.now() - 1000) } });
+    await gateTick(silentLog);
+    for (const sim of zoneSims) await sim.drain(20);
+    const loadedGates = await prisma.passGate.count({ where: { entryId: c.entryId, state: "LOADED" } });
+    check("a bad-size retake is refused", (await app.inject({ method: "POST", url: `/api/entries/${c.entryId}/photo`, headers: { ...auth(token), "content-type": "image/jpeg" }, payload: Buffer.from("nope") })).statusCode === 400);
+    const retake = await app.inject({ method: "POST", url: `/api/entries/${c.entryId}/photo`, headers: { ...auth(token), "content-type": "image/jpeg" }, payload: camera });
+    const repushed = await prisma.syncCommand.count({ where: { entryId: c.entryId, type: CommandType.PUSH_PHOTO, idempotencyKey: { startsWith: "gate-retake:" } } });
+    check("Security's retake re-pushes the photo to every terminal holding the face", retake.statusCode === 202 && loadedGates > 0 && repushed === loadedGates, `${loadedGates} loaded, ${repushed} re-pushed`);
+    for (const sim of zoneSims) await sim.drain(20);
+    check("...and the pass stays loaded", (await prisma.passGate.count({ where: { entryId: c.entryId, state: "LOADED" } })) === loadedGates);
+    // --- widen: the host only for their own visitor
+    const zYardW = await prisma.zone.findFirstOrThrow({ where: { name: "E2E Yard" } });
+    const adminUser = await prisma.appUser.findUniqueOrThrow({ where: { email: "e2e@vms.local" } });
+    await prisma.entry.update({ where: { id: c.entryId }, data: { personToMeetId: adminUser.id } });
+    check("a host cannot widen someone else's visitor's pass", (await rv("POST", `/api/entries/${c.entryId}/widen`, { zoneId: zYardW.id }, hostTok)).statusCode === 403);
+    await prisma.entry.update({ where: { id: c.entryId }, data: { personToMeetId: hostUser.id } });
+    const widened = await rv("POST", `/api/entries/${c.entryId}/widen`, { zoneId: zYardW.id }, hostTok);
+    check("the host can widen their own visitor's pass", widened.statusCode === 202, widened.body);
+    for (const sim of zoneSims) await sim.drain(20);
+
+    // --- returning visitor keeps the same person and terminal ID
+    await rv("POST", `/api/entries/${c.entryId}/deprovision`);
+    for (const sim of zoneSims) await sim.drain(20);
+    await gateTick(silentLog);
+    const backId = JSON.parse((await raise("+91 95550 00001")).body).id as string;
+    const back = await visitorCompletes(linkOf((await lastMsg("VISIT_LINK"))?.body), {});
+    const backClear = await rv("POST", `/api/visit-requests/${backId}/clear`, {}, hostTok);
+    const bc = JSON.parse(backClear.body) as { personId: string; esslUserId: string; returning: boolean };
+    check("a returning visitor is cleared onto the same person and terminal ID", back.statusCode === 200 && backClear.statusCode === 200 && bc.returning && bc.personId === c.personId && bc.esslUserId === c.esslUserId, backClear.body);
+    await rv("POST", `/api/entries/${(JSON.parse(backClear.body) as { entryId: string }).entryId}/deprovision`);
+    for (const sim of zoneSims) await sim.drain(20);
+    await gateTick(silentLog);
+
+    // --- reject
+    const rjId = JSON.parse((await raise("9555000002")).body).id as string;
+    const rjLink = linkOf((await lastMsg("VISIT_LINK"))?.body);
+    await visitorCompletes(rjLink, { name: "Turned Away", govtIdNumber: "X9999999" });
+    check("rejecting needs a reason", (await rv("POST", `/api/visit-requests/${rjId}/reject`, {}, hostTok)).statusCode === 400);
+    const rj = await rv("POST", `/api/visit-requests/${rjId}/reject`, { reason: "not expected today" });
+    check("Admin may decide any host's request — rejects: closed, link withdrawn, visitor told", rj.statusCode === 200 && (await status(rjId)) === "REJECTED" && (await pv("GET", rjLink)).statusCode === 410 && (await lastMsg("VISIT_REJECTED"))?.recipient === "9555000002");
+    check("...the reason stays internal", !(await lastMsg("VISIT_REJECTED"))?.body.includes("not expected today"));
+
+    // --- walk-ins
+    const walkIn = (mobile: string, withCompany = true) =>
+      rv("POST", "/api/walk-ins", {
+        visitorName: "Gate Walker", visitorMobile: mobile, purpose: "E2E walk-in", passTypeId: reviewType.id, hostId: hostUser.id, ...(withCompany ? { companyId: gateCo.id } : {}),
+        zoneIds: [zOffice.id], entryMode: "SINGLE_ENTRY", expectedAt: new Date().toISOString(), validUntil: end.toISOString(),
+      });
+    const desk = async (id: string, details: object) => {
+      resetLimits();
+      const base = `/api/walk-ins/${id}`;
+      await rv("POST", `${base}/otp`);
+      const st = JSON.parse((await rv("POST", `${base}/otp/verify`, { code: codeOf((await lastMsg("MOBILE_OTP"))?.body) })).body) as { notice: { version: string } };
+      await rv("POST", `${base}/consent`, { noticeVersion: st.notice.version, accept: true });
+      await rv("PUT", `${base}/details`, details);
+      await app.inject({ method: "POST", url: `${base}/selfie`, headers: { ...auth(token), "content-type": "image/jpeg" }, payload: camera });
+      return rv("POST", `${base}/submit`);
+    };
+    const linksBefore = (JSON.parse((await rv("GET", "/api/messages?pageSize=100")).body).items as { template: string }[]).filter((m) => m.template === "VISIT_LINK").length;
+    const w1 = JSON.parse((await walkIn("9555000003", false)).body).id as string;
+    check("a walk-in sends the visitor no link", (JSON.parse((await rv("GET", "/api/messages?pageSize=100")).body).items as { template: string }[]).filter((m) => m.template === "VISIT_LINK").length === linksBefore);
+    check("only Security's walk-in cell opens the desk", (await rv("GET", `/api/walk-ins/${w1}`, undefined, hostTok)).statusCode === 403);
+    const w1Sub = JSON.parse((await desk(w1, { name: "Gate Walker", govtIdNumber: "W1111111" })).body) as { status: string; awaitingHost: boolean };
+    check("with host Clear required, a walk-in waits for the host", w1Sub.status === "SUBMITTED" && w1Sub.awaitingHost && (await prisma.entry.count({ where: { person: { mobile: "9555000003" } } })) === 0, JSON.stringify(w1Sub));
+    check("...and the host is told the visitor is at the gate", /at the gate/.test((await lastMsg("REQUEST_SUBMITTED"))?.body ?? ""));
+    const w1Audit = await prisma.auditLog.findFirst({ where: { entityId: w1, action: "VISITOR_CONSENTED" } });
+    check("desk steps are audited against the Security operator", w1Audit?.actorId !== null && (w1Audit?.detail as { by: string }).by === "OPERATOR");
+    const noCo = await rv("POST", `/api/visit-requests/${w1}/clear`, {}, hostTok);
+    check("a type that needs a company cannot be cleared without one", noCo.statusCode === 400 && /Company/.test(noCo.body), noCo.body);
+    const w1Clear = await rv("POST", `/api/visit-requests/${w1}/clear`, { companyId: gateCo.id }, hostTok);
+    check("the host picks the company at Clear and clears the walk-in", w1Clear.statusCode === 200 && (await prisma.person.findFirst({ where: { mobile: "9555000003" }, include: { company: true } }))?.company?.name === "Gate Co", w1Clear.body);
+    writtenPhotos.push(photoPathFor((JSON.parse(w1Clear.body) as { esslUserId: string }).esslUserId));
+
+    // A numeric prefix gives all-digit IDs, for terminals that take only numbers.
+    await rv("PATCH", "/api/settings", { walkInRequiresHostClear: false, visitorIdPrefix: "9" });
+    await prisma.device.updateMany({ where: { serialNo: { startsWith: "E2EZONE" } }, data: { visitorIdPatterns: ["9*"] } });
+    for (const d of zoneTerms) invalidateDevice(d.serialNo);
+    const w2 = JSON.parse((await walkIn("9555000004")).body).id as string;
+    const w2Sub = JSON.parse((await desk(w2, { name: "Quick Walker", govtIdNumber: "W2222222" })).body) as { status: string; esslUserId: string; entryId: string };
+    check("with host Clear switched off, the walk-in's pass is issued at once", w2Sub.status === "CLEARED" && Boolean(w2Sub.entryId) && (await status(w2)) === "CLEARED", JSON.stringify(w2Sub));
+    writtenPhotos.push(photoPathFor(w2Sub.esslUserId));
+    check("with prefix 9 the visitor ID is all digits", /^9\d{5}$/.test(w2Sub.esslUserId), w2Sub.esslUserId);
+    check("...the host is told a pass was issued", /issued a pass/.test((await lastMsg("PASS_ISSUED"))?.body ?? ""));
+    check("...and the history says no host decided it", (await prisma.visitRequestEvent.findFirst({ where: { requestId: w2, toStatus: "CLEARED" } }))?.note?.includes("without a host Clear — walk-ins do not require one (site setting)") === true);
+    await rv("PATCH", "/api/settings", { walkInRequiresHostClear: true, visitorIdPrefix: "V" });
+
+    // --- expiry
+    const exId = JSON.parse((await raise("9555000005")).body).id as string;
+    await prisma.visitRequest.update({ where: { id: exId }, data: { validUntil: new Date(Date.now() - 1000) } });
+    const expiredCount = await expireRequests();
+    check("an undecided request whose visit has passed expires, its link withdrawn", expiredCount >= 1 && (await status(exId)) === "EXPIRED" && (await prisma.linkToken.count({ where: { requestId: exId, revokedAt: null } })) === 0);
+
+    // --- the decisions are audited
+    const decided = new Set((await prisma.auditLog.findMany({ where: { entityType: "visit_request", action: { in: ["VISIT_REQUEST_QUERIED", "VISIT_REQUEST_CLEARED", "VISIT_REQUEST_REJECTED", "VISIT_REQUEST_EXPIRED"] } } })).map((a) => a.action));
+    check("no company was ever created from a visit", (await prisma.company.count({ where: { name: { in: ["Visiting Co"] } } })) === 0);
+    check("query, clear, reject and expiry are all audited", decided.size === 4, [...decided].join(","));
   }
 
   // --- teardown ---------------------------------------------------------

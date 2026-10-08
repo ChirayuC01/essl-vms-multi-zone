@@ -43,6 +43,12 @@ export const RESOURCES = {
     actions: ["view", "create", "update"],
     notes: { update: "Clear / Query / Reject (own visitors only)" },
   },
+  visit_requests_all: {
+    label: "Decide any host's visit requests",
+    group: "Gate",
+    actions: ["update"],
+    notes: { update: "Clear / Query / Reject requests raised by other hosts" },
+  },
   walkins: { label: "Walk-in registration", group: "Gate", actions: ["create"] },
   longterm_passes: { label: "Long-term passes", group: "Gate", actions: ["create"] },
   exit_override: { label: "Exit override", group: "Gate", actions: ["update"], notes: { update: "release without the exit code; reason required" } },

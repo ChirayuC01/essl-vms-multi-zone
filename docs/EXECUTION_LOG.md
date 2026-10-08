@@ -612,3 +612,117 @@ result) · issues · next action.
   first, and the web dev server allows `*.trycloudflare.com`
   (`allowedDevOrigins`). Marked `ACCEPTED`; committed. Phase 6 begins.
 
+### 2026-10-06 — Phase 6 — Host review, walk-ins, photo retake
+
+- **Status:** `IMPLEMENTED_AWAITING_VERIFICATION`.
+- **Change:**
+  - **Migration `20261006090000_visitor_id_sequence`:** `visitor_id_seq`
+    (additive; not a Prisma model, read with `nextval`).
+  - **`services/visit-review.ts`:**
+    - `clearRequest`: checks the submission against the visitor type (with
+      an optional department), matches or adds the company, refuses before
+      using a number if any of the pass's terminals would not classify the
+      ID as a visitor, creates or updates the person (returning visitors keep
+      their record and terminal ID; new ones get `<prefix><5 digits>`),
+      copies the selfie to the enrollment photo, moves the documents to the
+      person, issues the pass through `provisionPerson` (host = person to
+      meet), marks the request CLEARED, messages the visitor.
+    - `queryRequest` (text; new link quoting it), `rejectRequest` (internal
+      reason; link withdrawn; visitor told), `expireRequests` (batched; on
+      the gate-engine tick).
+    - `submitAndDecide`: submit, then issue at once when no host Clear is
+      needed (visitor type + walk-in setting), else notify the host.
+  - **`services/visit-requests.ts`:** walk-in origin (no link sent),
+    `requestById`, visitor steps take an operator actor (audited as
+    OPERATOR), `messageHost`.
+  - **`api/portal.ts`:** the visitor steps became `visitorStepRoutes`, mounted
+    on the portal and on `/api/walk-ins/:id` (walkins:create). The portal's
+    submit answer never includes why an automatic pass failed.
+  - **`api/visit-requests.ts`:** `POST /:id/clear|query|reject` (host only,
+    visit_requests:update); detail adds the pass and `canReview`; options add
+    departments and hosts (open to request, review and walk-in cells);
+    `POST /walk-ins`, `GET /walk-ins`.
+  - **`services/passes.ts` + `api/entries.ts`:** `POST /entries/:id/photo`
+    (passes:update, 480x640) re-pushes to LOADED terminals; widening limited
+    to the visitor's own host unless the operator holds passes:update.
+  - **Audit actions:** `VISIT_REQUEST_CLEARED/QUERIED/REJECTED/EXPIRED`.
+  - **Web:** shared `components/visitor-flow.tsx` (portal and walk-in desk),
+    shared `components/visit-request-form.tsx` (request and walk-in), new
+    **Walk-in** page, request page **Decision** and **Pass** cards (Clear /
+    Query / Reject, widen), retake on the pass panel, nav entry.
+- **Verification (2026-10-06):**
+  - `prisma migrate diff`: no difference; migration applied to `vms` and
+    `vms_test`.
+  - Unit tests **105/105**.
+  - e2e **474/474**; new section 32 (36 checks): query needs text; only the
+    host decides; two query rounds (new link quoting the question, old link
+    withdrawn, resubmit) with exact history; Clear refused when terminals'
+    visitor patterns don't cover the ID (no person created); Clear → person
+    with full details, company, selfie as photo, pass with zones/host/
+    validity and scheduled gates, CLEARED, visitor told, no double Clear;
+    host widens own pass but not another's; retake refused at the wrong size,
+    re-pushed to every loaded terminal, pass stays loaded; returning visitor
+    cleared onto the same person and terminal ID; reject (reason needed,
+    link withdrawn, visitor told, reason not in the SMS); walk-in sends no
+    link, desk closed to a host, waits for the host with the setting on
+    (host told "at the gate"), desk steps audited as the operator, host
+    clears it; setting off → issued at once, host told, history notes it;
+    expiry; all four decisions audited.
+  - Web lint and build PASS.
+- **Issues found and fixed during the phase:**
+  1. The first widen check ran before the pass was loaded; widening is (by
+     the Phase 4 rule) for loaded passes only, so the check moved after
+     loading, and the "not your visitor" check was made deterministic.
+- **Next action:** owner walk-through, `VERIFICATION.md` § Phase 6.
+
+### 2026-10-08 — Phase 6 — numeric visitor IDs for development
+
+- The owner's test terminal accepts only numeric user IDs (the client's
+  accept letters). No code path needed changing: the visitor ID prefix is a
+  setting, and `9` gives `900001`… with terminal pattern `9*`.
+- Tightened: the prefix is now 1–8 characters and may not start with `0`
+  (a numeric terminal drops leading zeros, so the ID would no longer match).
+  Clear's "pattern doesn't match" message now suggests `<prefix>*`.
+- Tests: unit **106/106** (new prefix test); e2e section 32 now also issues a
+  walk-in under prefix `9` and checks the ID is all digits.
+- Noted: the e2e suite cannot pass when run in the last hour or so before IST
+  midnight — single-entry passes end at IST midnight and several sections
+  book visits an hour or more ahead. Run it at other times.
+
+### 2026-10-08 — Phase 6 — company from the directory; Admin decides any request
+
+- **Owner findings:** (1) the portal's free-text company created duplicates
+  ("Test-Company" and "Test Company"), which split reports; (2) Admin must be
+  able to Clear any request, not only their own.
+- **Change:**
+  - **Migration `20261008090000_visit_request_company`:** `visit_request`
+    gains `company_id` (FK to `company`); `company_name` stays as a display
+    snapshot. Additive.
+  - The portal no longer has a Company field (and refuses one). The host /
+    Security picks the company from the Directory on the request form; the
+    Decision card can pick or change it at Clear. Clear no longer creates
+    companies.
+  - New grid cell `visit_requests_all:update` ("Decide any host's visit
+    requests"): Admin holds it; grantable to other roles. Clear / Query /
+    Reject and the Decision panel accept the host or a holder of this cell.
+  - Options endpoint returns active companies.
+- **Verification:** unit **106/106**; e2e **478/478** (new: visitor cannot
+  send a company; another host can't see the request; Admin rejects a host's
+  request; a type needing a company can't be cleared without one, then
+  clears with the company picked at Clear; no company created from a visit);
+  migration applied to `vms` and `vms_test`, no drift; web lint and build PASS.
+- **Existing duplicates** already created during testing (e.g.
+  "Test-Company") are left for the owner to tidy in **Directory** (move the
+  people across, deactivate the duplicate); nothing is deleted automatically.
+- **Owner decision (same day):** a planned request needs a host Clear only if
+  its visitor type requires one (unchanged behaviour). The history note for
+  an automatic issue now names the reason — `the visitor type "<name>" does
+  not require one` or `walk-ins do not require one (site setting)` — instead
+  of always saying "site setting". e2e **478/478**.
+
+### 2026-10-08 — Phase 6 — verified and accepted
+
+- Owner verified Phase 6 (with numeric visitor IDs on the test terminal,
+  directory companies, Admin deciding any request). Marked `ACCEPTED`;
+  committed. Phase 7 begins.
+

@@ -108,7 +108,9 @@ Daily sub-contractor passes stay outside the system.
 3. **Visitor** opens it *(Phase 5 — implemented, §11)*, verifies mobile by OTP, reads and accepts the privacy
    notice, enters Govt ID and vehicle number, takes a live selfie with a face
    guide, optionally uploads documents.
-4. **Host** reviews and chooses:
+4. **Host** reviews and chooses *(Phase 6 — implemented)* — unless the visitor
+   type's **Requires host Clear** is off, in which case the pass is issued as
+   soon as the visitor submits:
    - **Clear** — Person registered (or matched as returning), unique visitor ID
      issued, pass created.
    - **Query** — host must write what is wrong; visitor gets a new link
@@ -126,7 +128,12 @@ Daily sub-contractor passes stay outside the system.
 Every request, every query (with its text), every rejection and every
 decision is kept with full history.
 
-### 5.2 Walk-in (Phase 6)
+### 5.2 Walk-in (Phase 6 — implemented)
+
+The **Walk-in** page (Security): register the visit and the host, then the
+same steps as the portal on the gate PC. The pass is issued straight away
+when the site's setting allows it and the visitor type does not need a host
+Clear; otherwise the host is told the visitor is at the gate.
 
 Security enters the same details at the gate, sends and types the mobile OTP,
 captures the face, and names a host. With `walkInRequiresHostClear` on
@@ -189,13 +196,14 @@ Further rules:
   out, and is listed as overstayed. Implemented, Phase 4.
 - **Zone widening** (host) — add a zone (e.g. Yard) during a visit; its
   terminals load at once; recorded against the operator. Implemented, Phase 4.
-  (Limiting it to the visitor's own host comes with visit requests, Phase 6.)
+  A host may widen only their own visitor's pass (Phase 6), from the request
+  page; Security may widen any.
 - **Exit override** (Security) — when the code route fails, Security releases
   a single-entry visitor at the exit: the code-gated exit terminals load at
   once. Reason mandatory; logged with operator, visitor, time and reason.
   Implemented, Phase 4. The report comes in Phase 8.
 - **Security photo retake** — replace a poor selfie at the gate; re-pushed to
-  the loaded terminals. Phase 6.
+  the loaded terminals. Implemented, Phase 6 (person page → pass panel).
 - **Outage procedure** — while the system is down, site staff release people
   physically with the terminal's admin card and note them in a manual
   register. When the system comes back, passes affected by the outage are
@@ -307,7 +315,7 @@ Admin in the console, which is how the flows are tested locally.
 
 **Implemented in Phase 5:**
 - **Requests** page: a host raises a request (visitor name, mobile, optional
-  email and company, visitor type, entry mode, zones, exit-code exits, visit
+  email, company chosen from the Directory, visitor type, entry mode, zones, exit-code exits, visit
   time, valid until, purpose). The visitor gets the link by SMS (and email if
   given). The host sees status, details (IDs masked), photo, documents and
   history; can send a new link (the old one stops working) or cancel with a

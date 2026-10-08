@@ -102,6 +102,12 @@ export const AuditAction = {
   VISITOR_CONSENTED: "VISITOR_CONSENTED",
   VISITOR_DETAILS_SAVED: "VISITOR_DETAILS_SAVED",
   VISITOR_SELFIE_SAVED: "VISITOR_SELFIE_SAVED",
+  // Host review (Phase 6). CLEARED carries the person, terminal ID and pass
+  // it produced; QUERIED carries the host's text; REJECTED the reason.
+  VISIT_REQUEST_CLEARED: "VISIT_REQUEST_CLEARED",
+  VISIT_REQUEST_QUERIED: "VISIT_REQUEST_QUERIED",
+  VISIT_REQUEST_REJECTED: "VISIT_REQUEST_REJECTED",
+  VISIT_REQUEST_EXPIRED: "VISIT_REQUEST_EXPIRED",
 } as const;
 export type AuditActionName = (typeof AuditAction)[keyof typeof AuditAction];
 

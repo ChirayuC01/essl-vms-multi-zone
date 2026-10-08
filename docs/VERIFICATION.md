@@ -18,6 +18,7 @@ Hardware assumed: **two physical terminals** plus virtual ones as needed. See
 | 3 | §Phase 3 below | Owner approved commit 2026-10-05; step results not recorded |
 | 4 | §Phase 4 below | **VERIFIED** by owner (2026-10-05) |
 | 5 | §Phase 5 below | **VERIFIED** by owner (2026-10-06), including the phone run over a quick tunnel |
+| 6 | §Phase 6 below | **VERIFIED** by owner (2026-10-08) |
 
 Record results here as `PASS` / `FAIL — note` per step when walking through.
 
@@ -726,3 +727,111 @@ visitor's address). No row contains a code or a link.
 
 **Pass:** Steps 1–10 hold.
 
+---
+
+## Phase 6 — Host review, walk-ins, photo retake
+
+Use the Phase 4 layout: your two real terminals as the **Office** IN/OUT, the
+virtual pair as **Yard**. Restart the dev backend and web (new migration is
+already applied to `vms`; the backend needs the restart for the new routes).
+
+### Step 1 — Setup
+
+1. **Visitor IDs on your numeric-only test terminal:** Settings → **visitor ID
+   prefix** = `9` (new visitors get `900001`, `900002`, …). On **every**
+   terminal set the **visitor ID pattern** to `9*`, and make sure the
+   employee pattern does not overlap it (e.g. `1*`). The client's terminals
+   take letters, so their sites keep `V` / `V*`.
+2. **Operators:** a Host test user with a **mobile** and an **email**, and a
+   Security user. (Admin can do Security's part; only the host named on a
+   request can decide it.)
+3. **Settings:** privacy notice set; **Walk-in requires host Clear** ticked.
+
+### Step 2 — Query loop
+
+As the Host, raise a request for your own mobile (Office, single entry, visit
+in ~10 minutes), picking the **Company** from the list. Complete it on the
+portal (Phase 5 steps) and submit. ✅ The portal never asks the visitor for a
+company.
+
+1. Open it under **Requests** → **Decision** → write a query → **Send query**.
+   ✅ Status **queried**; the Outbox has a new link whose message quotes your
+   question; the old link says "replaced or withdrawn".
+2. Open the new link: ✅ your question is shown at the top; your earlier
+   details are still filled in. Change something and **Submit**.
+3. Query once more and resubmit. ✅ **History** lists every step with your
+   query texts.
+4. As **another Host**: ✅ the request isn't visible to them at all.
+   As **Admin**: ✅ the Decision panel *is* shown — Admin may decide any
+   request ("Decide any host's visit requests" on the Access page; grant it
+   to other roles there if wanted).
+
+### Step 3 — Clear → pass → gate
+
+1. **Clear — issue the pass.** ✅ "Cleared"; a **Pass** card shows a terminal
+   ID like `V00001`.
+   - If it refuses with "does not match the visitor ID patterns", Step 1.1
+     was missed — fix the pattern and Clear again.
+2. ✅ **People**: the visitor exists with your mobile, the company you picked,
+   the ID number masked, and the selfie as their photo; their documents are on
+   their page.
+3. ✅ Outbox: "Your visit … is confirmed" to the visitor.
+4. About 5 minutes before the visit time the face loads onto the Office IN
+   terminal (Phase 4 rules). ✅ You walk in by face.
+
+### Step 4 — Host widens the pass
+
+While the pass is loaded, as the Host, on the request's **Pass** card pick
+**Yard** → **Widen pass**. ✅ The Yard terminals load.
+
+### Step 5 — Security retake
+
+As Security, open the visitor on **People** → the pass panel → **Use webcam**
+→ capture. ✅ "Photo replaced"; the Command Queue shows a photo push to each
+terminal that already held the face; you still pass by face (with the new
+photo).
+
+### Step 6 — Returning visitor
+
+Close the pass (de-provision). Raise another request for the **same mobile**,
+complete and submit it, Clear it. ✅ The request shows "returning visitor";
+Clear gives the **same terminal ID** and the same person — no duplicate in
+People.
+
+### Step 7 — Reject
+
+Raise a request, complete it, then **Reject** with a reason. ✅ Status
+**rejected**; the link is withdrawn; the visitor's SMS says it was not
+approved and does **not** include your reason.
+
+### Step 8 — Walk-in, host Clear required
+
+As Security → **Walk-in** → fill the visit, pick the Host → **Register
+walk-in**. Then on the same page: **Send code** (read it from the Outbox, as
+the visitor would from their phone), show them the notice and tick, fill the
+details, **Open camera** on this PC, **Submit**.
+
+(Leave **Company** empty this time.)
+
+✅ "Waiting for … to clear"; the host gets "… is at the gate to see you".
+✅ If the visitor type requires a company, Clear refuses until you pick one in
+the **Company** box on the Decision card.
+✅ No link was sent to the visitor.
+✅ As the Host, the request is in **Requests**; Clear it → pass issued.
+
+### Step 9 — Walk-in, host Clear switched off
+
+Settings → untick **Walk-in requires host Clear**. Register another walk-in
+and submit. ✅ "Cleared — the pass is issued"; the host gets "has been issued
+a pass"; the request's history says it was issued without a host Clear.
+Tick the setting again afterwards.
+
+### Step 10 — Expiry and audit
+
+1. A request left unanswered past its **valid until** becomes **expired**
+   within a minute, and its link stops working.
+2. ✅ **Reports → Audit trail**: `VISIT_REQUEST_QUERIED`, `…_CLEARED`
+   (with the person, terminal ID and pass), `…_REJECTED`, `…_EXPIRED`;
+   walk-in steps carry the Security operator as the actor.
+
+**Pass:** Steps 1–10 hold.

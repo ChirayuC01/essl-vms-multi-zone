@@ -15,8 +15,8 @@
 | 3 | Pass types, visitor profile, documents, ID redaction | `ACCEPTED` (owner, 2026-10-05) |
 | 4 | Gate-load engine | `ACCEPTED` — verified by owner (2026-10-05) |
 | 5 | Messaging outbox and visitor portal (+ the visit-request core) | `ACCEPTED` — verified by owner (2026-10-06) |
-| 6 | Visit requests, host review, walk-ins | `IN_PROGRESS` |
-| 7 | Exit code, out-pass, outage recovery | `NOT_STARTED` |
+| 6 | Visit requests, host review, walk-ins | `ACCEPTED` — verified by owner (2026-10-08) |
+| 7 | Exit code, out-pass, outage recovery | `IN_PROGRESS` |
 | 8 | Reports and audit coverage | `NOT_STARTED` |
 | 9 | Tunnel, hardening, packaging, acceptance | `NOT_STARTED` |
 

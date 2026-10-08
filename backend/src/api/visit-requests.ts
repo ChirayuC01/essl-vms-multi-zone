@@ -1,24 +1,28 @@
 import { readFile } from "node:fs/promises";
-import { EntryMode, VisitRequestStatus, type Prisma } from "@prisma/client";
+import { EntryMode, VisitOrigin, VisitRequestStatus, type Prisma } from "@prisma/client";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { AuditAction, auditRow } from "../db/audit.js";
 import { prisma } from "../db/index.js";
 import { ServiceError } from "../services/errors.js";
-import { cancelVisitRequest, createVisitRequest, maskSubmission, missingDetails, resendLink } from "../services/visit-requests.js";
+import { cancelVisitRequest, createVisitRequest, maskSubmission, missingDetails, requestById, resendLink } from "../services/visit-requests.js";
+import { clearRequest, queryRequest, rejectRequest } from "../services/visit-review.js";
+import { context, visitorStepRoutes } from "./portal.js";
 import { actorId } from "./auth.js";
 import { mobileNumber } from "./people.js";
-import { hasPermission, requirePermission } from "./permissions.js";
+import { hasPermission, requireAnyPermission, requirePermission } from "./permissions.js";
 
 // Visit requests, operator side (two-zone rebuild, Phase 5). A host sees and
 // acts on their own requests; an operator who can see passes sees everyone's.
-// Clear / Query / Reject are Phase 6.
+// Clear / Query / Reject (Phase 6) are the host's own: only the host named on
+// the request decides it. Walk-ins (Phase 6) are registered by Security at the
+// gate under /walk-ins, reusing the portal's steps with Security as the actor.
 
 const createSchema = z.object({
   visitorName: z.string().trim().min(1).max(100),
   visitorMobile: mobileNumber,
   visitorEmail: z.string().trim().toLowerCase().email().max(200).nullable().optional(),
-  companyName: z.string().trim().max(100).transform((v) => v || null).nullable().optional(),
+  companyId: z.string().min(1).nullable().optional(),
   purpose: z.string().trim().min(1).max(300),
   passTypeId: z.string().min(1),
   zoneIds: z.array(z.string().min(1)).min(1).max(20),
@@ -53,14 +57,17 @@ export async function visitRequestRoutes(app: FastifyInstance): Promise<void> {
     return reply.code(201).send({ id: visit.id, status: visit.status });
   });
 
-  // What the request form offers. Its own route because a host holds no
-  // pass-type or zone permissions, and needs only names.
-  app.get("/visit-requests/options", { preHandler: requirePermission("visit_requests:create") }, async (_request, reply) => {
-    const [passTypes, zones] = await prisma.$transaction([
+  // What the request, review and walk-in forms offer. Its own route because a
+  // host holds no pass-type, zone or directory permissions, and needs only names.
+  app.get("/visit-requests/options", { preHandler: requireAnyPermission("visit_requests:create", "visit_requests:update", "walkins:create") }, async (_request, reply) => {
+    const [passTypes, zones, companies, departments, hosts] = await prisma.$transaction([
       prisma.passType.findMany({ where: { isActive: true }, orderBy: { name: "asc" }, select: { id: true, name: true, entryModes: true, maxValidityDays: true } }),
       prisma.zone.findMany({ where: { isActive: true }, orderBy: { name: "asc" }, select: { id: true, name: true, parentZoneId: true, exitCodeDefault: true } }),
+      prisma.company.findMany({ where: { isActive: true }, orderBy: { name: "asc" }, select: { id: true, name: true } }),
+      prisma.department.findMany({ where: { isActive: true }, orderBy: { name: "asc" }, select: { id: true, name: true } }),
+      prisma.appUser.findMany({ where: { isActive: true }, orderBy: [{ name: "asc" }, { email: "asc" }], select: { id: true, name: true, email: true } }),
     ]);
-    return reply.send({ passTypes, zones });
+    return reply.send({ passTypes, zones, companies, departments, hosts });
   });
 
   app.get("/visit-requests", { preHandler: requirePermission("visit_requests:view") }, async (request, reply) => {
@@ -148,6 +155,9 @@ export async function visitRequestRoutes(app: FastifyInstance): Promise<void> {
       hasSelfie: Boolean(v.selfiePath),
       documents: v.documents.map((d) => ({ id: d.id, kind: d.kind, fileName: d.fileName, mime: d.mime, sizeBytes: d.sizeBytes, createdAt: d.createdAt })),
       link: v.tokens[0] ?? null,
+      pass: v.passId ? await prisma.entry.findUnique({ where: { id: v.passId }, select: { id: true, state: true, zoneIds: true, person: { select: { esslUserId: true } } } }) : null,
+      canReview: (await hasPermission(request, "visit_requests:update")) && (v.hostId === actorId(request) || (await hasPermission(request, "visit_requests_all:update"))),
+      companyId: v.companyId,
       queryText: v.queryText,
       events: v.events.map((e) => ({ ...e, actorName: e.actorId ? actorName.get(e.actorId) ?? null : null })),
       createdAt: v.createdAt,
@@ -167,6 +177,36 @@ export async function visitRequestRoutes(app: FastifyInstance): Promise<void> {
     await visible(request, id);
     await cancelVisitRequest(id, body.data.reason, actorId(request)!);
     return reply.send({ cancelled: true });
+  });
+
+  // ---- host review (Phase 6) ----------------------------------------------
+  const review = async (request: FastifyRequest) => {
+    const { id } = request.params as { id: string };
+    const v = await visible(request, id);
+    if (v.hostId !== actorId(request) && !(await hasPermission(request, "visit_requests_all:update"))) {
+      throw new ServiceError(403, "only the visitor's host can decide this request");
+    }
+    return id;
+  };
+  app.post("/visit-requests/:id/clear", { preHandler: requirePermission("visit_requests:update") }, async (request, reply) => {
+    const body = z.object({ companyId: z.string().min(1).nullable().optional(), departmentId: z.string().min(1).nullable().optional() }).safeParse(request.body ?? {});
+    if (!body.success) return reply.code(400).send({ error: "validation", issues: body.error.issues });
+    const id = await review(request);
+    return reply.send(await clearRequest(id, actorId(request)!, { companyId: body.data.companyId, departmentId: body.data.departmentId }));
+  });
+  app.post("/visit-requests/:id/query", { preHandler: requirePermission("visit_requests:update") }, async (request, reply) => {
+    const body = z.object({ text: z.string().trim().min(3).max(500) }).safeParse(request.body);
+    if (!body.success) return reply.code(400).send({ error: "write what the visitor needs to change" });
+    const id = await review(request);
+    await queryRequest(id, actorId(request)!, body.data.text);
+    return reply.send({ queried: true });
+  });
+  app.post("/visit-requests/:id/reject", { preHandler: requirePermission("visit_requests:update") }, async (request, reply) => {
+    const body = z.object({ reason: z.string().trim().min(3).max(300) }).safeParse(request.body);
+    if (!body.success) return reply.code(400).send({ error: "a reason is required" });
+    const id = await review(request);
+    await rejectRequest(id, actorId(request)!, body.data.reason);
+    return reply.send({ rejected: true });
   });
 
   app.get("/visit-requests/:id/selfie", { preHandler: requirePermission("visit_requests:view") }, async (request, reply) => {
@@ -195,6 +235,39 @@ export async function visitRequestRoutes(app: FastifyInstance): Promise<void> {
       .header("Content-Security-Policy", "sandbox; default-src 'none'")
       .header("Cache-Control", "no-store")
       .send(bytes);
+  });
+
+  // ---- walk-ins (Security, Phase 6) -----------------------------------------
+  app.post("/walk-ins", { preHandler: requirePermission("walkins:create") }, async (request, reply) => {
+    const body = createSchema.extend({ hostId: z.string().min(1) }).safeParse(request.body);
+    if (!body.success) return reply.code(400).send({ error: "validation", issues: body.error.issues });
+    const { hostId, ...input } = body.data;
+    const visit = await createVisitRequest(input, hostId, { actorId: actorId(request)!, origin: VisitOrigin.WALK_IN });
+    return reply.code(201).send({ id: visit.id, status: visit.status });
+  });
+  app.get("/walk-ins", { preHandler: requirePermission("walkins:create") }, async (_request, reply) => {
+    const items = await prisma.visitRequest.findMany({
+      where: { origin: VisitOrigin.WALK_IN, createdAt: { gte: new Date(Date.now() - 24 * 3_600_000) } },
+      orderBy: { createdAt: "desc" },
+      take: 100,
+      include: { host: { select: { id: true, name: true, email: true } } },
+    });
+    return reply.send({
+      items: items.map((v) => ({ id: v.id, status: v.status, visitorName: v.visitorName, visitorMobile: v.visitorMobile, expectedAt: v.expectedAt, host: v.host, passId: v.passId, createdAt: v.createdAt })),
+    });
+  });
+  await app.register(async (desk) => {
+    desk.addHook("preHandler", requirePermission("walkins:create"));
+    visitorStepRoutes(
+      desk,
+      "/walk-ins/:id",
+      async (request) => {
+        const v = await requestById((request.params as { id: string }).id);
+        if (v.origin !== VisitOrigin.WALK_IN) throw new ServiceError(404, "walk-in not found");
+        return v;
+      },
+      (request) => ({ ...context(request), actorId: actorId(request) }),
+    );
   });
 
   // The outbox: every message sent. With the console transport this is how

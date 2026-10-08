@@ -3,6 +3,7 @@ import { config } from "../config/index.js";
 import { scanTick } from "../services/backfill.js";
 import { reconcileSweep } from "../services/reconcile.js";
 import { gateTick } from "../services/gates.js";
+import { expireRequests } from "../services/visit-review.js";
 import { runRetention } from "./retention.js";
 
 // Scheduled jobs, on pg-boss over the same PostgreSQL the app already uses —
@@ -58,6 +59,9 @@ export async function startJobs(log: Logger): Promise<void> {
   await instance.createQueue(GATE_QUEUE);
   await instance.work(GATE_QUEUE, async () => {
     await gateTick(log);
+    // Visit requests whose visit window passed undecided (Phase 6).
+    const expired = await expireRequests();
+    if (expired) log.info({ expired }, "visit requests expired");
   });
 
   // Reconciliation asks the device about a slice of the roster. It is the

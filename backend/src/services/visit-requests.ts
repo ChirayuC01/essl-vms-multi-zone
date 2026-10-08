@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { EntryMode, MessageChannel, Prisma, VisitRequestStatus, type VisitRequest } from "@prisma/client";
+import { EntryMode, MessageChannel, Prisma, VisitOrigin, VisitRequestStatus, type VisitRequest } from "@prisma/client";
 import { config } from "../config/index.js";
 import { AuditAction, auditRow, type AuditActionName } from "../db/audit.js";
 import { prisma } from "../db/index.js";
@@ -31,10 +31,13 @@ export const OTP_PURPOSE = "MOBILE_VERIFY";
 const EDITABLE: VisitRequestStatus[] = [VisitRequestStatus.SENT, VisitRequestStatus.QUERIED];
 const ID_FIELDS = ["govtIdNumber", "aadharNumber", "panNumber", "credentialNumber"] as const;
 
-/** Fields the visitor fills on the portal. Mobile is verified, not typed; the department is the host's side. */
+/**
+ * Fields the visitor fills on the portal. Mobile is verified, not typed.
+ * Company and department are the host's side: a visitor cannot know how the
+ * site's directory spells their company, and free text made duplicates.
+ */
 export const PORTAL_FIELDS = [
   "email",
-  "companyId",
   "designation",
   "govtIdType",
   "govtIdNumber",
@@ -47,14 +50,19 @@ export const PORTAL_FIELDS = [
 ] as const satisfies readonly ProfileField[];
 type PortalField = (typeof PORTAL_FIELDS)[number];
 
-/** Who did it, for visitor-side audit rows. */
+/**
+ * Who did it. On the portal it is the visitor (no operator, their address);
+ * for a walk-in it is the Security operator at the gate (Phase 6).
+ */
 export interface VisitorContext {
   ip?: string | undefined;
   userAgent?: string | undefined;
+  actorId?: string | undefined;
 }
+const who = (ctx: VisitorContext) => ({ by: ctx.actorId ? "OPERATOR" : "VISITOR", ip: ctx.ip, userAgent: ctx.userAgent });
 
 const IST = "Asia/Kolkata";
-const when = (d: Date) => d.toLocaleString("en-IN", { timeZone: IST, dateStyle: "medium", timeStyle: "short" });
+export const when = (d: Date) => d.toLocaleString("en-IN", { timeZone: IST, dateStyle: "medium", timeStyle: "short" });
 const blank = (v: unknown) => v === null || v === undefined || (typeof v === "string" && v.trim() === "");
 const lastDigits = (mobile: string) => mobile.replace(/\D/g, "").slice(-10);
 
@@ -70,7 +78,8 @@ export interface CreateRequestInput {
   visitorName: string;
   visitorMobile: string;
   visitorEmail?: string | null | undefined;
-  companyName?: string | null | undefined;
+  /** From the directory; never free text. */
+  companyId?: string | null | undefined;
   purpose: string;
   passTypeId: string;
   zoneIds: string[];
@@ -80,7 +89,22 @@ export interface CreateRequestInput {
   validUntil: Date;
 }
 
-export async function createVisitRequest(input: CreateRequestInput, hostId: string, now = new Date()) {
+/**
+ * Raise a request. A planned visit (host) sends the visitor their link; a
+ * walk-in (Security at the gate, Phase 6) names the host and sends nothing —
+ * the details are taken at the desk.
+ */
+export async function createVisitRequest(
+  input: CreateRequestInput,
+  hostId: string,
+  opts: { actorId?: string; origin?: VisitOrigin } = {},
+  now = new Date(),
+) {
+  const actorId = opts.actorId ?? hostId;
+  const origin = opts.origin ?? VisitOrigin.PLANNED;
+  if (origin === VisitOrigin.WALK_IN && !(await prisma.appUser.findFirst({ where: { id: hostId, isActive: true } }))) {
+    throw new ServiceError(400, "select the host the visitor is meeting");
+  }
   if (input.expectedAt.getTime() < now.getTime() - 60 * 60_000) throw new ServiceError(400, "the visit must be in the future");
   if (input.validUntil <= input.expectedAt) throw new ServiceError(400, "the visit must end after it starts");
   const passType = await prisma.passType.findUnique({ where: { id: input.passTypeId } });
@@ -91,6 +115,8 @@ export async function createVisitRequest(input: CreateRequestInput, hostId: stri
   if (passType.maxValidityDays !== null && input.validUntil.getTime() - input.expectedAt.getTime() > passType.maxValidityDays * 86_400_000) {
     throw new ServiceError(400, `${passType.name} passes last at most ${passType.maxValidityDays} day(s)`);
   }
+  const company = input.companyId ? await prisma.company.findFirst({ where: { id: input.companyId, isActive: true } }) : null;
+  if (input.companyId && !company) throw new ServiceError(400, "select an active company");
   const zoneIds = [...new Set(input.zoneIds)];
   if (zoneIds.length === 0) throw new ServiceError(400, "select at least one zone");
   const zones = await prisma.zone.count({ where: { id: { in: zoneIds }, isActive: true } });
@@ -103,10 +129,12 @@ export async function createVisitRequest(input: CreateRequestInput, hostId: stri
     const created = await tx.visitRequest.create({
       data: {
         hostId,
+        origin,
         visitorName: input.visitorName,
         visitorMobile: input.visitorMobile,
         visitorEmail: input.visitorEmail ?? null,
-        companyName: input.companyName ?? null,
+        companyId: company?.id ?? null,
+        companyName: company?.name ?? null,
         purpose: input.purpose,
         passTypeId: passType.id,
         zoneIds,
@@ -116,19 +144,19 @@ export async function createVisitRequest(input: CreateRequestInput, hostId: stri
         validUntil: input.validUntil,
       },
     });
-    await tx.visitRequestEvent.create({ data: { requestId: created.id, actorId: hostId, actorKind: "OPERATOR", toStatus: VisitRequestStatus.SENT } });
+    await tx.visitRequestEvent.create({ data: { requestId: created.id, actorId, actorKind: "OPERATOR", toStatus: VisitRequestStatus.SENT, ...(origin === VisitOrigin.WALK_IN ? { note: "walk-in registered at the gate" } : {}) } });
     await tx.auditLog.create({
       data: auditRow({
         action: AuditAction.VISIT_REQUEST_CREATED,
         entityType: "visit_request",
         entityId: created.id,
-        detail: { visitorName: created.visitorName, visitorMobile: created.visitorMobile, passTypeId: passType.id, zoneIds, entryMode: created.entryMode, expectedAt: created.expectedAt.toISOString() },
-        actorId: hostId,
+        detail: { origin, hostId, visitorName: created.visitorName, visitorMobile: created.visitorMobile, passTypeId: passType.id, zoneIds, entryMode: created.entryMode, expectedAt: created.expectedAt.toISOString() },
+        actorId,
       }),
     });
     return created;
   });
-  await sendLink(request, hostId, now);
+  if (origin === VisitOrigin.PLANNED) await sendLink(request, hostId, now);
   return request;
 }
 
@@ -204,7 +232,15 @@ export async function requestForToken(token: string, now = new Date()) {
   if (link.expiresAt <= now) throw new ServiceError(410, "this link has expired — ask your host to send a new one");
   return link.request;
 }
-type PortalRequest = Awaited<ReturnType<typeof requestForToken>>;
+const withPortalData = { host: { select: { name: true, email: true } }, documents: { where: { removedAt: null }, orderBy: { createdAt: "asc" } } } as const;
+
+/** The same view of a request, by id — for the walk-in desk, where the operator is the credential. */
+export async function requestById(id: string) {
+  const request = await prisma.visitRequest.findUnique({ where: { id }, include: withPortalData });
+  if (!request) throw new ServiceError(404, "visit request not found");
+  return request;
+}
+export type PortalRequest = Awaited<ReturnType<typeof requestForToken>>;
 
 function editable(request: PortalRequest) {
   if (!EDITABLE.includes(request.status)) throw new ServiceError(409, `this visit is ${request.status.toLowerCase()} — the details can no longer be changed`);
@@ -246,7 +282,7 @@ export async function portalState(request: PortalRequest) {
     returning: Boolean(request.personId),
     notice: { text: settings.privacyNoticeText, version: settings.privacyNoticeVersion },
     consented,
-    fields: Object.fromEntries(PORTAL_FIELDS.map((f) => [f, { label: f === "companyId" ? "Company" : f === "credentialNumber" || f === "credentialExpiresAt" ? `${type.credentialLabel ?? ""} ${f === "credentialNumber" ? "number" : "expiry"}`.trim() : PROFILE_FIELDS[f], rule: ruleFor(type, f) }])),
+    fields: Object.fromEntries(PORTAL_FIELDS.map((f) => [f, { label: f === "credentialNumber" || f === "credentialExpiresAt" ? `${type.credentialLabel ?? ""} ${f === "credentialNumber" ? "number" : "expiry"}`.trim() : PROFILE_FIELDS[f], rule: ruleFor(type, f) }])),
     details: maskSubmission(request.submission) ?? {},
     hasSelfie: Boolean(request.selfiePath),
     documents: request.documents.map((d) => ({ id: d.id, kind: d.kind, fileName: d.fileName, sizeBytes: d.sizeBytes })),
@@ -271,7 +307,7 @@ export async function sendMobileCode(request: PortalRequest, ctx: VisitorContext
     secrets: [code],
     related: { type: "visit_request", id: request.id },
   });
-  await audit(AuditAction.VISITOR_OTP_SENT, request.id, { by: "VISITOR", ...ctx });
+  await audit(AuditAction.VISITOR_OTP_SENT, request.id, { ...who(ctx) }, ctx.actorId);
 }
 
 /**
@@ -285,7 +321,7 @@ export async function verifyMobileCode(request: PortalRequest, code: string, ctx
   const settings = await getSettings();
   const result = await checkCode(OTP_PURPOSE, request.id, code, settings.otpMaxAttempts, now);
   if (result !== "OK") {
-    await audit(AuditAction.VISITOR_OTP_FAILED, request.id, { by: "VISITOR", result, ...ctx });
+    await audit(AuditAction.VISITOR_OTP_FAILED, request.id, { ...who(ctx), result }, ctx.actorId);
     const message = {
       WRONG: "that code is not right — check the message and try again",
       EXPIRED: "that code has expired — ask for a new one",
@@ -302,11 +338,10 @@ export async function verifyMobileCode(request: PortalRequest, code: string, ctx
   const personId = matches.length === 1 ? matches[0]!.id : null;
   let submission = request.submission as Prisma.InputJsonValue | null;
   if (personId && !submission) {
-    const p = await prisma.person.findUniqueOrThrow({ where: { id: personId }, include: { company: { select: { name: true } } } });
+    const p = await prisma.person.findUniqueOrThrow({ where: { id: personId } });
     submission = {
       name: p.name,
       email: p.email,
-      companyId: p.company?.name ?? null,
       designation: p.designation,
       govtIdType: p.govtIdType,
       govtIdNumber: p.govtIdNumber,
@@ -320,7 +355,7 @@ export async function verifyMobileCode(request: PortalRequest, code: string, ctx
   }
   await prisma.$transaction([
     prisma.visitRequest.update({ where: { id: request.id }, data: { mobileVerifiedAt: now, personId, ...(submission ? { submission } : {}) } }),
-    audit(AuditAction.VISITOR_MOBILE_VERIFIED, request.id, { by: "VISITOR", returningPersonId: personId, ambiguousMatch: matches.length > 1, ...ctx }),
+    audit(AuditAction.VISITOR_MOBILE_VERIFIED, request.id, { ...who(ctx), returningPersonId: personId, ambiguousMatch: matches.length > 1 }, ctx.actorId),
   ]);
 }
 
@@ -336,7 +371,7 @@ export async function recordConsent(request: PortalRequest, noticeVersion: strin
   await prisma.$transaction([
     prisma.consentRecord.create({ data: { requestId: request.id, noticeVersion, ipAddress: ctx.ip ?? null, userAgent: ctx.userAgent?.slice(0, 300) ?? null } }),
     prisma.visitRequest.update({ where: { id: request.id }, data: { consentedAt: new Date() } }),
-    audit(AuditAction.VISITOR_CONSENTED, request.id, { by: "VISITOR", noticeVersion, ...ctx }),
+    audit(AuditAction.VISITOR_CONSENTED, request.id, { ...who(ctx), noticeVersion }, ctx.actorId),
   ]);
 }
 
@@ -364,7 +399,7 @@ export async function saveDetails(request: PortalRequest, details: Record<string
   }
   await prisma.$transaction([
     prisma.visitRequest.update({ where: { id: request.id }, data: { submission: next as Prisma.InputJsonValue } }),
-    audit(AuditAction.VISITOR_DETAILS_SAVED, request.id, { by: "VISITOR", fields: Object.keys(next).filter((k) => !blank(next[k])), ...ctx }),
+    audit(AuditAction.VISITOR_DETAILS_SAVED, request.id, { ...who(ctx), fields: Object.keys(next).filter((k) => !blank(next[k])) }, ctx.actorId),
   ]);
   return next;
 }
@@ -374,7 +409,7 @@ export async function missingDetails(request: Pick<VisitRequest, "passTypeId" | 
   const type = await ruleSource(request.passTypeId);
   const s = (request.submission ?? {}) as Record<string, unknown>;
   const missing: string[] = blank(s.name) ? ["Name"] : [];
-  for (const f of PORTAL_FIELDS) if (ruleFor(type, f) === "required" && blank(s[f])) missing.push(f === "companyId" ? "Company" : PROFILE_FIELDS[f]);
+  for (const f of PORTAL_FIELDS) if (ruleFor(type, f) === "required" && blank(s[f])) missing.push(PROFILE_FIELDS[f]);
   return missing;
 }
 
@@ -388,7 +423,7 @@ export async function saveSelfie(request: PortalRequest, jpeg: Buffer, ctx: Visi
   await writeFile(file, jpeg);
   await prisma.$transaction([
     prisma.visitRequest.update({ where: { id: request.id }, data: { selfiePath: file } }),
-    audit(AuditAction.VISITOR_SELFIE_SAVED, request.id, { by: "VISITOR", sizeBytes: jpeg.length, ...ctx }),
+    audit(AuditAction.VISITOR_SELFIE_SAVED, request.id, { ...who(ctx), sizeBytes: jpeg.length }, ctx.actorId),
   ]);
 }
 
@@ -403,9 +438,9 @@ export async function addPortalDocument(request: PortalRequest, file: { bytes: B
   await mkdir(dir, { recursive: true });
   await writeFile(storedPath, file.bytes);
   const doc = await prisma.personDocument.create({
-    data: { visitRequestId: request.id, kind: file.kind, fileName: file.fileName, mime: file.mime, sizeBytes: file.bytes.length, storedPath, source: "PORTAL" },
+    data: { visitRequestId: request.id, kind: file.kind, fileName: file.fileName, mime: file.mime, sizeBytes: file.bytes.length, storedPath, source: ctx.actorId ? "GATE" : "PORTAL", uploadedById: ctx.actorId ?? null },
   });
-  await audit(AuditAction.DOCUMENT_UPLOADED, request.id, { by: "VISITOR", documentId: doc.id, kind: doc.kind, fileName: doc.fileName, mime: doc.mime, sizeBytes: doc.sizeBytes, ...ctx });
+  await audit(AuditAction.DOCUMENT_UPLOADED, request.id, { ...who(ctx), documentId: doc.id, kind: doc.kind, fileName: doc.fileName, mime: doc.mime, sizeBytes: doc.sizeBytes }, ctx.actorId);
   return doc;
 }
 
@@ -414,11 +449,11 @@ export async function removePortalDocument(request: PortalRequest, documentId: s
   verified(request);
   const removed = await prisma.personDocument.updateMany({ where: { id: documentId, visitRequestId: request.id, removedAt: null }, data: { removedAt: new Date() } });
   if (removed.count === 0) throw new ServiceError(404, "document not found");
-  await audit(AuditAction.DOCUMENT_REMOVED, request.id, { by: "VISITOR", documentId, ...ctx });
+  await audit(AuditAction.DOCUMENT_REMOVED, request.id, { ...who(ctx), documentId }, ctx.actorId);
 }
 
 /** Hand the request to the host. Everything the pass type requires must be there. */
-export async function submitRequest(request: PortalRequest, ctx: VisitorContext, now = new Date()) {
+export async function submitRequest(request: PortalRequest, ctx: VisitorContext, notifyHost = true, now = new Date()) {
   editable(request);
   verified(request);
   const settings = await getSettings();
@@ -432,15 +467,22 @@ export async function submitRequest(request: PortalRequest, ctx: VisitorContext,
   await prisma.$transaction([
     prisma.visitRequest.update({ where: { id: request.id }, data: { status: VisitRequestStatus.SUBMITTED } }),
     prisma.visitRequestEvent.create({
-      data: { requestId: request.id, actorKind: "VISITOR", fromStatus: request.status, toStatus: VisitRequestStatus.SUBMITTED, detail: (maskSubmission(request.submission) ?? Prisma.JsonNull) as Prisma.InputJsonValue },
+      data: { requestId: request.id, actorId: ctx.actorId ?? null, actorKind: ctx.actorId ? "OPERATOR" : "VISITOR", fromStatus: request.status, toStatus: VisitRequestStatus.SUBMITTED, detail: (maskSubmission(request.submission) ?? Prisma.JsonNull) as Prisma.InputJsonValue },
     }),
-    audit(AuditAction.VISIT_REQUEST_SUBMITTED, request.id, { by: "VISITOR", from: request.status, ...ctx }),
+    audit(AuditAction.VISIT_REQUEST_SUBMITTED, request.id, { ...who(ctx), from: request.status }, ctx.actorId),
   ]);
-  const host = await prisma.appUser.findUnique({ where: { id: request.hostId }, select: { email: true, phone: true } });
-  const name = ((request.submission ?? {}) as { name?: string }).name ?? request.visitorName;
-  const body = `${name} has submitted their details for the visit on ${when(request.expectedAt)}. Please review the request in the visitor console.`;
-  const related = { type: "visit_request", id: request.id };
-  if (host?.phone) await sendMessage({ channel: MessageChannel.SMS, to: host.phone, template: "REQUEST_SUBMITTED", body, related });
-  if (host?.email?.includes("@")) await sendMessage({ channel: MessageChannel.EMAIL, to: host.email, template: "REQUEST_SUBMITTED", body, related });
+  if (notifyHost) {
+    const name = ((request.submission ?? {}) as { name?: string }).name ?? request.visitorName;
+    const lead = request.origin === VisitOrigin.WALK_IN ? `${name} is at the gate to see you` : `${name} has submitted their details for the visit on ${when(request.expectedAt)}`;
+    await messageHost(request, "REQUEST_SUBMITTED", `${lead}. Please review the request in the visitor console.`);
+  }
   return { submittedAt: now };
+}
+
+/** SMS and email the host, whichever they have. */
+export async function messageHost(request: Pick<VisitRequest, "id" | "hostId">, template: string, body: string) {
+  const host = await prisma.appUser.findUnique({ where: { id: request.hostId }, select: { email: true, phone: true } });
+  const related = { type: "visit_request", id: request.id };
+  if (host?.phone) await sendMessage({ channel: MessageChannel.SMS, to: host.phone, template, body, related });
+  if (host?.email?.includes("@")) await sendMessage({ channel: MessageChannel.EMAIL, to: host.email, template, body, related });
 }

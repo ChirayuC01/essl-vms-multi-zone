@@ -581,12 +581,18 @@ export interface VisitRequestDetail extends Omit<VisitRequestRow, "passTypeName"
   documents: { id: string; kind: string; fileName: string; mime: string; sizeBytes: number; createdAt: string }[];
   link: { expiresAt: string; revokedAt: string | null; createdAt: string } | null;
   queryText: string | null;
+  pass: { id: string; state: string; zoneIds: string[]; person: { esslUserId: string } } | null;
+  canReview: boolean;
+  companyId: string | null;
   events: { id: string; actorKind: string; actorName: string | null; fromStatus: VisitRequestStatus | null; toStatus: VisitRequestStatus; note: string | null; createdAt: string }[];
 }
 
 export interface VisitRequestOptions {
   passTypes: { id: string; name: string; entryModes: ("SINGLE_ENTRY" | "MULTI_ENTRY")[]; maxValidityDays: number | null }[];
   zones: { id: string; name: string; parentZoneId: string | null; exitCodeDefault: boolean }[];
+  companies: { id: string; name: string }[];
+  departments: { id: string; name: string }[];
+  hosts: { id: string; name: string | null; email: string }[];
 }
 
 export interface OutboxMessage {

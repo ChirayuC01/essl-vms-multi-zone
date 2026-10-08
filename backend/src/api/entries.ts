@@ -5,9 +5,10 @@ import { prisma } from "../db/index.js";
 import { overdueInside, sweepExpiredEntries } from "../jobs/expiry.js";
 import { retentionStatus, runRetention } from "../jobs/retention.js";
 import { dayBlockedEntries } from "../services/entry-modes.js";
-import { exitOverride, passGates, widenZone } from "../services/passes.js";
+import { exitOverride, passGates, retakePassPhoto, widenZone } from "../services/passes.js";
+import { jpegDimensions } from "./jpeg.js";
 import { actorId } from "./auth.js";
-import { requirePermission } from "./permissions.js";
+import { hasPermission, requirePermission } from "./permissions.js";
 import {
   ACTIVE_ENTRY_STATES,
   deprovisionEntry,
@@ -440,11 +441,28 @@ export async function entryRoutes(app: FastifyInstance): Promise<void> {
     return reply.code(202).send(await exitOverride(id, parsed.data.reason, actorId(request)));
   });
 
+  // ---- Security retake: a better photo for a live pass ----------------------
+  app.post("/entries/:id/photo", { preHandler: requirePermission("passes:update") }, async (request, reply) => {
+    const body = request.body;
+    const dims = Buffer.isBuffer(body) ? jpegDimensions(body) : null;
+    if (!Buffer.isBuffer(body) || !dims || dims.width !== 480 || dims.height !== 640) {
+      return reply.code(400).send({ error: "send the 480x640 JPEG from the camera" });
+    }
+    const { id } = request.params as { id: string };
+    return reply.code(202).send(await retakePassPhoto(id, body, actorId(request)));
+  });
+
   // ---- widen a pass by a zone ----------------------------------------------
+  // A host widens only their own visitor's pass; anyone who manages passes
+  // (Security) may widen any.
   app.post("/entries/:id/widen", { preHandler: requirePermission("zone_widen:update") }, async (request, reply) => {
     const parsed = z.object({ zoneId: z.string().min(1) }).safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: "zoneId is required" });
     const { id } = request.params as { id: string };
+    if (!(await hasPermission(request, "passes:update"))) {
+      const own = await prisma.entry.count({ where: { id, personToMeetId: actorId(request) ?? "" } });
+      if (!own) return reply.code(403).send({ error: "you can widen only your own visitor's pass" });
+    }
     return reply.code(202).send(await widenZone(id, parsed.data.zoneId, actorId(request)));
   });
 }

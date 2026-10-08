@@ -1,6 +1,8 @@
-import { DeviceRole, EntryMode, EntryState, GateReason, PersonCategory } from "@prisma/client";
+import { writeFile } from "node:fs/promises";
+import { CommandType, DeviceRole, EntryMode, EntryState, GateReason, GateState, PersonCategory } from "@prisma/client";
 import { AuditAction, auditRow } from "../db/audit.js";
 import { prisma } from "../db/index.js";
+import { photoPathFor } from "../user-id.js";
 import { ServiceError } from "./errors.js";
 import { gateTick, planGates } from "./gates.js";
 import { zoneDevices } from "./zones.js";
@@ -143,6 +145,48 @@ export async function liftBlacklist(personId: string, reason: string | undefined
       }),
     }),
   ]);
+}
+
+/**
+ * Security replaces a poor photo on a live pass (Phase 6). The file is
+ * overwritten in place, so loads still queued send the new one; terminals that
+ * already hold the face get it pushed again. The caller has checked it is a
+ * normalised 480x640 JPEG (CLAUDE.md #5).
+ */
+export async function retakePassPhoto(entryId: string, jpeg: Buffer, actorId?: string) {
+  const entry = await openEntry(entryId);
+  const photoPath = photoPathFor(entry.person.esslUserId);
+  await writeFile(photoPath, jpeg);
+  const loaded = entry.gates.filter((g) => g.state === GateState.LOADED);
+  const stamp = Date.now();
+  await prisma.$transaction([
+    prisma.personBiometric.upsert({
+      where: { personId: entry.personId },
+      create: { personId: entry.personId, photoPath, photoSizeBytes: jpeg.length, biometricType: 9 },
+      update: { photoPath, photoSizeBytes: jpeg.length, faceTemplate: null, capturedAt: new Date() },
+    }),
+    prisma.syncCommand.createMany({
+      data: loaded.map((g) => ({
+        type: CommandType.PUSH_PHOTO,
+        targetDeviceId: g.deviceId,
+        payload: { pin: entry.person.esslUserId, photoPath },
+        idempotencyKey: `gate-retake:${g.id}:${stamp}`,
+        entryId,
+        personId: entry.personId,
+        initiatedById: actorId ?? null,
+      })),
+    }),
+    prisma.auditLog.create({
+      data: auditRow({
+        action: AuditAction.PHOTO_UPDATED,
+        entityType: "person_biometric",
+        entityId: entry.personId,
+        detail: { source: "SECURITY_RETAKE", entryId, photoSizeBytes: jpeg.length, repushedTo: loaded.map((g) => g.deviceId) },
+        actorId,
+      }),
+    }),
+  ]);
+  return { repushedTo: loaded.map((g) => g.deviceId) };
 }
 
 /** Gates of a pass, for the console. */

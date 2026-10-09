@@ -45,8 +45,10 @@ const schema = z.object({
   PHOTO_STORAGE_PATH: z.string().min(1).default("./data/photos"),
   // Where visitors open their links: the public address of the visitor portal
   // (the site's own domain through the tunnel, Phase 9). Links in messages are
-  // built from it. The dev default is the local web console.
-  PUBLIC_PORTAL_URL: z.string().url().default("http://localhost:48101"),
+  // built from it. The default is the installed web console on this machine,
+  // so an upgraded site works before its tunnel exists; development sets the
+  // dev port (48101) in backend/.env.
+  PUBLIC_PORTAL_URL: z.string().url().default("http://localhost:47101"),
   // How messages leave: "console" writes them to the Outbox page (and the
   // log) without sending anything — for development and until the site's SMS
   // and email providers are confirmed.

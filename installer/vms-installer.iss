@@ -31,7 +31,7 @@ AppId={{11111111-1111-1111-1111-111111111111}
 AppId={{A1F3E9B2-7C4D-4A6E-9F1B-2C6D4E8A0F31}
 #endif
 AppName=Visitor Management System
-AppVersion=0.4.19
+AppVersion=0.5.0
 AppPublisher=Visitor Management System
 DefaultDirName=C:\{#AppDirName}
 DefaultGroupName=Visitor Management System

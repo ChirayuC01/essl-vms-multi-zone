@@ -12,6 +12,25 @@ const nextConfig: NextConfig = {
   // through a temporary Cloudflare quick tunnel during testing. Without it
   // the dev server refuses the tunnel's address for its dev-only assets.
   allowedDevOrigins: ["*.trycloudflare.com"],
+  // The visitor portal is the internet-facing part (Phase 9). Its URLs carry
+  // the visitor's link token, so: never sent on as a Referer, never cached,
+  // never framed by another site, never indexed. The camera is allowed for
+  // this origin only (the selfie step).
+  async headers() {
+    const portal = [
+      { key: "Referrer-Policy", value: "no-referrer" },
+      { key: "X-Frame-Options", value: "DENY" },
+      { key: "Content-Security-Policy", value: "frame-ancestors 'none'" },
+      { key: "X-Content-Type-Options", value: "nosniff" },
+      { key: "Cache-Control", value: "no-store" },
+      { key: "X-Robots-Tag", value: "noindex, nofollow" },
+      { key: "Permissions-Policy", value: "camera=(self), microphone=(), geolocation=()" },
+    ];
+    return [
+      { source: "/v/:path*", headers: portal },
+      { source: "/public-api/:path*", headers: portal },
+    ];
+  },
 };
 
 export default nextConfig;

@@ -4497,6 +4497,77 @@ async function main() {
   }
 
   // ======================================================================
+  section("36. Hardening — hostile input on the internet-facing routes never breaks the server");
+  // ======================================================================
+  {
+    resetLimits();
+    const fz = (method: "GET" | "POST" | "PUT" | "DELETE", url: string, payload?: string | Buffer | object, contentType?: string) =>
+      app.inject({ method, url, ...(payload !== undefined ? { payload } : {}), headers: contentType ? { "content-type": contentType } : {} });
+    const pt = await prisma.passType.findFirstOrThrow({ where: { name: "E2E Reviewed Visitor" } });
+    const z = await prisma.zone.findFirstOrThrow({ where: { name: "E2E Premise" } });
+    await app.inject({
+      method: "POST", url: "/api/visit-requests", headers: auth(token),
+      payload: { visitorName: "Fuzz Target", visitorMobile: "9777000001", purpose: "fuzz", passTypeId: pt.id, zoneIds: [z.id], entryMode: "MULTI_ENTRY",
+        expectedAt: new Date(Date.now() + 3_600_000).toISOString(), validUntil: new Date(Date.now() + 5 * 3_600_000).toISOString() },
+    });
+    const fzLink = /\/v\/([A-Za-z0-9_-]+)/.exec((await prisma.message.findFirstOrThrow({ where: { template: "VISIT_LINK", recipient: "9777000001" } })).body)?.[1] ?? "";
+    await fz("POST", `/public-api/v/${fzLink}/otp`);
+    const fzCode = /^(\d{6})/.exec((await prisma.message.findFirstOrThrow({ where: { template: "MOBILE_OTP", recipient: "9777000001" }, orderBy: { createdAt: "desc" } })).body)?.[1];
+    await fz("POST", `/public-api/v/${fzLink}/otp/verify`, { code: fzCode });
+
+    // Deterministic "random" bytes, so a failure can be reproduced.
+    let seed = 42;
+    const noise = (n: number) => Buffer.from(Array.from({ length: n }, () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) >> 16) & 0xff));
+    const blobs: [string, Buffer][] = [
+      ["empty", Buffer.alloc(0)],
+      ["noise", noise(4096)],
+      ["jpeg header then noise", Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xc0, 0xff, 0xff]), noise(500)])],
+      ["truncated jpeg", Buffer.from([0xff, 0xd8, 0xff])],
+      ["pdf header only", Buffer.from("%PDF-")],
+      ["png header then noise", Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), noise(64)])],
+      ["html", Buffer.from("<script>alert(1)</script>")],
+      ["zip", Buffer.concat([Buffer.from("PK\x03\x04"), noise(200)])],
+    ];
+    const crashes: string[] = [];
+    let limited = 0;
+    const record = (label: string, status: number) => {
+      if (status >= 500) crashes.push(`${label} → ${status}`);
+      if (status === 429) limited += 1;
+      resetLimits(); // every input must reach the validators, not the rate limiter
+    };
+    for (const [name, bytes] of blobs) {
+      record(`selfie: ${name}`, (await fz("POST", `/public-api/v/${fzLink}/selfie`, bytes, "image/jpeg")).statusCode);
+      record(`document: ${name}`, (await fz("POST", `/public-api/v/${fzLink}/documents?kind=Govt%20ID&fileName=${encodeURIComponent("../../etc/passwd")}`, bytes, "application/octet-stream")).statusCode);
+      record(`retake: ${name}`, (await app.inject({ method: "POST", url: `/api/entries/nonexistent/photo`, headers: { ...auth(token), "content-type": "image/jpeg" }, payload: bytes })).statusCode);
+    }
+    const bodies: [string, string][] = [
+      ["not json", "{this is not json"],
+      ["array", "[1,2,3]"],
+      ["deep nesting", "[".repeat(5000) + "]".repeat(5000)],
+      ["huge string", JSON.stringify({ code: "1".repeat(100_000) })],
+      ["proto pollution", '{"__proto__":{"admin":true},"constructor":{"prototype":{"x":1}}}'],
+      ["wrong types", JSON.stringify({ code: 123456, noticeVersion: ["a"], accept: "yes", name: { a: 1 } })],
+    ];
+    for (const [name, body] of bodies) {
+      for (const [m, path] of [["POST", "otp/verify"], ["POST", "consent"], ["PUT", "details"], ["POST", "submit"]] as const) {
+        record(`${path}: ${name}`, (await fz(m, `/public-api/v/${fzLink}/${path}`, body, "application/json")).statusCode);
+      }
+      record(`out-pass verify: ${name}`, (await fz("POST", `/public-api/out/${"a".repeat(43)}/verify`, body, "application/json")).statusCode);
+    }
+    for (const bad of ["%00", "..%2F..%2Fapi", "a".repeat(5000), "%E0%A4%A", "<script>", "' OR 1=1 --"]) {
+      record(`token ${bad.slice(0, 12)}`, (await fz("GET", `/public-api/v/${bad}`)).statusCode);
+      record(`out token ${bad.slice(0, 12)}`, (await fz("GET", `/public-api/out/${bad}`)).statusCode);
+    }
+    check("no hostile upload, body or token produces a server error", crashes.length === 0, crashes.join("; "));
+    check("...and every input reached the route (none stopped by the rate limiter)", limited === 0, `${limited} rate-limited`);
+    check("({}).admin was not polluted", ({} as Record<string, unknown>).admin === undefined);
+    const stored = await prisma.personDocument.findMany({ where: { visitRequest: { visitorMobile: "9777000001" } } });
+    check("a hostile file name never reaches the disk path", stored.every((d) => !d.storedPath.includes("..") && !d.fileName.includes("/")), JSON.stringify(stored.map((d) => [d.fileName, d.storedPath])));
+    check("no selfie was accepted from fuzzed bytes", (await prisma.visitRequest.findFirstOrThrow({ where: { visitorMobile: "9777000001" } })).selfiePath === null);
+    resetLimits();
+  }
+
+  // ======================================================================
   section("34. Audit coverage — every successful state change left an audit row");
   // ======================================================================
   {

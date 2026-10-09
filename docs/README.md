@@ -29,9 +29,10 @@ phase by phase (`PLAN.md`).
 | `PEOPLE_TRANSFER.md` | Moving people between installations (`transfer-people.mjs`); carried forward in Phase 3 |
 | `VERIFICATION.md` | Manual verification steps for each phase, and their results |
 | `TESTING_WITH_TWO_TERMINALS.md` | How to test both zones with only two physical terminals (plus virtual ones) |
+| `INSTALL_GUIDE.md` | Installing 0.5.0, upgrading from 0.4.19, two-zone setup, and the Cloudflare Tunnel for the visitor portal (Phase 9) |
 
-Installation and licensing runbooks are still the 0.4.19
-versions in `legacy/` until a phase changes them (see `legacy/README.md`).
+The licensing and installer-build runbooks are still the 0.4.19 versions in
+`legacy/` (`LICENSING.md`, `INSTALLER_CREATION_STEPS.md`) — unchanged for 0.5.0.
 
 ## Rules for these documents
 

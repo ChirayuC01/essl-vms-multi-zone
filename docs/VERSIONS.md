@@ -52,7 +52,7 @@ patch version for every changed installer.
 
 ## The register
 
-> **Current boundary (10 September 2026):** 0.4.18 is the current packaged artifact. Do not deploy 0.4.14: its frontend baked in `localhost:48102`.
+> **Current boundary (8 October 2026):** 0.4.19 is the deployed artifact (notes below); 0.5.0 is the two-zone release candidate, not yet built. Earlier: 0.4.18 was the packaged artifact on 10 September. Do not deploy 0.4.14: its frontend baked in `localhost:48102`.
 
 | Version | Date | Built from | Installer | Size | Migrations added |
 |---|---|---|---|---|---|
@@ -87,6 +87,31 @@ patch version for every changed installer.
 >
 > This is precisely the failure this document exists to prevent. Fill the row
 > in *at build time*, not afterwards.
+
+## 0.5.0 — Two-zone product (release candidate, not yet built)
+
+`AppVersion` is **0.5.0** in `installer/vms-installer.iss` (Phase 9). The
+installer has **not** been built yet: build it only after the upgrade
+acceptance below passes, then fill in date, commit, size and SHA-256 here.
+
+- **Contents:** rebuild Phases 1–8 — zones; configurable access; pass types,
+  documents and ID redaction; the gate engine; the visitor portal, visit
+  requests, host review and walk-ins; exit code, out-pass and outage
+  recovery; the new reports and audit coverage. See `EXECUTION_LOG.md`.
+- **Migrations added (all additive):** `20261002120000_zones`,
+  `20261002130000_access_roles`, `20261002140000_configurable_access`,
+  `20261005090000_settings_admin_only`, `20261005100000_pass_types_documents`,
+  `20261005120000_gate_engine` (backfills gate rows for live passes),
+  `20261005140000_visit_requests_portal`, `20261006090000_visitor_id_sequence`,
+  `20261008090000_visit_request_company`, `20261008120000_exit_code_outage`.
+- **New backend `.env` keys** (defaults work without them):
+  `PUBLIC_PORTAL_URL` (default `http://localhost:47101`; set to the tunnel
+  domain), `MESSAGE_TRANSPORT` (`console`), `DOCUMENT_STORAGE_PATH`
+  (`./data/documents`), `GATE_TICK_CRON`.
+- **Upgrade from 0.4.19:** in place (same `AppId`); back up the database and
+  the photos folder first. Acceptance steps: `VERIFICATION.md` § Phase 9.
+- **Release gate:** the upgrade acceptance and the four-terminal acceptance
+  in `VERIFICATION.md` § Phase 9.
 
 ## 0.4.19 — Device-shaped enrollment photos, photo replacement, LAN webcam
 

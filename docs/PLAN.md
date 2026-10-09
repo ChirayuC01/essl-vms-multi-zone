@@ -18,7 +18,7 @@
 | 6 | Visit requests, host review, walk-ins | `ACCEPTED` — verified by owner (2026-10-08) |
 | 7 | Exit code, out-pass, outage recovery | `ACCEPTED` — verified by owner (2026-10-08) |
 | 8 | Reports and audit coverage | `ACCEPTED` — verified by owner (2026-10-08) |
-| 9 | Tunnel, hardening, packaging, acceptance | `IN_PROGRESS` |
+| 9 | Tunnel, hardening, packaging, acceptance | `IMPLEMENTED_AWAITING_VERIFICATION` — owner: build, upgrade and terminal acceptance |
 
 States: `NOT_STARTED → IN_PROGRESS → IMPLEMENTED_AWAITING_VERIFICATION → ACCEPTED` (or `BLOCKED`, with the blocker in the log).
 

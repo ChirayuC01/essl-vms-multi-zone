@@ -21,6 +21,7 @@ Hardware assumed: **two physical terminals** plus virtual ones as needed. See
 | 6 | §Phase 6 below | **VERIFIED** by owner (2026-10-08) |
 | 7 | §Phase 7 below | **VERIFIED** by owner (2026-10-08) |
 | 8 | §Phase 8 below | **VERIFIED** by owner (2026-10-08) |
+| 9 | §Phase 9 below | Awaiting owner (A–D) |
 
 Record results here as `PASS` / `FAIL — note` per step when walking through.
 
@@ -951,4 +952,72 @@ Aadhaar / PAN / credential number anywhere; Messages sent has no codes.
    `RETENTION_RUN` with the counts.
 
 **Pass:** Steps 1–4 hold.
+
+---
+
+## Phase 9 — Tunnel, hardening, packaging, acceptance
+
+Four parts. A and B use the dev setup; C needs a **disposable** Windows
+machine (a VM is ideal); D needs the client's four terminals.
+
+### A — Portal headers and proxy (dev)
+
+Restart the web dev server. In the browser's developer tools (Network tab),
+open a portal link:
+
+✅ Response headers include `Referrer-Policy: no-referrer`,
+`X-Frame-Options: DENY`, `X-Robots-Tag: noindex, nofollow`,
+`Cache-Control: no-store`.
+✅ `http://localhost:48101/public-api/%2E%2E/api/auth/me` → 404.
+
+### B — Tunnel with the path filter (dev, optional before the site)
+
+If you have a Cloudflare domain to test with, follow `INSTALL_GUIDE.md` §
+*Visitor portal through a Cloudflare Tunnel* against the **dev** web port
+(`localhost:48101`) and run its step 5 checks from a phone on mobile data:
+✅ `/v/…` works; `/login`, `/public-api/../api/auth/me`, `/iclock/cdata` all
+404. (The quick tunnel used in Phase 5 does **not** filter paths — that is
+why production uses a named tunnel.)
+
+### C — Build 0.5.0 and the upgrade acceptance (disposable Windows)
+
+1. **Build** (your machine, with the production public key):
+   `legacy/INSTALLER_CREATION_STEPS.md`. ✅ `ProductVersion` reads `0.5.0`;
+   record the SHA-256.
+2. On the disposable machine, install **0.4.19** and restore a copy of a
+   real 0.4.19 `backend\data` folder (database and photos) with at least one
+   active visitor pass and one Employee. Confirm it works.
+3. Install **0.5.0** over it (`INSTALL_GUIDE.md` § Upgrading). ✅ It upgrades
+   in place (one entry in Add/Remove Programs); services start; the console
+   says 0.5.0.
+4. ✅ People, photos, Employees and their terminal access, punches,
+   attendance, audit history, operators, settings, licence — all intact.
+5. ✅ The active pass's face was neither deleted nor re-sent (Command Queue:
+   no new commands for it); reconciliation removes nothing it shouldn't
+   (wait for an hourly run, or use the reconcile button on the Devices page).
+6. Create one zone, place both terminals in it **without** ticking "exit code
+   by default", and issue a single-entry pass. ✅ It behaves like 0.4.19: IN
+   and OUT load together, no exit code.
+7. Record the result, date and SHA-256 in `VERSIONS.md` (0.5.0) — tell me
+   and I will write it up.
+
+### D — Four-terminal acceptance (client site)
+
+For **each** of the four terminals, `DEVICE_PROTOCOL.md` §9 checklist —
+record answers verbatim, especially:
+
+- `INFO`: firmware, ADMS version, face algorithm, capacity.
+- Alphanumeric IDs accepted (`V00001`), and whether case matters.
+- Blocked group 100 exists.
+- A **phone selfie** from the portal is recognised at the gate.
+- Timings: face arrives ~5 min before the visit; single-entry removal ~10 min
+  after each punch; exit opens within a minute of the code.
+- **Admin card:** with the VMS services stopped, the card opens each barrier;
+  whether that leaves a punch record; the card holder's ID matches neither ID
+  pattern and reconciliation never touches it.
+
+Send me the results and I will record them in `DEVICE_PROTOCOL.md` and
+`KNOWN_ISSUES.md`.
+
+**Pass:** A–D hold. Then 0.5.0 is released.
 

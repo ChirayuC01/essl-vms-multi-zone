@@ -812,3 +812,40 @@ result) · issues · next action.
 
 - Owner verified Phase 8. Marked `ACCEPTED`; committed. Phase 9 begins.
 
+### 2026-10-08 — Phase 9 — Tunnel, hardening, packaging (acceptance pending)
+
+- **Status:** `IMPLEMENTED_AWAITING_VERIFICATION`; parts C (build + upgrade
+  acceptance) and D (four terminals) are the owner's.
+- **Change:**
+  - **`docs/INSTALL_GUIDE.md`** carried forward from legacy with three new
+    sections: upgrading 0.4.19 → 0.5.0 (backup of `backend\data` and
+    `%ProgramData%\VMS`, in-place install, rollback), two-zone setup after
+    install (patterns, zones, exit-code default, pass types, settings,
+    admin card), and the Cloudflare Tunnel runbook (dashboard tunnel,
+    `cloudflared service install <token>`, public hostname with path
+    `^/(v/|_next/|public-api/)` → `localhost:47101`, `PUBLIC_PORTAL_URL`,
+    checks from mobile data).
+  - **Hardening:** web proxy refuses path segments that could leave
+    `/public-api` (`..`, `.`, empty, slashes) and re-checks the target path;
+    `next.config.ts` headers on `/v/*` and `/public-api/*` (no-referrer,
+    no-store, DENY framing + `frame-ancestors 'none'`, nosniff, noindex,
+    camera-only permissions policy). A probe of the running dev proxy before
+    the change showed traversal was already blocked by per-segment
+    re-encoding; the guard makes it explicit.
+  - **Packaging:** `AppVersion=0.5.0`; `PUBLIC_PORTAL_URL` defaults to the
+    installed console `http://localhost:47101` (config and `.env.example`);
+    `VERSIONS.md` 0.5.0 entry (migrations, new keys, release gate) marked
+    not yet built. Confirmed the installer never removes `backend\data`, so
+    documents and selfies survive upgrades like photos.
+- **Verification (2026-10-08):**
+  - e2e **523/523**; new section 36 (fuzzing, 5 checks): 8 hostile uploads ×
+    selfie / document / retake, 6 hostile JSON bodies × 5 portal and
+    out-pass routes, 6 hostile tokens × 2 routes — no 5xx; none blocked by the
+    rate limiter (so every input reached its validator); no prototype
+    pollution; hostile file names never reach the disk path; no selfie from
+    fuzzed bytes.
+  - Unit **107/107**; web lint and build PASS.
+- **Not done here (owner):** building the 0.5.0 installer (needs the
+  production licence public key), the upgrade acceptance on a disposable
+  machine, and the four-terminal acceptance — `VERIFICATION.md` § Phase 9.
+

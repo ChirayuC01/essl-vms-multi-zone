@@ -15,7 +15,13 @@ const backend = () => (process.env.API_BASE_URL || process.env.NEXT_PUBLIC_API_U
 
 async function forward(request: NextRequest, ctx: { params: Promise<{ path: string[] }> }) {
   const { path } = await ctx.params;
+  // Defence in depth: this is the one way in from the internet, so nothing
+  // may walk it out of /public-api (each segment is also re-encoded below).
+  if (path.some((seg) => seg === "" || seg === "." || seg === ".." || /[\\/]/.test(seg))) {
+    return Response.json({ error: "not found" }, { status: 404 });
+  }
   const target = `${backend()}/public-api/${path.map(encodeURIComponent).join("/")}${request.nextUrl.search}`;
+  if (!new URL(target).pathname.startsWith("/public-api/")) return Response.json({ error: "not found" }, { status: 404 });
   const headers = new Headers();
   for (const name of ["content-type", "user-agent"]) {
     const value = request.headers.get(name);

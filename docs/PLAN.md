@@ -556,6 +556,40 @@ A returning visitor (matched by mobile) is prefilled from their existing Person.
 
 ---
 
+## Future scope
+
+Ideas agreed for later, not scheduled into a phase yet. Each becomes a phase
+(or part of one) only on the owner's go-ahead.
+
+### F1 — Exit code decided by the visitor type, not per request
+
+*Requested by the owner, 11 October 2026.*
+
+**Today:** for a single-entry visit, whoever raises the request (host, or
+Security for a walk-in) also ticks which exits need the exit code, starting
+from each zone's "exit code by default".
+
+**Wanted:** the exit-code rule is set once on the **visitor type** (Pass types
+page). Raising a request means choosing the visitor type only; whether the
+exit needs a code follows from it. The request and walk-in forms lose the
+exit-code tick boxes.
+
+**Design notes for when it is picked up:**
+- A pass-type setting, e.g. *Exit code: required / not required*. Which exits
+  it applies to still comes from the zones (`exitCodeDefault`), so a
+  yard-only exception stays configurable per zone.
+- Multi entry never has an exit code (unchanged); the setting only matters
+  for single-entry passes.
+- Long-term passes issued by Security use the same rule.
+- Existing pass types: migrate to "required" (today's behaviour for the
+  office exit), so nothing changes at the gate on upgrade.
+- Affects: `PassType` (new column + migration), the pass-type form, the
+  request and walk-in forms, `createVisitRequest` / `clearRequest` /
+  `provisionPerson` (derive `exitCodeZoneIds` from the type), e2e sections
+  30–33.
+- Open: should Security still be able to override it for one pass (the
+  issue-pass form), or is the type always final?
+
 ## Verification commands (every phase)
 
 ```bash

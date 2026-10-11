@@ -1,9 +1,57 @@
 # VMS Windows Installation Guide
 
 > **Carried forward from `legacy/INSTALL_GUIDE.md` on 8 October 2026** (Phase 9)
-> and updated for **0.5.0**, the two-zone product. New sections: *Upgrading
-> 0.4.19 → 0.5.0*, *Two-zone setup after install*, and *Visitor portal through
+> and updated for **0.5.0**, the two-zone product. New sections: *New client:
+> what to do after the installer*, *Upgrading 0.4.19 → 0.5.0*, *Two-zone setup after install*, and *Visitor portal through
 > a Cloudflare Tunnel*. Older release-specific notes below still apply.
+
+## New client: what to do after the installer
+
+The installer sets up the services and the database; everything below is
+per client and is done once. Allow about an hour on site.
+
+**Before the visit** — ask the client for: their Cloudflare account invite and
+domain (§ *Whose Cloudflare account, and which domain*), the privacy notice
+text, their visitor types, zone layout, host list with mobile numbers, and
+(when SMS goes live) their msg91 account with the portal domain whitelisted.
+
+1. **Install** with the installer (§ *Install* below) and complete first
+   setup (Admin, organisation name, logo).
+2. **Terminals and zones** — § *Two-zone setup after install*: roles,
+   timezone, Employee/Visitor ID patterns, zones, exit-code default, admin
+   card check.
+3. **Pass types, settings, operators** — visitor types, privacy notice,
+   timings, visitor ID prefix, hosts with mobiles.
+4. **Tunnel** — § *Setting up the tunnel*, steps 1–3, in the client's
+   Cloudflare account. The route's URL is **`localhost:47101`** (the
+   installed web port — not 48101, which is development only).
+5. **Portal address** — the installer cannot know the client's domain, so
+   every link in SMS/email still points at `http://localhost:47101` until
+   this is set. In the install folder's `backend\.env` (e.g.
+   `C:\VMS\backend\.env`) add or change:
+
+   ```
+   PUBLIC_PORTAL_URL=https://visit.<client-domain>
+   ```
+
+   then restart the **VmsBackend** service.
+6. **Check from your laptop** (in a source checkout's `backend` folder):
+
+   ```
+   node scripts\check-portal.mjs https://visit.<client-domain>
+   ```
+
+   ✅ **All checks passed** — the portal works and the console, backend and
+   terminal endpoints are not reachable from the internet.
+7. **One real visit end to end:** raise a request for your own mobile.
+   ✅ The link in **Outbox** starts with `https://visit.<client-domain>`;
+   on your phone (mobile data) the code, notice, camera and submit work;
+   Clear it and walk through the gate.
+8. **Handover notes:** Cloudflare account owner's email, domain, hostname,
+   tunnel name, installer version and SHA-256.
+
+Not needed on a client: `DEV_ALLOWED_ORIGINS` (development only). The block
+on the console for anything arriving through Cloudflare is built in.
 
 ## Upgrading 0.4.19 → 0.5.0
 
@@ -64,20 +112,67 @@ console, the backend and the terminal endpoints (`/iclock`) stay on the LAN.
 > service is `http://localhost:47101`, and the **path** filter is
 > `^/(v/|_next/|public-api/)`.
 
-**Needs:** a Cloudflare account, and the site's domain using Cloudflare DNS.
+### Whose Cloudflare account, and which domain
+
+**Each client has their own Cloudflare account, in their name; you are added
+as a member to set it up and support it.** Their visitors' personal data
+passes through the tunnel, so under the DPDP Act the account belongs with
+the client (the data fiduciary), not with us. A link on their own domain is
+also what visitors trust in an SMS, and their portal keeps working whatever
+happens to our relationship.
+
+A **fixed domain is required in production.** A quick tunnel
+(`trycloudflare.com`) changes address on every restart, which breaks every
+link already sent, and is for testing only. SMS providers in India also
+generally need the link domain whitelisted against the sender's DLT
+registration — confirm with the SMS provider early, it can take days.
+
+**Ask the client (before installation day):**
+
+1. A domain whose DNS is on Cloudflare. Either a cheap dedicated one
+   (e.g. `clientname-visit.in`, about ₹700–1,000 a year), or their company
+   domain **if** its DNS is already on Cloudflare (on the free plan a single
+   subdomain cannot be put on Cloudflare while the rest of the DNS stays
+   elsewhere).
+2. A **free Cloudflare account created with their own email**, with that
+   domain added.
+3. An invitation for us as a member: Cloudflare dashboard → *Manage account*
+   → **Members** → *Invite*, with our email, role **Administrator** (enough to
+   create the tunnel and hostname). They can remove it at any time.
+4. The SMS provider account (msg91) with the portal domain whitelisted.
+
+Then set up the tunnel below from their account, and record in the site's
+handover notes: the account owner's email, the domain, the hostname and the
+tunnel name.
+
+**Exception — a client who will not manage Cloudflare:** host them on our own
+account and product domain (e.g. `clientname.<our-domain>`), with **one
+tunnel per client**, never shared. Only with a contract that names us as
+their data processor and says what happens to the hostname if they leave.
+
+### Setting up the tunnel
+
+**Needs:** access to the client's Cloudflare account, with the domain added.
 Choose a hostname, e.g. `visit.example.com`.
 
-1. **Create the tunnel:** Cloudflare dashboard → Zero Trust → Networks →
-   Tunnels → **Create a tunnel** → type *Cloudflared* → name it `vms-portal`.
+1. **Create the tunnel:** Cloudflare dashboard → Networks → **Tunnels**
+   (shown as *Tunnels & Mesh* in October 2026) → **Create a tunnel** → type
+   *Cloudflared* → name it `vms-portal`.
 2. **Install the connector on the VMS PC:** choose *Windows*, download and
    install `cloudflared`, then run the shown command in Administrator
    PowerShell — `cloudflared.exe service install <token>`. It installs the
    **Cloudflared** Windows service (automatic start). Treat the token as a
-   password.
-3. **Public hostname:** subdomain `visit`, domain `example.com`,
-   **Path** `^/(v/|_next/|public-api/)`, service type **HTTP**, URL
-   `localhost:47101`. Save. Requests that match no rule get Cloudflare's 404,
-   so nothing else is reachable.
+   password. ✅ The tunnel's page shows the connector **Connected** with this
+   PC's name.
+3. **Publish the portal:** on the tunnel's page, tab **Published application
+   routes** (formerly "Public hostname") → add a route: subdomain `visit`,
+   domain `example.com`, **Path** `^/(v/|_next/|public-api/)`, service type
+   **HTTP**, URL `localhost:47101` (dev testing: `localhost:48101`). Save.
+   Requests that match no route get Cloudflare's 404.
+   - Not the **Hostname routes** tab — that is private-network access for
+     Cloudflare's WARP client, not a public website.
+   - Reloaded or left the wizard before this step? Nothing is lost: open
+     Networks → Tunnels → `vms-portal` and add the route from that tab.
 4. **Tell the VMS its public address:** in the backend `.env` (install
    directory `backend\.env`) set
    `PUBLIC_PORTAL_URL=https://visit.example.com`, then restart `VmsBackend`.
@@ -90,6 +185,10 @@ Choose a hostname, e.g. `visit.example.com`.
      `https://visit.example.com/iclock/cdata` → **404**;
    - a real request: the link arrives, the code arrives, the camera opens
      (HTTPS), submit works.
+
+Even if the path filter were missing or wrong, the web app itself refuses
+everything except the portal paths for any request that came through
+Cloudflare, so the console cannot be reached from the internet.
 
 The portal limits each visitor address to 60 requests a minute, meters codes
 (one a minute, five an hour), burns a code after the configured wrong tries,

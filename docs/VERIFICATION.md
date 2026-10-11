@@ -957,67 +957,113 @@ Aadhaar / PAN / credential number anywhere; Messages sent has no codes.
 
 ## Phase 9 — Tunnel, hardening, packaging, acceptance
 
-Four parts. A and B use the dev setup; C needs a **disposable** Windows
-machine (a VM is ideal); D needs the client's four terminals.
+Phase 9 is about getting ready to ship. There are four checks, from easiest
+to most involved. **Do them in order; stop wherever you like** — each one is
+useful on its own.
 
-### A — Portal headers and proxy (dev)
+| # | What it proves | Where | Time |
+|---|---|---|---|
+| 1 | The visitor portal is locked down | your dev PC | 2 min |
+| 2 | Only the portal is visible on the internet | your dev PC + a Cloudflare domain *(optional)* | 30 min |
+| 3 | An existing 0.4.19 site upgrades safely | a spare Windows PC or VM | 1–2 h |
+| 4 | The four real terminals behave | the client site | at install |
 
-Restart the web dev server. In the browser's developer tools (Network tab),
-open a portal link:
+### Check 1 — The portal is locked down (2 minutes)
 
-✅ Response headers include `Referrer-Policy: no-referrer`,
-`X-Frame-Options: DENY`, `X-Robots-Tag: noindex, nofollow`,
-`Cache-Control: no-store`.
-✅ `http://localhost:48101/public-api/%2E%2E/api/auth/me` → 404.
+1. Start the dev servers as usual (Postgres, backend, web).
+2. In a terminal, in the `backend` folder, run:
 
-### B — Tunnel with the path filter (dev, optional before the site)
+   ```
+   node scripts\check-portal.mjs
+   ```
 
-If you have a Cloudflare domain to test with, follow `INSTALL_GUIDE.md` §
-*Visitor portal through a Cloudflare Tunnel* against the **dev** web port
-(`localhost:48101`) and run its step 5 checks from a phone on mobile data:
-✅ `/v/…` works; `/login`, `/public-api/../api/auth/me`, `/iclock/cdata` all
-404. (The quick tunnel used in Phase 5 does **not** filter paths — that is
-why production uses a named tunnel.)
+3. ✅ It ends with **All checks passed**. Each line says in words what it
+   checked (the link isn't leaked to other sites, the portal can't be embedded
+   or indexed, path tricks can't reach the operator console, …).
 
-### C — Build 0.5.0 and the upgrade acceptance (disposable Windows)
+> If the dev backend was stopped for more than 10 minutes, it records an
+> **outage** when it starts and releases any test visitor still marked
+> inside (Phase 7). That's expected.
 
-1. **Build** (your machine, with the production public key):
-   `legacy/INSTALLER_CREATION_STEPS.md`. ✅ `ProductVersion` reads `0.5.0`;
-   record the SHA-256.
-2. On the disposable machine, install **0.4.19** and restore a copy of a
-   real 0.4.19 `backend\data` folder (database and photos) with at least one
-   active visitor pass and one Employee. Confirm it works.
-3. Install **0.5.0** over it (`INSTALL_GUIDE.md` § Upgrading). ✅ It upgrades
-   in place (one entry in Add/Remove Programs); services start; the console
-   says 0.5.0.
-4. ✅ People, photos, Employees and their terminal access, punches,
-   attendance, audit history, operators, settings, licence — all intact.
-5. ✅ The active pass's face was neither deleted nor re-sent (Command Queue:
-   no new commands for it); reconciliation removes nothing it shouldn't
-   (wait for an hourly run, or use the reconcile button on the Devices page).
-6. Create one zone, place both terminals in it **without** ticking "exit code
-   by default", and issue a single-entry pass. ✅ It behaves like 0.4.19: IN
-   and OUT load together, no exit code.
-7. Record the result, date and SHA-256 in `VERSIONS.md` (0.5.0) — tell me
-   and I will write it up.
+### Check 2 — Only the portal is on the internet (optional, 30 minutes)
 
-### D — Four-terminal acceptance (client site)
+Needs a domain on Cloudflare — **or** just the Phase 5 quick tunnel
+(`cloudflared tunnel --url http://localhost:48101`), which is enough for the
+script below: the web app itself blocks the console for anything arriving
+through Cloudflare. A real domain additionally tests the dashboard path filter.
 
-For **each** of the four terminals, `DEVICE_PROTOCOL.md` §9 checklist —
-record answers verbatim, especially:
+1. Follow `INSTALL_GUIDE.md` § *Visitor portal through a Cloudflare Tunnel*,
+   steps 1–4, but point the tunnel at your **dev** web port `localhost:48101`.
+   With your own domain, also add `DEV_ALLOWED_ORIGINS=visit.yourdomain.com`
+   to `web/.env.local` and restart the web dev server (otherwise the dev
+   server logs "Blocked cross-origin request … webpack-hmr" — harmless, dev
+   only).
+2. Run the same script with the tunnel address:
 
-- `INFO`: firmware, ADMS version, face algorithm, capacity.
-- Alphanumeric IDs accepted (`V00001`), and whether case matters.
-- Blocked group 100 exists.
-- A **phone selfie** from the portal is recognised at the gate.
-- Timings: face arrives ~5 min before the visit; single-entry removal ~10 min
-  after each punch; exit opens within a minute of the code.
-- **Admin card:** with the VMS services stopped, the card opens each barrier;
-  whether that leaves a punch record; the card holder's ID matches neither ID
-  pattern and reconciliation never touches it.
+   ```
+   node scripts\check-portal.mjs https://visit.yourdomain.com
+   ```
 
-Send me the results and I will record them in `DEVICE_PROTOCOL.md` and
-`KNOWN_ISSUES.md`.
+3. ✅ **All checks passed** — this time it also checks that the console, the
+   backend and the terminal endpoints answer **404** from the internet.
+4. On your phone (mobile data, not Wi-Fi), do one real visit request end to
+   end. ✅ Link, code, camera and submit all work.
 
-**Pass:** A–D hold. Then 0.5.0 is released.
+### Check 3 — Upgrade from 0.4.19 (spare Windows PC or VM)
+
+This is the one that protects the live client: it proves 0.5.0 can be
+installed over 0.4.19 without losing anything.
+
+**a. Build the 0.5.0 installer** (on your PC — it needs your licence public
+key). Follow `legacy/INSTALLER_CREATION_STEPS.md` exactly. At the end:
+
+- ✅ the installer's version shows **0.5.0**
+- write down its **SHA-256** (the last command in those steps prints it)
+
+**b. Make a copy of a 0.4.19 site** on the spare PC:
+
+1. Install **0.4.19** there (the installer you shipped).
+2. Stop its three services, replace its `backend\data` folder with a **copy**
+   of a real one (database + photos), start the services.
+3. ✅ Log in; you see the real people, photos and passes. Note one visitor
+   with an active pass and one employee — you'll check them after.
+
+**c. Upgrade it:** run the **0.5.0** installer over it (just Next, Next, …).
+
+**d. Check — ✅ for each:**
+
+- [ ] Add/Remove Programs shows **one** VMS entry, version 0.5.0.
+- [ ] You can log in; the console shows **0.5.0**.
+- [ ] The noted employee and visitor are there, **with their photos**.
+- [ ] Punches, attendance and reports still show the old data.
+- [ ] Operators, settings and licence are unchanged.
+- [ ] **Command Queue:** nothing new was sent for the visitor's active pass
+      (the upgrade did not delete or re-send their face).
+- [ ] **Devices → Reconcile** (or wait an hour): nothing unexpected removed.
+- [ ] Create a zone, put both terminals in it, **don't** tick "exit code by
+      default", issue a single-entry pass → entry and exit load together, no
+      exit code (same as 0.4.19).
+
+Send me: pass/fail per line, the date, and the SHA-256. I'll record it in
+`VERSIONS.md`.
+
+### Check 4 — The four terminals (client site, at installation)
+
+For **each** terminal, tick and note what you see:
+
+- [ ] Menu → System Info: firmware version (write it down).
+- [ ] A visitor ID with letters (e.g. `V00001`) is accepted.
+- [ ] A visitor's **phone selfie** from the portal opens the gate.
+- [ ] Timing: the face arrives about 5 minutes before the visit; after
+      walking through, it's removed about 10 minutes later (single entry).
+- [ ] The exit opens within about a minute of the visitor entering the code.
+- [ ] **Admin card, with the VMS stopped:** the card opens the barrier.
+      Does it leave a punch in the VMS afterwards? (yes / no)
+- [ ] The admin card holder's ID matches **neither** the employee nor the
+      visitor ID pattern.
+
+Send me the notes; I'll record them in `DEVICE_PROTOCOL.md`.
+
+**Phase 9 is accepted** when Checks 1, 3 and 4 pass (2 is optional before the
+client site).
 

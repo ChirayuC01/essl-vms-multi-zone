@@ -849,3 +849,41 @@ result) · issues · next action.
   production licence public key), the upgrade acceptance on a disposable
   machine, and the four-terminal acceptance — `VERIFICATION.md` § Phase 9.
 
+### 2026-10-11 — Phase 9 — simpler verification
+
+- Owner found the Phase 9 steps hard to follow. Rewrote `VERIFICATION.md`
+  § Phase 9 as four checks in order of effort, with plain checklists.
+- New **`backend/scripts/check-portal.mjs`**: read-only checks of the
+  portal's protections, printing PASS/FAIL in words; given an https tunnel
+  address it also checks that the console, backend, `/health` and `/iclock`
+  are not published. Run against the dev servers (started for the purpose
+  and stopped after): **all checks passed**.
+- Found while doing so: Next.js ignores a `Cache-Control` header set in
+  `next.config.ts` for pages (dev sends `no-cache, must-revalidate`;
+  production dynamic pages send `no-store` on their own). Removed the
+  ineffective entry; the check accepts either value.
+- Starting the dev backend after days off recorded an outage and released one
+  test visitor — expected (Phase 7).
+- **Owner ran Check 2 through a quick tunnel (2026-10-11):** the portal and
+  backend checks passed, but `/login`, `/` and `/people` answered **200** —
+  a quick tunnel has no path filter, so the console pages were published
+  (they still require sign-in). Fixed in the app rather than relying on the
+  tunnel: `web/src/proxy.ts` answers 404 to any request carrying
+  `CF-Connecting-IP` (i.e. arrived through Cloudflare) unless it is a portal
+  path. Probed the dev server: via-Cloudflare `/login`, `/`, `/people` → 404;
+  `/v/…` → 200; LAN `/login` → 200. Web lint and build PASS. Owner to re-run
+  `check-portal.mjs` through the tunnel.
+- **Multi-client tunnel model (2026-10-11, owner):** `INSTALL_GUIDE.md` gains
+  "Whose Cloudflare account, and which domain": the client-owned account
+  with us as a member, the client's pre-installation checklist (domain on
+  Cloudflare, account, member invite, SMS whitelisting), and the exception of
+  hosting on our account with one tunnel per client. Recorded in
+  `DECISIONS.md`.
+- **Owner's named-tunnel test passed (2026-10-11)** on his own domain through
+  the dev web server. `next.config.ts` now takes extra dev hosts from
+  `DEV_ALLOWED_ORIGINS` (set only in the owner's ignored `web/.env.local`),
+  so no domain is hard-coded. `INSTALL_GUIDE.md` gains *New client: what to
+  do after the installer* — the per-client checklist, including setting
+  `PUBLIC_PORTAL_URL` (the installer cannot know the domain) and the
+  installed route URL `localhost:47101`.
+

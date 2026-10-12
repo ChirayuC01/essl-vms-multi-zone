@@ -90,8 +90,8 @@ patch version for every changed installer.
 
 ## 0.5.1 — F1: exit code decided by the visitor type (release candidate)
 
-- **Built:** 12 October 2026 on `ae66f29` **plus the uncommitted F1 changes**
-  (commit them and note the hash here). `npm test` 107/107, `verify:e2e`
+- **Built:** 12 October 2026 from commit `d4e7955` (F1; working tree otherwise
+  differs only in line endings). `npm test` 107/107, `verify:e2e`
   516/516 before the build. `installer/Output/vms-setup.exe`, 222,161,530
   bytes, SHA-256
   `843B5DE74D4A3D54185E724A849B2FEB9EE093FC37404001D5FDA7E79CA1231A`.

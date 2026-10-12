@@ -255,6 +255,9 @@ model PassType {
   credentialLabel        String?     @map("credential_label")
   // A pass of this type ends no later than the credential's expiry.
   credentialCapsValidity Boolean     @default(false) @map("credential_caps_validity")
+  // Single entry: whether the exit needs the exit code (F1). Which exits is
+  // the zones' `exitCodeDefault`. Final — no per-pass override.
+  exitCodeRequired       Boolean     @default(true) @map("exit_code_required")
   isActive               Boolean     @default(true) @map("is_active")
   createdAt              DateTime    @default(now()) @map("created_at")
   updatedAt              DateTime    @updatedAt @map("updated_at")
@@ -839,6 +842,7 @@ model VisitRequest {
   purpose              String
   passTypeId           String?            @map("pass_type_id")
   zoneIds              String[]           @default([]) @map("zone_ids")
+  // Unused since F1 (the pass type decides); kept so upgrades stay additive.
   exitCodeZoneIds      String[]           @default([]) @map("exit_code_zone_ids")
   entryMode            EntryMode          @default(SINGLE_ENTRY) @map("entry_mode")
   expectedAt           DateTime           @map("expected_at")

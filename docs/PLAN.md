@@ -563,7 +563,9 @@ Ideas agreed for later, not scheduled into a phase yet. Each becomes a phase
 
 ### F1 — Exit code decided by the visitor type, not per request
 
-*Requested by the owner, 11 October 2026.*
+*Requested by the owner, 11 October 2026.* **Status:
+`IMPLEMENTED_AWAITING_VERIFICATION` (12 October 2026)** — the type is final,
+no Security override (owner). Verification: `VERIFICATION.md` § F1.
 
 **Today:** for a single-entry visit, whoever raises the request (host, or
 Security for a walk-in) also ticks which exits need the exit code, starting
@@ -587,8 +589,8 @@ exit-code tick boxes.
   request and walk-in forms, `createVisitRequest` / `clearRequest` /
   `provisionPerson` (derive `exitCodeZoneIds` from the type), e2e sections
   30–33.
-- Open: should Security still be able to override it for one pass (the
-  issue-pass form), or is the type always final?
+- ~~Open: should Security still be able to override it for one pass?~~
+  Answered 12 Oct 2026: no — the type is always final.
 
 ## Verification commands (every phase)
 

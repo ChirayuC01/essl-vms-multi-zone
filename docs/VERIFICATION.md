@@ -542,8 +542,8 @@ Close the pass (De-provision) before the next step.
 
 Issue: zone **Office**, **Single entry**.
 
-✅ Only **Outer IN** is listed; the form shows "Exit code needed at: Office
-exit" ticked.
+✅ Only **Outer IN** is listed; the form shows "Exit code — Needed at: Office
+exit" (read-only since F1).
 ✅ The note reads "Exit terminals load after the exit code is verified, or a
 Security override".
 
@@ -556,13 +556,12 @@ Security override".
 6. After 10 minutes: ✅ both terminals show **removed**, and ❌ V is no
    longer recognised at either.
 
-### Step 4 — Single-entry yard pass: yard exit optional
+### Step 4 — Single-entry yard pass: yard exit free
 
-Issue for zone **Yard**, Single entry:
-- With only "Office exit" ticked: ✅ Outer IN, Yard IN and **Yard OUT** load;
-  Outer OUT waits.
-- With "Office exit" and "Yard exit" both ticked: ✅ only Outer IN and Yard IN
-  load.
+Issue for zone **Yard**, Single entry (Yard has no "exit code by default"):
+✅ Outer IN, Yard IN and **Yard OUT** load; Outer OUT waits. (Since F1 there
+is no tick box; to gate the yard exit too, tick "exit code by default" on
+Yard.)
 
 ❌ A single-entry pass with "Valid until" on a later day is refused ("single
 entry passes end the same day").
@@ -1066,4 +1065,32 @@ Send me the notes; I'll record them in `DEVICE_PROTOCOL.md`.
 
 **Phase 9 is accepted** when Checks 1, 3 and 4 pass (2 is optional before the
 client site).
+
+## F1 — Exit code decided by the visitor type
+
+Setup: the two-zone site from Phase 4 (Office has **exit code by default**,
+Yard doesn't), the privacy notice set, a host with a mobile.
+
+1. **Pass types:** open an existing type. ✅ A new **Exit code** box, ticked
+   ("The exit needs the exit code") — every existing type was migrated to
+   ticked, so nothing changed at the gate. ✅ The list has an **Exit code**
+   column (— for a multi-entry-only type).
+2. Create type **Contractor (free exit)**: single entry, untick *Exit code*,
+   save. ✅ Column shows **No**. ✅ Audit: `PASS_TYPE_CREATED` includes
+   `exitCodeRequired: false`.
+3. **New request** as the host, visitor type = an existing (ticked) type,
+   zone Office, single entry. ✅ No exit-code tick boxes; a read-only line
+   "Exit code — Needed at: Office exit".
+4. Change the visitor type to **Contractor (free exit)**. ✅ The line reads
+   "Not needed — the exits load with the pass".
+5. Complete and Clear both requests (or issue directly from the person page —
+   the Issue pass form shows the same read-only line, following the pass
+   type; General = the zones' defaults).
+   - Ticked type: ✅ only **Outer IN** loads; Outer OUT waits for the code
+     (as Phase 7).
+   - Contractor (free exit): ✅ **Outer IN and Outer OUT** load together;
+     no exit code is sent on the IN punch; the visitor walks out without one.
+6. Walk-in as Security with **Contractor (free exit)**. ✅ Same as 5: no
+   tick boxes, both gates load at Clear.
+7. Multi-entry passes: ✅ unchanged (never an exit code).
 

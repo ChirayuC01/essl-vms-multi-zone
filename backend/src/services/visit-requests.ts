@@ -83,7 +83,6 @@ export interface CreateRequestInput {
   purpose: string;
   passTypeId: string;
   zoneIds: string[];
-  exitCodeZoneIds?: string[] | undefined;
   entryMode: EntryMode;
   expectedAt: Date;
   validUntil: Date;
@@ -121,9 +120,6 @@ export async function createVisitRequest(
   if (zoneIds.length === 0) throw new ServiceError(400, "select at least one zone");
   const zones = await prisma.zone.count({ where: { id: { in: zoneIds }, isActive: true } });
   if (zones !== zoneIds.length) throw new ServiceError(400, "select active zones");
-  // Exit-code zones are resolved against the terminals when the pass is
-  // issued (Phase 6); here only their shape is kept.
-  const exitCodeZoneIds = input.entryMode === EntryMode.SINGLE_ENTRY ? [...new Set(input.exitCodeZoneIds ?? [])] : [];
 
   const request = await prisma.$transaction(async (tx) => {
     const created = await tx.visitRequest.create({
@@ -138,7 +134,6 @@ export async function createVisitRequest(
         purpose: input.purpose,
         passTypeId: passType.id,
         zoneIds,
-        exitCodeZoneIds,
         entryMode: input.entryMode,
         expectedAt: input.expectedAt,
         validUntil: input.validUntil,

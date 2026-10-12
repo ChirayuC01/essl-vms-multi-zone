@@ -243,8 +243,6 @@ export interface ProvisionInput {
   personId: string;
   /** Zones the pass grants (their ancestors' gates are included). */
   zoneIds?: string[] | undefined;
-  /** SINGLE entry: zones whose exit needs the exit code. Defaults from each zone. */
-  exitCodeZoneIds?: string[] | undefined;
   /** An explicit terminal list instead of zones (sites without zones). */
   deviceIds?: string[] | undefined;
   passTypeId?: string | undefined;
@@ -339,14 +337,11 @@ export async function provisionPerson(input: ProvisionInput): Promise<ProvisionR
     if (!devices.some((d) => d.role !== DeviceRole.OUT)) {
       throw new ServiceError(409, "the selected zones have no entry terminal placed in them yet");
     }
-    if (input.entryMode === EntryMode.SINGLE_ENTRY) {
-      const closure = new Set(devices.map((d) => d.zoneId).filter((z): z is string => z !== null));
-      if (input.exitCodeZoneIds) {
-        exitCodeZoneIds = [...new Set(input.exitCodeZoneIds)];
-        if (exitCodeZoneIds.some((z) => !closure.has(z))) throw new ServiceError(400, "exit-code zones must be among the pass's zones");
-      } else {
-        exitCodeZoneIds = (await prisma.zone.findMany({ where: { id: { in: [...closure] }, exitCodeDefault: true }, select: { id: true } })).map((z) => z.id);
-      }
+    // F1: the pass type decides whether the exit needs the code (no type =
+    // required); the zones decide which exits. Nobody overrides it per pass.
+    if (input.entryMode === EntryMode.SINGLE_ENTRY && (passType?.exitCodeRequired ?? true)) {
+      const closure = devices.map((d) => d.zoneId).filter((z): z is string => z !== null);
+      exitCodeZoneIds = (await prisma.zone.findMany({ where: { id: { in: closure }, exitCodeDefault: true }, select: { id: true } })).map((z) => z.id);
     }
   } else {
     devices = await resolveTargetDevices(input.deviceIds);

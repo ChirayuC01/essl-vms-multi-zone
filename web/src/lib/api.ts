@@ -531,6 +531,7 @@ export interface PassType {
   fieldRules: Record<string, FieldRule>;
   credentialLabel: string | null;
   credentialCapsValidity: boolean;
+  exitCodeRequired: boolean;
   isActive: boolean;
 }
 export interface PassTypeList { items: PassType[]; fields: Record<string, string>; rules: FieldRule[] }
@@ -588,7 +589,7 @@ export interface VisitRequestDetail extends Omit<VisitRequestRow, "passTypeName"
 }
 
 export interface VisitRequestOptions {
-  passTypes: { id: string; name: string; entryModes: ("SINGLE_ENTRY" | "MULTI_ENTRY")[]; maxValidityDays: number | null }[];
+  passTypes: { id: string; name: string; entryModes: ("SINGLE_ENTRY" | "MULTI_ENTRY")[]; maxValidityDays: number | null; exitCodeRequired: boolean }[];
   zones: { id: string; name: string; parentZoneId: string | null; exitCodeDefault: boolean }[];
   companies: { id: string; name: string }[];
   departments: { id: string; name: string }[];

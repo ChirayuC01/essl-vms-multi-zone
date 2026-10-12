@@ -32,7 +32,7 @@ import { readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { randomBytes, scryptSync } from "node:crypto";
 import type { FastifyInstance } from "fastify";
-import { CommandStatus, CommandType, EntryState, Prisma } from "@prisma/client";
+import { CommandStatus, CommandType, EntryMode, EntryState, Prisma } from "@prisma/client";
 import { config } from "../src/config/index.js";
 import { countQueries, prisma } from "../src/db/index.js";
 import { buildApp } from "../src/app.js";
@@ -3666,6 +3666,7 @@ async function main() {
       fieldRules: { designation: "required", mobile: "hidden", companyId: "hidden", departmentId: "hidden" },
     });
     check("a pass type can be created with its field rules", official.statusCode === 201, official.body);
+    check("a new pass type needs the exit code unless told otherwise", JSON.parse(official.body).exitCodeRequired === true);
     const officialId = JSON.parse(official.body).id as string;
     const rep = await pt("POST", "/api/pass-types", {
       name: "E2E Credential Rep",
@@ -3834,8 +3835,8 @@ async function main() {
     await close(laterId);
 
     // --- single entry, office pass: the outer exit waits for the code
-    check("exit-code zones outside the pass are refused", (await issue({ zoneIds: [zPremise.id], entryMode: "SINGLE_ENTRY", exitCodeZoneIds: [zYard.id] })).statusCode === 400);
-    const office = await issue({ zoneIds: [zPremise.id], entryMode: "SINGLE_ENTRY" });
+    // F1: a per-pass choice is no longer accepted; the field is ignored.
+    const office = await issue({ zoneIds: [zPremise.id], entryMode: "SINGLE_ENTRY", exitCodeZoneIds: [] });
     const officeId = JSON.parse(office.body).entry.id as string;
     const officeGates = await gatesOf(officeId);
     check("single-entry office pass: only the outer entry loads; the exit waits for the code", Object.keys(officeGates).join() === "oIn", Object.keys(officeGates).join());
@@ -3863,17 +3864,27 @@ async function main() {
     check("after the 10 minutes both terminals are emptied", Object.values(await gatesOf(officeId)).every((g) => g.state === "DONE"));
     await close(officeId);
 
-    // --- single entry, yard pass: yard exit free unless ticked
-    const yardFree = await issue({ zoneIds: [zYard.id], entryMode: "SINGLE_ENTRY", exitCodeZoneIds: [zPremise.id] });
+    // --- single entry, yard pass: the yard zone has no exit-code default
+    const yardFree = await issue({ zoneIds: [zYard.id], entryMode: "SINGLE_ENTRY", exitCodeZoneIds: [zPremise.id, zYard.id] });
     const yardFreeId = JSON.parse(yardFree.body).entry.id as string;
-    check("yard pass, yard exit not ticked: the yard exit loads, only the outer exit waits", Object.keys(await gatesOf(yardFreeId)).sort().join() === "oIn,yIn,yOut");
+    check("yard pass: the yard exit loads, only the outer exit waits (a per-pass tick is ignored)", Object.keys(await gatesOf(yardFreeId)).sort().join() === "oIn,yIn,yOut");
     await drainAll();
     await close(yardFreeId);
-    const yardGated = await issue({ zoneIds: [zYard.id], entryMode: "SINGLE_ENTRY", exitCodeZoneIds: [zPremise.id, zYard.id] });
-    const yardGatedId = JSON.parse(yardGated.body).entry.id as string;
-    check("yard pass, yard exit ticked: both exits wait for the code", Object.keys(await gatesOf(yardGatedId)).sort().join() === "oIn,yIn");
+
+    // --- F1: the pass type decides whether the exit needs the code
+    const codeType = await prisma.passType.create({ data: { name: "E2E Code Exit", entryModes: [EntryMode.SINGLE_ENTRY] } });
+    const freeType = await prisma.passType.create({ data: { name: "E2E Free Exit", entryModes: [EntryMode.SINGLE_ENTRY], exitCodeRequired: false } });
+    const typedCode = await issue({ zoneIds: [zPremise.id], entryMode: "SINGLE_ENTRY", passTypeId: codeType.id });
+    const typedCodeId = JSON.parse(typedCode.body).entry.id as string;
+    check("a type needing the exit code: the outer exit waits", Object.keys(await gatesOf(typedCodeId)).join() === "oIn", typedCode.body);
     await drainAll();
-    await close(yardGatedId);
+    await close(typedCodeId);
+    const typedFree = await issue({ zoneIds: [zYard.id], entryMode: "SINGLE_ENTRY", passTypeId: freeType.id, exitCodeZoneIds: [zPremise.id] });
+    const typedFreeId = JSON.parse(typedFree.body).entry.id as string;
+    check("a type without the exit code: every exit loads with the pass, whatever was ticked", Object.keys(await gatesOf(typedFreeId)).sort().join() === "oIn,oOut,yIn,yOut", typedFree.body);
+    check("...and the pass records no code-gated exit", JSON.parse(typedFree.body).entry.exitCodeZoneIds.length === 0);
+    await drainAll();
+    await close(typedFreeId);
 
     // --- widening
     const narrow = await issue({ zoneIds: [zPremise.id], entryMode: "MULTI_ENTRY" });

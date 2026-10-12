@@ -6,9 +6,9 @@ import { useApi } from "@/lib/swr";
 import { Alert, Button, Field, Input, Select } from "@/components/ui";
 
 // Issue a pass. On a site with zones the operator picks zones (a zone also
-// opens the gates of every zone around it) and, for single entry, which
-// exits need the exit code. A site without zones yet falls back to every
-// registered terminal, as before.
+// opens the gates of every zone around it). Whether a single-entry exit needs
+// the exit code follows the pass type (F1), never a choice here. A site
+// without zones yet falls back to every registered terminal, as before.
 
 const pad = (n: number) => String(n).padStart(2, "0");
 /** A datetime-local value for a Date, in the browser's local time. */
@@ -31,7 +31,6 @@ export function IssuePassForm({ person, onIssued }: { person: PersonDetail; onIs
   const zones = (zoneList?.items ?? []).filter((z) => z.isActive && z.gates.IN + z.gates.BOTH > 0);
   const useZones = zones.length > 0;
   const [zoneIds, setZoneIds] = useState<string[]>([]);
-  const [codeZones, setCodeZones] = useState<string[] | null>(null);
   const [mode, setMode] = useState<"MULTI_ENTRY" | "SINGLE_ENTRY">("MULTI_ENTRY");
   const [passTypeId, setPassTypeId] = useState(person.passTypeId ?? "");
   const [from, setFrom] = useState(() => localInput(new Date()));
@@ -48,8 +47,9 @@ export function IssuePassForm({ person, onIssued }: { person: PersonDetail; onIs
     for (const id of zoneIds) for (let z = byId.get(id); z && !out.has(z.id); z = z.parentZoneId ? byId.get(z.parentZoneId) : undefined) out.add(z.id);
     return [...out].map((id) => byId.get(id)!).filter(Boolean);
   }, [zoneIds, zoneList]);
-  const exitCodeZoneIds = codeZones ?? covered.filter((z) => z.exitCodeDefault).map((z) => z.id);
   const passType = passTypes?.items.find((t) => t.id === passTypeId);
+  // No type (General) keeps the zones' defaults, as the backend does.
+  const codeExits = (passType?.exitCodeRequired ?? true) ? covered.filter((z) => z.exitCodeDefault) : [];
   const modes = passType?.entryModes ?? ["MULTI_ENTRY", "SINGLE_ENTRY"];
 
   const preset = (days: number) => setUntil(localInput(endOfDay(new Date(from), days)));
@@ -62,7 +62,6 @@ export function IssuePassForm({ person, onIssued }: { person: PersonDetail; onIs
         method: "POST",
         body: {
           ...(useZones ? { zoneIds } : { deviceIds: (deviceList?.items ?? []).map((d) => d.id) }),
-          ...(useZones && mode === "SINGLE_ENTRY" ? { exitCodeZoneIds } : {}),
           ...(passTypeId ? { passTypeId } : {}),
           entryMode: mode,
           retentionPolicy: "CUSTOM",
@@ -91,7 +90,7 @@ export function IssuePassForm({ person, onIssued }: { person: PersonDetail; onIs
           <div className="flex flex-wrap gap-4">
             {zones.map((z) => (
               <label key={z.id} className="flex items-center gap-2 text-sm">
-                <input type="checkbox" checked={zoneIds.includes(z.id)} onChange={() => { setCodeZones(null); setZoneIds((ids) => (ids.includes(z.id) ? ids.filter((x) => x !== z.id) : [...ids, z.id])); }} />
+                <input type="checkbox" checked={zoneIds.includes(z.id)} onChange={() => { setZoneIds((ids) => (ids.includes(z.id) ? ids.filter((x) => x !== z.id) : [...ids, z.id])); }} />
                 {z.name}
               </label>
             ))}
@@ -133,19 +132,8 @@ export function IssuePassForm({ person, onIssued }: { person: PersonDetail; onIs
         </Field>
       </div>
       {useZones && mode === "SINGLE_ENTRY" && covered.length > 0 && (
-        <Field label="Exit code needed at" hint="Ticked exits load only after the exit code (or a Security override)">
-          <div className="flex flex-wrap gap-4">
-            {covered.map((z) => (
-              <label key={z.id} className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={exitCodeZoneIds.includes(z.id)}
-                  onChange={() => setCodeZones(exitCodeZoneIds.includes(z.id) ? exitCodeZoneIds.filter((x) => x !== z.id) : [...exitCodeZoneIds, z.id])}
-                />
-                {z.name} exit
-              </label>
-            ))}
-          </div>
+        <Field label="Exit code" hint="Set by the pass type">
+          <p className="mt-2 text-sm">{codeExits.length ? `Needed at: ${codeExits.map((z) => `${z.name} exit`).join(", ")}` : "Not needed — the exits load with the pass"}</p>
         </Field>
       )}
       <Field label="Person to meet" hint="Optional">

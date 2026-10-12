@@ -124,6 +124,8 @@ carried at the top; their full history is in `legacy/`.
 | 2026-10-02 | Upgrade migrations are additive, backfill in SQL, and change no behaviour until an Admin opts in; upgraded sites default to 0.4.19 behaviour (`exitCodeDefault` false, so single-entry IN and OUT load together) | No surprise at the gate after an upgrade | Owner |
 | 2026-10-02 | Active passes at upgrade time are converted to `LOADED` gate rows, so no face is lost or re-pushed; fallback precondition is "no visitors inside" | Upgrades must not strand anyone at a barrier | Owner |
 | 2026-10-02 | Phase 9 release gate: trial upgrade of a copy of a real 0.4.19 database + photos on disposable Windows; back up DB and photos before any site upgrade | Every past upgrade note says "untested"; this one must be tested | Owner |
+| 2026-10-12 | **F1: the visitor type decides whether a single-entry exit needs the exit code** (`pass_type.exit_code_required`, default true, existing types migrated to true). Which exits still comes from the zones' `exitCodeDefault`. The type is **final — no per-pass choice, no Security override** on the issue-pass form; an `exitCodeZoneIds` field sent by an old client is ignored. A pass with no type follows the zones' defaults. Widening a zone follows the same rule | Hosts and Security choose only the visitor type; the rule is set once by an Admin | Owner |
+| 2026-10-12 | `visit_request.exit_code_zone_ids` is left in place, no longer written | Upgrade migrations stay additive | F1 |
 
 ## Open (awaiting client)
 

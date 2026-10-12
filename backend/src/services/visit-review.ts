@@ -181,8 +181,6 @@ export async function clearRequest(requestId: string, actorId: string | null, op
   const { entry } = await provisionPerson({
     personId,
     zoneIds: request.zoneIds,
-    // Nothing ticked means the zones' own defaults (the office exit always).
-    ...(request.entryMode === EntryMode.SINGLE_ENTRY && request.exitCodeZoneIds.length ? { exitCodeZoneIds: request.exitCodeZoneIds } : {}),
     entryMode: request.entryMode,
     expectedInAt: request.expectedAt,
     validUntil: request.validUntil,

@@ -18,7 +18,6 @@ export function VisitRequestForm({ walkIn = false, onCreated }: { walkIn?: boole
   const [companyId, setCompanyId] = useState("");
   const [passTypeId, setPassTypeId] = useState("");
   const [zoneIds, setZoneIds] = useState<string[]>([]);
-  const [codeZones, setCodeZones] = useState<string[] | null>(null);
   const [mode, setMode] = useState<"SINGLE_ENTRY" | "MULTI_ENTRY">("SINGLE_ENTRY");
   const [hostId, setHostId] = useState("");
   const [from, setFrom] = useState(() => { if (walkIn) return localInput(new Date()); const d = new Date(Date.now() + 3_600_000); d.setMinutes(0, 0, 0); return localInput(d); });
@@ -34,7 +33,8 @@ export function VisitRequestForm({ walkIn = false, onCreated }: { walkIn?: boole
     for (const id of zoneIds) for (let z = byId.get(id); z && !out.has(z.id); z = z.parentZoneId ? byId.get(z.parentZoneId) : undefined) out.set(z.id, z);
     return [...out.values()];
   }, [zoneIds, options]);
-  const exitCodeZoneIds = codeZones ?? covered.filter((z) => z.exitCodeDefault).map((z) => z.id);
+  // F1: the visitor type decides; shown here, never chosen per request.
+  const codeExits = passType?.exitCodeRequired ? covered.filter((z) => z.exitCodeDefault) : [];
   const set = (key: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) => setForm((f) => ({ ...f, [key]: e.target.value }));
 
   async function create() {
@@ -52,7 +52,6 @@ export function VisitRequestForm({ walkIn = false, onCreated }: { walkIn?: boole
           purpose: form.purpose,
           passTypeId,
           zoneIds,
-          ...(mode === "SINGLE_ENTRY" ? { exitCodeZoneIds } : {}),
           entryMode: mode,
           expectedAt: new Date(from).toISOString(),
           validUntil: new Date(until).toISOString(),
@@ -61,7 +60,6 @@ export function VisitRequestForm({ walkIn = false, onCreated }: { walkIn?: boole
       setForm({ visitorName: "", visitorMobile: "", visitorEmail: "", purpose: "" });
       setCompanyId("");
       setZoneIds([]);
-      setCodeZones(null);
       onCreated(created.id, walkIn ? `${form.visitorName} registered — continue with their details below.` : `Request sent. ${form.visitorName} will receive a link to complete their details.`);
     } catch (err) {
       setProblem(err instanceof ApiError ? err.message : "could not create the request");
@@ -98,7 +96,7 @@ export function VisitRequestForm({ walkIn = false, onCreated }: { walkIn?: boole
             {options?.passTypes.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
           </Select>
         </Field>
-        <Field label="Entry mode" hint={mode === "SINGLE_ENTRY" ? "One visit; the exit needs a code" : "Come and go until the pass ends"}>
+        <Field label="Entry mode" hint={mode === "SINGLE_ENTRY" ? "One visit" : "Come and go until the pass ends"}>
           <Select value={mode} onChange={(e) => setMode(e.target.value as typeof mode)}>
             {modes.includes("SINGLE_ENTRY") && <option value="SINGLE_ENTRY">Single entry</option>}
             {modes.includes("MULTI_ENTRY") && <option value="MULTI_ENTRY">Multi entry</option>}
@@ -111,22 +109,15 @@ export function VisitRequestForm({ walkIn = false, onCreated }: { walkIn?: boole
         <div className="flex flex-wrap gap-4">
           {options?.zones.map((z) => (
             <label key={z.id} className="flex items-center gap-2 text-sm">
-              <input type="checkbox" checked={zoneIds.includes(z.id)} onChange={() => { setCodeZones(null); setZoneIds((ids) => (ids.includes(z.id) ? ids.filter((x) => x !== z.id) : [...ids, z.id])); }} />
+              <input type="checkbox" checked={zoneIds.includes(z.id)} onChange={() => { setZoneIds((ids) => (ids.includes(z.id) ? ids.filter((x) => x !== z.id) : [...ids, z.id])); }} />
               {z.name}
             </label>
           ))}
         </div>
       </Field>
-      {mode === "SINGLE_ENTRY" && covered.length > 0 && (
-        <Field label="Exit code needed at">
-          <div className="flex flex-wrap gap-4">
-            {covered.map((z) => (
-              <label key={z.id} className="flex items-center gap-2 text-sm">
-                <input type="checkbox" checked={exitCodeZoneIds.includes(z.id)} onChange={() => setCodeZones(exitCodeZoneIds.includes(z.id) ? exitCodeZoneIds.filter((x) => x !== z.id) : [...exitCodeZoneIds, z.id])} />
-                {z.name} exit
-              </label>
-            ))}
-          </div>
+      {mode === "SINGLE_ENTRY" && passType && covered.length > 0 && (
+        <Field label="Exit code" hint="Set by the visitor type">
+          <p className="mt-2 text-sm">{codeExits.length ? `Needed at: ${codeExits.map((z) => `${z.name} exit`).join(", ")}` : "Not needed — the exits load with the pass"}</p>
         </Field>
       )}
       <Field label="Purpose of visit"><Input value={form.purpose} onChange={set("purpose")} maxLength={300} /></Field>

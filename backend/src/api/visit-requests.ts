@@ -26,7 +26,6 @@ const createSchema = z.object({
   purpose: z.string().trim().min(1).max(300),
   passTypeId: z.string().min(1),
   zoneIds: z.array(z.string().min(1)).min(1).max(20),
-  exitCodeZoneIds: z.array(z.string().min(1)).max(20).optional(),
   entryMode: z.nativeEnum(EntryMode),
   expectedAt: z.coerce.date(),
   validUntil: z.coerce.date(),
@@ -61,7 +60,7 @@ export async function visitRequestRoutes(app: FastifyInstance): Promise<void> {
   // host holds no pass-type, zone or directory permissions, and needs only names.
   app.get("/visit-requests/options", { preHandler: requireAnyPermission("visit_requests:create", "visit_requests:update", "walkins:create") }, async (_request, reply) => {
     const [passTypes, zones, companies, departments, hosts] = await prisma.$transaction([
-      prisma.passType.findMany({ where: { isActive: true }, orderBy: { name: "asc" }, select: { id: true, name: true, entryModes: true, maxValidityDays: true } }),
+      prisma.passType.findMany({ where: { isActive: true }, orderBy: { name: "asc" }, select: { id: true, name: true, entryModes: true, maxValidityDays: true, exitCodeRequired: true } }),
       prisma.zone.findMany({ where: { isActive: true }, orderBy: { name: "asc" }, select: { id: true, name: true, parentZoneId: true, exitCodeDefault: true } }),
       prisma.company.findMany({ where: { isActive: true }, orderBy: { name: "asc" }, select: { id: true, name: true } }),
       prisma.department.findMany({ where: { isActive: true }, orderBy: { name: "asc" }, select: { id: true, name: true } }),
@@ -142,7 +141,6 @@ export async function visitRequestRoutes(app: FastifyInstance): Promise<void> {
       purpose: v.purpose,
       passType,
       zones,
-      exitCodeZoneIds: v.exitCodeZoneIds,
       entryMode: v.entryMode,
       expectedAt: v.expectedAt,
       validUntil: v.validUntil,

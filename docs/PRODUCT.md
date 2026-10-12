@@ -163,10 +163,12 @@ it on the person page ("scheduled / loading / loaded / removing / removed").
 | OUT punch on a terminal | That terminal drops the face **10 min** later | Nothing |
 | Pass ends | Entry faces removed; a visitor still inside is listed **overstayed** for Security | Faces removed; a visitor still inside keeps exit access until they leave |
 
-**Which exits need the code** is chosen per pass: the office (outer) exit
-always, by default; the yard exit only if ticked on a yard pass. An exit not
-covered by the code is loaded with the entry gates. Each zone's default comes
-from its "exit code by default" setting.
+**Whether the exit needs the code** is set once on the **visitor type**
+(Pass types → *Exit code*), not per request; nobody overrides it for one pass.
+**Which exits** it applies to comes from each zone's "exit code by default"
+setting (typically the office/outer exit, not the yard). An exit not covered
+by the code is loaded with the entry gates. A pass with no type ("General")
+follows the zones' defaults.
 
 Further rules:
 

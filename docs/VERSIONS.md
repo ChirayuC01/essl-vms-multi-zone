@@ -52,7 +52,7 @@ patch version for every changed installer.
 
 ## The register
 
-> **Current boundary (8 October 2026):** 0.4.19 is the deployed artifact (notes below); 0.5.0 is the two-zone release candidate, not yet built. Earlier: 0.4.18 was the packaged artifact on 10 September. Do not deploy 0.4.14: its frontend baked in `localhost:48102`.
+> **Current boundary (8 October 2026):** 0.4.19 is the deployed artifact (notes below); 0.5.1 is the two-zone release candidate (0.5.0 + F1), built 12 October 2026. Earlier: 0.4.18 was the packaged artifact on 10 September. Do not deploy 0.4.14: its frontend baked in `localhost:48102`.
 
 | Version | Date | Built from | Installer | Size | Migrations added |
 |---|---|---|---|---|---|
@@ -88,11 +88,31 @@ patch version for every changed installer.
 > This is precisely the failure this document exists to prevent. Fill the row
 > in *at build time*, not afterwards.
 
-## 0.5.0 — Two-zone product (release candidate, not yet built)
+## 0.5.1 — F1: exit code decided by the visitor type (release candidate)
 
-`AppVersion` is **0.5.0** in `installer/vms-installer.iss` (Phase 9). The
-installer has **not** been built yet: build it only after the upgrade
-acceptance below passes, then fill in date, commit, size and SHA-256 here.
+- **Built:** 12 October 2026 on `ae66f29` **plus the uncommitted F1 changes**
+  (commit them and note the hash here). `npm test` 107/107, `verify:e2e`
+  516/516 before the build. `installer/Output/vms-setup.exe`, 222,161,530
+  bytes, SHA-256
+  `843B5DE74D4A3D54185E724A849B2FEB9EE093FC37404001D5FDA7E79CA1231A`.
+  It overwrote the 0.5.0 file in `installer/Output`.
+- **Contents:** 0.5.0 + F1 (`EXECUTION_LOG.md`, 2026-10-12): the pass type's
+  *Exit code* setting decides whether a single-entry exit needs the code; the
+  per-request exit-code tick boxes are gone; no Security override.
+- **Migration added (additive):** `20261012090000_pass_type_exit_code`
+  (existing types → required, so gates behave as in 0.5.0).
+- **Upgrade from 0.4.19 or 0.5.0:** in place (same `AppId`); back up first.
+- **Release gate:** as 0.5.0, plus `VERIFICATION.md` § F1.
+
+## 0.5.0 — Two-zone product (release candidate)
+
+`AppVersion` is **0.5.0** in `installer/vms-installer.iss` (Phase 9).
+
+- **Built:** 12 October 2026 from commit `ae66f29` (working tree differs only
+  in line endings). `npm test` 107/107, `verify:e2e` 514/514 before the build.
+  `installer/Output/vms-setup.exe`, 222,143,690 bytes, SHA-256
+  `09DCA48FE432393778DBFA550BBADD3EBFDC90AB76668AAD396200492BF2522D`.
+  The upgrade and four-terminal acceptance below were still pending at build time.
 
 - **Contents:** rebuild Phases 1–8 — zones; configurable access; pass types,
   documents and ID redaction; the gate engine; the visitor portal, visit

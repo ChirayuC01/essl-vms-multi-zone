@@ -14,7 +14,7 @@ const silentLog = { info: () => undefined, warn: () => undefined };
 const OPEN = [EntryState.PROVISIONED, EntryState.INSIDE] as const;
 
 async function openEntry(entryId: string) {
-  const entry = await prisma.entry.findUnique({ where: { id: entryId }, include: { person: true, gates: true } });
+  const entry = await prisma.entry.findUnique({ where: { id: entryId }, include: { person: true, gates: true, passType: true } });
   if (!entry) throw new ServiceError(404, "pass not found");
   if (!(OPEN as readonly EntryState[]).includes(entry.state)) {
     throw new ServiceError(409, `pass is ${entry.state} — only a loaded pass can be changed`);
@@ -70,7 +70,7 @@ export async function widenZone(entryId: string, zoneId: string, actorId?: strin
   if (!zone || !zone.isActive) throw new ServiceError(400, "select an active zone");
   const have = new Set(entry.gates.map((g) => g.deviceId));
   const devices = (await zoneDevices([zoneId])).filter((d) => !have.has(d.id));
-  const exitCodeZoneIds = entry.entryMode === EntryMode.SINGLE_ENTRY && zone.exitCodeDefault ? [...entry.exitCodeZoneIds, zoneId] : entry.exitCodeZoneIds;
+  const exitCodeZoneIds = entry.entryMode === EntryMode.SINGLE_ENTRY && (entry.passType?.exitCodeRequired ?? true) && zone.exitCodeDefault ? [...entry.exitCodeZoneIds, zoneId] : entry.exitCodeZoneIds;
   const now = new Date();
   const planned = planGates(devices, {
     entryMode: entry.entryMode,

@@ -887,3 +887,32 @@ result) · issues · next action.
   `PUBLIC_PORTAL_URL` (the installer cannot know the domain) and the
   installed route URL `localhost:47101`.
 
+### 2026-10-12 — 0.5.0 installer built; F1 — exit code decided by the visitor type
+
+- **0.5.0 installer built** from `ae66f29` after `npm test` 107/107 and
+  `verify:e2e` 514/514; recorded in `VERSIONS.md`. A one-month test licence
+  was issued for the owner's PC (private ledger only).
+- **F1 (owner, 12 Oct): the visitor type is final, no Security override.**
+  - Schema: `pass_type.exit_code_required` (default true; migration
+    `20261012090000_pass_type_exit_code`, additive — existing types keep
+    today's behaviour). `visit_request.exit_code_zone_ids` kept, no longer
+    written.
+  - Backend: `provisionPerson` derives `exitCodeZoneIds` from the pass type
+    (required → the covered zones with `exitCodeDefault`; not required → none;
+    no type → zones' defaults). The `exitCodeZoneIds` input is gone from the
+    provision, visit-request and walk-in APIs (an old client's field is
+    ignored) and from `clearRequest`. `widenZone` follows the type too. The
+    pass-type API accepts `exitCodeRequired`; the request options carry it.
+  - Console: Pass types gains an *Exit code* setting and column; the request,
+    walk-in and issue-pass forms replace the exit-code tick boxes with a
+    read-only line showing what the type decides.
+  - Tests: e2e section 29 checks the default; section 30 drops the per-pass
+    tick cases and adds a required type (outer exit waits) and a not-required
+    type (every exit loads, a ticked field is ignored).
+- **Verified:** typecheck PASS; `npm test` 107/107; `verify:e2e` **516 passed,
+  0 failed**; web lint + build PASS.
+- Dev note: after the owner installed 0.5.0 + a licence on this PC, an e2e run
+  without the documented scratch `PROGRAMDATA` failed with `LICENSE_EXPIRED`
+  (shared `%ProgramData%\VMS`); re-run per `DEVELOPMENT_SETUP.md` §8 passed.
+- Owner verification: `VERIFICATION.md` § F1. Then 0.5.1 is packaged.
+

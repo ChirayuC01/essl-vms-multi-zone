@@ -22,6 +22,7 @@ const BLANK: Draft = {
   fieldRules: {},
   credentialLabel: null,
   credentialCapsValidity: false,
+  exitCodeRequired: true,
 };
 const CREDENTIAL_FIELDS = new Set(["credentialNumber", "credentialExpiresAt"]);
 
@@ -69,13 +70,14 @@ export default function PassTypesPage() {
         {data.items.length === 0 ? (
           <p className="text-sm text-[var(--text-muted)]">No pass types yet. Visitors use the General rule (company, department, mobile, Aadhaar or PAN) until you add one.</p>
         ) : (
-          <Table head={["Name", "Kind", "Entry", "Host Clear", "Max days", "Credential", "Status", ""]}>
+          <Table head={["Name", "Kind", "Entry", "Host Clear", "Exit code", "Max days", "Credential", "Status", ""]}>
             {data.items.map((t) => (
               <tr key={t.id} className="border-b border-[var(--border)] last:border-0">
                 <td className="px-2 py-2">{t.name}{t.description && <div className="text-xs text-[var(--text-muted)]">{t.description}</div>}</td>
                 <td className="px-2 py-2">{t.kind === "LONG_TERM" ? "Long-term" : "Short-term"}</td>
                 <td className="px-2 py-2">{t.entryModes.map((m) => (m === "SINGLE_ENTRY" ? "single" : "multi")).join(" / ")}</td>
                 <td className="px-2 py-2">{t.requiresHostClear ? "Yes" : "No"}</td>
+                <td className="px-2 py-2">{!t.entryModes.includes("SINGLE_ENTRY") ? "—" : t.exitCodeRequired ? "Yes" : "No"}</td>
                 <td className="px-2 py-2">{t.maxValidityDays ?? "—"}</td>
                 <td className="px-2 py-2">{t.credentialLabel ? `${t.credentialLabel}${t.credentialCapsValidity ? " (caps validity)" : ""}` : "—"}</td>
                 <td className="px-2 py-2"><Badge tone={t.isActive ? "ok" : "warn"}>{t.isActive ? "active" : "inactive"}</Badge></td>
@@ -138,6 +140,11 @@ function Editor({ draft, fields, onChange }: { draft: Draft; fields: Record<stri
         <Field label="Host must Clear">
           <label className="mt-2 flex items-center gap-2 text-sm"><input type="checkbox" checked={draft.requiresHostClear} onChange={(e) => set("requiresHostClear", e.target.checked)} />Requires the host&apos;s approval</label>
         </Field>
+        {draft.entryModes.includes("SINGLE_ENTRY") && (
+          <Field label="Exit code" hint="single entry only; which exits is set per zone (Devices → Zones)">
+            <label className="mt-2 flex items-center gap-2 text-sm"><input type="checkbox" checked={draft.exitCodeRequired} onChange={(e) => set("exitCodeRequired", e.target.checked)} />The exit needs the exit code</label>
+          </Field>
+        )}
         <Field label="Maximum validity (days)" hint="empty = no limit">
           <Input type="number" min={1} max={366} value={draft.maxValidityDays ?? ""} onChange={(e) => set("maxValidityDays", e.target.value ? Number(e.target.value) : null)} />
         </Field>

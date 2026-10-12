@@ -37,7 +37,6 @@ const provisionSchema = z.object({
   // included. Preferred over deviceIds; when given, deviceIds is ignored.
   zoneIds: z.array(z.string().min(1)).min(1).max(20).optional(),
   // SINGLE entry: which zones' exits need the exit code (default per zone).
-  exitCodeZoneIds: z.array(z.string().min(1)).max(20).optional(),
   passTypeId: z.string().min(1).optional(),
   // Exact end of the pass; overrides retentionPolicy.
   validUntil: z.coerce.date().optional(),
@@ -163,7 +162,6 @@ export async function entryRoutes(app: FastifyInstance): Promise<void> {
       actorId: actorId(request),
       deviceIds: parsed.data.deviceIds,
       zoneIds: parsed.data.zoneIds,
-      exitCodeZoneIds: parsed.data.exitCodeZoneIds,
       passTypeId: parsed.data.passTypeId,
       validUntil: parsed.data.validUntil,
       retentionPolicy: parsed.data.retentionPolicy,

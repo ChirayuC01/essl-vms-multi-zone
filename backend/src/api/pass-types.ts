@@ -21,6 +21,7 @@ const base = {
   fieldRules: fieldRulesSchema,
   credentialLabel: z.string().trim().min(1).max(60).nullable(),
   credentialCapsValidity: z.boolean(),
+  exitCodeRequired: z.boolean(),
 };
 const createSchema = z.object(base).partial().required({ name: true });
 const updateSchema = z.object({ ...base, isActive: z.boolean() }).partial();

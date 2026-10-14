@@ -52,7 +52,7 @@ patch version for every changed installer.
 
 ## The register
 
-> **Current boundary (14 October 2026):** 0.4.19 is the deployed single-zone artifact (notes below); 0.5.3 is the two-zone release (built by the owner; supersedes 0.5.2, upgrades it in place). Before it, 0.5.2 was the two-zone release candidate (0.5.0 + F1, production licence key), built 12 October 2026; do not deploy 0.5.0 or 0.5.1 (development licence key). Earlier: 0.4.18 was the packaged artifact on 10 September. Do not deploy 0.4.14: its frontend baked in `localhost:48102`.
+> **Current boundary (14 October 2026):** 0.4.19 is the deployed single-zone artifact (notes below); 0.5.3 is the two-zone release (built 14 October 2026; supersedes 0.5.2 and upgrades it in place). Before it, 0.5.2 was the two-zone release candidate (0.5.0 + F1, production licence key), built 12 October 2026; do not deploy 0.5.0 or 0.5.1 (development licence key). Earlier: 0.4.18 was the packaged artifact on 10 September. Do not deploy 0.4.14: its frontend baked in `localhost:48102`.
 
 | Version | Date | Built from | Installer | Size | Migrations added |
 |---|---|---|---|---|---|
@@ -90,9 +90,9 @@ patch version for every changed installer.
 
 ## 0.5.3 — first-client feedback (F2), single-zone ports (F3), sidebar, pre-demo sweep
 
-- **To be built by the owner** with `installer/license-public.pem` (the
-  production key in `C:\Secure\VMS-Licensing`). Fill in the commit, size and
-  SHA-256 below at build time.
+- Staged with `installer/license-public.pem`, identical to the production
+  public key in `C:\Secure\VMS-Licensing` (staged `LICENSE_PUBLIC_KEY` ends
+  `…B9n4ZADRpq4=`).
 - **Upgrades 0.5.2 in place** (same AppId). The `VmsPostgres` service applies
   five additive migrations on start: `20261014090000_revoked_employee_reconcile`,
   `20261014120000_pass_type_exit_code_zones`, `20261014130000_host_directory_create`,
@@ -113,8 +113,14 @@ patch version for every changed installer.
 - Release staging now skips stale `query_engine-*.tmp<N>` files.
 - **Verified before the build:** typecheck PASS; `npm test` 118/118;
   `verify:e2e` 613/613; web lint + build PASS.
-- **Built:** _commit ___, `installer/Output/vms-setup.exe`, ___ bytes,
-  SHA-256 ___._
+- **Built:** 14 October 2026 from commit `fcdc032` (plus the rebuilt
+  `backend/dist-package`, committed with this entry). `installer/Output/vms-setup.exe`,
+  ProductVersion 0.5.3, **134,180,206 bytes**, SHA-256
+  `50AA908CDB009784EA2A6123C338004FF161D0FFC3F9CB6442CAE10CEFC5D5BA`. Staged
+  payload: 35 migrations, pdfkit's 15 font files, no `.tmp` engine copies.
+  About 88 MB smaller than 0.5.2, which most likely carried stray Prisma
+  engine `.tmp` copies. The 0.5.2 binary is kept at
+  `installer/Output/previous/vms-setup-0.5.2.exe`.
 
 ## 0.5.2 — 0.5.1 with the production licence key (release candidate)
 

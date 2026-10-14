@@ -592,6 +592,142 @@ exit-code tick boxes.
 - ~~Open: should Security still be able to override it for one pass?~~
   Answered 12 Oct 2026: no — the type is always final.
 
+### F2 — First client demo feedback
+
+*Raised by the client at the 0.5.2 demo, 14 October 2026.* **Status:
+`PLANNED` — owner answered Q1, Q3, Q4 on 14 October 2026; Q5 and the
+exit-code redesign (item 10) the same day; Q2 waits for the
+client.** Schema changes: item 1 (erasure marker), item 10 (`pass_type.exit_code_zone_ids`).
+
+#### Items
+
+| # | Client asked | What exists today | Plan |
+|---|---|---|---|
+| 1 | Delete a person | `DELETE /api/people/:id` already **deactivates** (refused while a pass is live; history kept, hard rule #3). No button calls it. | **(a)** Add **Deactivate** / **Reactivate** on the person page (`people:delete`), with a confirm. Deactivated people drop out of lists and pickers. **(b) Erase** (Q1 answer: full erasure, Administrator only by default): a new grid cell `people_erasure:delete`, seeded to nobody (the Administrator holds every cell). Refused while a pass is live or the person is inside. Removes the face from every terminal through the queue first, then wipes name (→ "Erased person"), mobile, email, every ID number, vehicle, credential, the photo and document files and cached templates; sets `erased_at`. Kept: the row, the terminal ID (never reused), passes, punches and audit, so reports still count the visit. Mandatory reason; audited. **Amends hard rule #3** ("photo and documents remain") for an explicit erasure request — record in `DECISIONS.md` and `CLAUDE.md`. |
+| 2 | Visitor ID starts at 1 and auto-increments | Requests and walk-ins already get `<prefix>` + 5 digits from `visitor_id_seq` (`V00001`, `V00002`…). **Register person makes the operator type the ID by hand**, which is what the client saw. | Register person, category Visitor: no ID field; the server issues the next ID with the same `issueVisitorId` as Clear (and the same terminal-pattern check). The ID is shown after saving. **Owner, 14 Oct 2026:** two-zone sites never register from the terminal (only Requests and Register person), so the claim-an-enrolment route is removed from Register person and every visitor there gets a system ID; the photo is always an upload or a webcam shot. Employees keep typing their own employee code (owner). An ID already held is skipped (today: any Person, case-insensitive); **also skip IDs of terminal enrolments not yet registered** (the photo files listed by `/api/enrollments/unclaimed`), which today are not checked. Format: Q2. |
+| 3 | Category first on Register person | Order is ID → name → category. | Category first; the rest of the form follows from it (ID field only for employees, pass type only for visitors, zones only for employees). |
+| 4 | "Visitor type" → "Pass type" | The Pass types page and issue-pass form say *pass type*; Register person, person page, request form, request page, the visitor portal and the "Visitor type usage" report say *visitor type*. Same thing. | Say **Pass type** everywhere (UI strings, report name, docs). No schema change; the table is already `pass_type`. |
+| 5 | Search in every dropdown | Native `<select>` everywhere; no search. | One `SearchSelect` component in `components/ui.tsx` (type to filter, keyboard and screen-reader usable). Used for the lists that grow: company, department, pass type, host / person to meet, parent zone. Fixed two- or three-option lists (entry mode, kind, yes/no, field rule) stay native: there is nothing to search. |
+| 6 | Add button for company and department | Adding happens only on the Directory page. | `SearchSelect` offers **+ Add "<typed text>"** when nothing matches and the operator holds `directory:create`; it calls the existing `POST /api/companies` / `/api/departments` (audited) and selects the new entry. Operators without the cell see no Add. Q3 answer: hosts may add too — a migration grants `directory:create` to the seeded Host role (an Admin can still take it away on the Access page). |
+| 7 | Date picker invisible in dark mode | The dark palette never declares `color-scheme`, so the browser draws the native calendar icon black on a dark field. | `color-scheme: light dark` in `globals.css`. One line; fixes every date and time field. |
+| 8 | Ticking a child zone ticks its parent | The server already includes every ancestor (a Yard pass gets the Outer gates); the form just doesn't show it. | In every zone picker (issue pass, request, walk-in, employee access), ticking a zone shows its ancestors ticked and locked, labelled "included with Yard". Display only; the server rule is unchanged. One shared helper. |
+| 9 | Delete a zone, or change its parent later | `PATCH /api/zones/:id` already accepts a new name and parent (with a cycle check); the Zones card offers only Deactivate. | Add **Edit** (name, parent) to the Zones card. Re-parenting affects new passes and new employee grants only; live passes and existing employee access keep the terminals they were given. **Delete** (Q4 answer): only for a zone that never had a terminal, a pass, an employee grant or a request; anything used can only be deactivated. Audited. |
+| 10 | Pass type says no exit code, zone says exit code by default | F1: the pass type decides **whether**; each zone's `exitCodeDefault` decides **which exits**. A pass with no type follows the zones, so "General" single-entry passes need the code. Two settings that look like rivals. | **Owner, 14 Oct 2026: one setting, on the pass type.** (1) Pass type editor: when "The exit needs the exit code" is ticked, choose **which zones' exits** (at least one; refused otherwise). New column `pass_type.exit_code_zone_ids`. (2) The Zones card loses "Exit code by default"; `zone.exit_code_default` stays in the database (additive migrations) but nothing reads it. (3) Migration: every type with the code ticked gets today's `exitCodeDefault = true` zones; upgraded single-zone sites have none, so nothing changes at their gates. (4) Issuing: code-gated exits = the type's zones ∩ the zones the pass covers; BOTH terminals never; multi entry never; **no pass type = no exit code**. Same rule for requests, Clear, walk-ins, Issue pass and zone widening. (5) **Live passes keep the rule they were issued with** (already true: the pass stores its exits at issue). Saving a changed type shows how many live passes keep the previous rule; the pass panel shows its own rule; a zone used by a live pass can't be deactivated or deleted. Single cases: Security's exit override, or end and re-issue. Touches `services/entries.ts`, `services/passes.ts`, `api/visit-requests.ts`, `api/zones.ts`, `api/pass-types.ts`, the three forms and `zones-card.tsx`, e2e sections 30–33. |
+| 11 | Valid-until shortcuts for 6 months and 1 year | Issue-pass form has today / 1 week / 1 month / 3 months (multi entry only). The request form has none. | Add **6 months** and **1 year** to both forms. A shortcut longer than the pass type's maximum validity is greyed out with the reason. |
+| 12 | (owner) Valid until must not exceed the pass type's maximum validity from the visit time | Already enforced by the server on issue (`services/entries.ts`, calendar days, the visit day is day 1); the form only finds out on submit. | Issue-pass and Request forms show **"Latest allowed: <date> 23:59"**, recomputed from visit time and pass type, and set the date field's `max`. Server rule unchanged (with item A it is the same on both paths). |
+| 13 | (owner) Why choose a pass type when issuing a pass, when the person already has one? | The pass's type is chosen separately on Device authorization / Provision and **never checked against the person's details**: `provisionPerson` checks only `detailsComplete`, which follows the person's own type. A person typed "Customs official" can be issued a "Sub-contractor" pass without its required fields. Requests are already consistent (Clear stores the request's type on the person and checks the details against it, `services/visit-review.ts`). | Remove the Pass type dropdown from the issue-pass form; show the person's type and what it brings (entry modes, max days, exit code). To change it, edit the person, which re-checks required details. Server: a pass always takes the person's type; a different `passTypeId` is refused (400). A visitor with no type follows item 10 (no exit code) and the General field rule. |
+
+#### Found while tracing the demo questions
+
+- **A. Maximum validity is counted two ways.** The request form checks
+  `validUntil − visit time ≤ N × 24 h` (`services/visit-requests.ts`); issuing
+  the pass checks `N` calendar days ending 23:59 IST (`services/entries.ts`).
+  A 1-day type requested 10:00 → 09:00 next day passes the request and then
+  fails at Clear. Fix: both use the calendar-day rule (one shared function).
+- **B. Employee zones are missing from Register person.** The form offers
+  terminals only; zones appear only later, on the person page. Fix: the same
+  zone picker (with item 8) on Register person, sent through the existing
+  zone → terminal expansion.
+- **C. Names for the same thing.** Besides item 4: the Provision page,
+  "Issue pass" on the person page, Requests and Walk-in are four ways to get a
+  pass. Each page gets a one-line description at the top saying when to use
+  it. No flow is removed.
+
+#### Questions
+
+1. ~~Delete~~ — answered (owner, 14 Oct 2026): full data erasure, Administrator
+   only by default. See item 1(b).
+2. **Visitor ID format** — *client to decide*: keep `V00001` (prefix + 5
+   digits, today) or plain `V1`, `V2`…? The counter is site-wide and never
+   reused; numbers taken during the demo stay taken on that database. A fresh
+   install starts at 1. Until answered, `V00001` stays.
+3. ~~Inline add for hosts~~ — answered: yes. See item 6.
+4. ~~Zone delete~~ — answered: yes, as proposed. See item 9.
+5. ~~"General" (no pass type)~~ — answered (owner, 14 Oct 2026) by item 10:
+   exit-code exits move onto the pass type, the zone default goes, a pass with
+   no type never needs an exit code, and live passes keep their rule.
+
+#### Order and verification
+
+1. Items 7, 4, 3, 11, 12, 13, A — small, no client answer needed.
+2. Items 5 + 6 (one component), 8 + B (one helper), 9 (edit), 10 (exit-code exits on the pass type).
+3. Items 1, 2, 9-delete. Item 2 ships with `V00001`; the format follows Q2.
+
+Each step: `npm run typecheck && npm test`, `verify:e2e` (new sections for
+visitor ID on Register person, the max-validity rule, zone re-parent), web
+`lint` + `build`, then a manual pass in both light and dark mode. Decisions
+go to `DECISIONS.md`, changes to `EXECUTION_LOG.md`, behaviour to
+`PRODUCT.md`. Ships as 0.5.3.
+
+### F3 — Single-zone fixes and features since 0.4.19
+
+*Chosen by the owner, 14 October 2026, from what `essl-vms-main` shipped in
+0.4.20–0.4.24 after the two-zone rebuild branched at 0.4.19.* **Status:
+`PLANNED`.** Port the behaviour, not the code: two-zone loads faces through
+`pass_gate` rows and the gate engine, so every item is re-checked against that
+model before it is built. Reference for each item: `essl-vms-main`
+`docs/VERSIONS.md` § the version named.
+
+#### Bug fixes
+
+| # | From | Problem | Two-zone today | Plan |
+|---|---|---|---|---|
+| B1 | 0.4.20 | **A resigned employee stays enrolled on a terminal** (field incident: removed from IN, kept punching at OUT and the barrier kept opening). | **Present.** `resignEmployee` (`services/employee-access.ts`) removes only from terminals with `desired_access = true`. | (1) Resign targets every access row **and** every terminal with a punch from the ID; terminals with no row get one with `desired_access = false`. (2) A punch from a resigned employee, or one whose access to *that* terminal was removed, queues a removal there, writes `RECONCILE_HEALED` (`REVOKED_EMPLOYEE_PUNCHED`) and raises the critical alert `revoked-employee-punched`, which clears itself when a removal succeeds. One read and bulk writes per ingest batch (rule #4). (3) Removed employees stay in the sweep for `RECONCILE_REMOVED_DAYS` (default 30; 0 = off): hourly best-effort removal, then a query. (4) Re-adoption from a terminal USER record never restores a resigned employee's access. (5) Migration repairs any `desired_access = true` row of a resigned person. |
+| B2 | 0.4.20 | The reconciliation sweep checked the same first batch every run, so people beyond it were never checked; a reply to the sweep's own query could be dropped as `IN_SYNC`. | **Present.** `sweepQueue` (`services/reconcile.ts`) orders candidates by ID with a `LIMIT` and enqueues them one by one. Whether the dropped-reply guard exists in two-zone is still to check. | Rotate: order candidates by the last `QUERY_USER` for each (person, terminal), oldest first; the employee re-send likewise by last `PROVISION`. Enqueue in bulk (`createManyAndReturn`), not per row. Candidates come from `pass_gate` rows that should be loaded, not from entry states. Index `sync_command(person_id, target_device_id, type, created_at)`. Fix the in-flight guard if it is there. |
+| B3 | 0.4.23 | A terminal's face was counted when only one of its two commands (`PROVISION`, `PUSH_PHOTO`) succeeded, and de-provision handed faces back on terminals that never got them. | **To check** against how the gate engine sets `countedOnDevice`. | If affected: count a face only when both commands succeeded on that terminal; hand back only those. Unit test either way. |
+| B4 | field, Oct 2026 | The "N commands failed on <terminal>" alert is critical and **never clears**, even after a later command for the same person succeeded. | **Present.** `alerts.ts` counts every `FAILED` command ever. | Count a failure only while it still matters: no later `SUCCESS` of the same type for the same (person, terminal), and younger than 7 days. A best-effort removal re-send (B1) that gets `Return≠0` is recorded as success with the code kept in `last_error`, so it never raises this alert. |
+
+#### Features
+
+| # | From | Feature | Plan for two-zone |
+|---|---|---|---|
+| F-a | 0.4.21 | **Remove a person who is still INSIDE** (left without punching out). | `POST /api/entries/:id/deprovision` accepts `{ force: true }`, gated by a new grid cell `passes_force_end:update` (Administrator only by default). Ends the pass through the normal pass-end path, then clears **every** gate including exits, and closes the stay. Confirm dialog warns the person may need letting out by hand. Mandatory reason; audited with `forcedWhileInside`. Without `force`, INSIDE is still refused, and the engine still never removes anyone inside. |
+| ~~F-c~~ | 0.4.21 | Search on the Unregistered people panel. | **Dropped** (owner, 14 Oct 2026): two-zone sites don't register from the terminal, so the panel only flags hand enrolments; F-j is the action that matters. |
+| F-f | 0.4.24 | **Monthly Status report** (eTimeTrackLite layout), Excel and PDF. | **Without shifts:** per person per day, first IN, last OUT, work duration, status **P / A**; totals per person (present days, absent days, total duration). No Late By, Early By, OT, WO or WOP (they need shifts, F4). Filters: date range ≤ 31 days, category, company, department, search, one person. Excel with the existing `exceljs`; PDF with `pdfkit` (new dependency, as 0.4.24; packaging must copy its font metrics, `essl-vms-main` `build-package.mjs`). **Zones:** the day's IN / OUT / duration come from terminals of **top-level zones** only, so a trip into the yard and back is not a second day-in/day-out. Yard punches are still stored and shown in F-g; time per zone is F4. A site with no zones counts every terminal, as today. An IN with no OUT counts no time (client-confirmed in 0.4.24). |
+| F-z | owner, 14 Oct 2026 | **Record the zone on every punch**, so attendance by zone stays correct after a terminal moves or a zone is re-parented (item 9). | New nullable column `punch_event.zone_id`, set at ingest from the device row ingestion already loads (no extra query, rule #4); migration backfills existing punches from each terminal's current zone. Groundwork only; the report is F4. |
+| F-g | 0.4.24 | Person page: ins and outs by date range, and downloads of that person's reports. | A **Movement** panel (date range, every punch with terminal, zone and direction) and buttons for every report that has a person filter, plus F-f for employees. Same access cells as the reports themselves. |
+| F-h | 0.4.24 | New reports, plus search and full CSV. | Into the existing registry (`reports/registry.ts`): **Punch log** (`punches:view`, the cell exists already), **Person details** (new cell `people_export:view`, Administrator only; ID numbers still masked, rule #12), **Device roster** (who should be on each terminal vs. who the last scan found). Attendance gains name/ID search. CSV exports every matching row, not one page. |
+| F-j | 0.4.24 | Delete an unregistered enrolment. | Administrator only (new cell `unclaimed:delete`): removes the stored photo and queues a best-effort removal of that ID on every terminal, only if the ID matches a managed pattern (rule #7). Audited `UNCLAIMED_DELETED`. |
+| F-m | 0.4.24 | Validation refusals name the field; a background refresh doesn't reset the scroll position. | Check both in two-zone first; port only what is missing (`lib/swr.ts`, the API error formatter). |
+
+#### Docs and field knowledge
+
+| # | Plan |
+|---|---|
+| D1 | `INSTALL_GUIDE.md`: "Terminal attendance log — enable cyclic deletion" from `essl-vms-main` (a full log refuses every face, seen on site on a ZAM230). `KNOWN_ISSUES.md` row. `DEVICE_PROTOCOL.md` §9 checklist: record capacity and the cyclic-delete setting per terminal. Marked unverified on our units until checked. |
+| D2 | `KNOWN_ISSUES.md` + licensing doc: an issued licence key cannot be revoked; a shorter key replaces a longer one but the old one stays valid until its own expiry. |
+| D3 | `KNOWN_ISSUES.md` open hardware test: what `DATA DELETE USERINFO PIN=<pin>` returns for a PIN not on the terminal. B1's sweep marks those removals best-effort until it is answered. Run on the owner's terminal during F3 verification. |
+
+#### Order and verification
+
+Runs **after F2 step 1** and before F2's larger items, because B1 and B4 are
+gate-security and alert-noise fixes the client will hit first.
+
+1. B1, B2, B4, D1–D3 (security and field knowledge), then B3.
+2. F-a, F-j, F-m.
+3. F-z, F-h, F-g, then F-f.
+
+Each step: `npm run typecheck && npm test`, `verify:e2e` with new sections
+(resign across terminals and the punch-triggered removal; sweep rotation;
+alert clearing; forced end while inside; unclaimed delete; Monthly Status
+P/A over a zone tree), web `lint` + `build`. B1 and D3 are also checked on the
+owner's terminal. Ships in 0.5.3 with F2.
+
+### F4 — Shift master (second release)
+
+*Owner, 14 October 2026: future scope, after F2 and F3.* From 0.4.24: a
+Shifts page (Administrator, `shifts:manage`) with name, code, in time, out
+time, required duration and weekly off days (out before in = overnight); a
+shift history per employee (the latest assignment on or before each day);
+visitors can't have a shift. Then the Monthly Status report (F3 F-f) gains
+Late By, Early By, OT, WO and WOP. Existing employees start with no shift;
+the first assignment can be backdated.
+
+Also in the second release: a **time in zone** attendance report (owner,
+14 Oct 2026) — per employee per day, each zone entered, first IN, last OUT
+and time spent there, from the zone stamped on each punch (F3 F-z). An IN
+with no OUT counts no time, as in F-f.
+
 ## Verification commands (every phase)
 
 ```bash

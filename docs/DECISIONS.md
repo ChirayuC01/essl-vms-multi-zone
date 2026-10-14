@@ -126,6 +126,14 @@ carried at the top; their full history is in `legacy/`.
 | 2026-10-02 | Phase 9 release gate: trial upgrade of a copy of a real 0.4.19 database + photos on disposable Windows; back up DB and photos before any site upgrade | Every past upgrade note says "untested"; this one must be tested | Owner |
 | 2026-10-12 | **F1: the visitor type decides whether a single-entry exit needs the exit code** (`pass_type.exit_code_required`, default true, existing types migrated to true). Which exits still comes from the zones' `exitCodeDefault`. The type is **final — no per-pass choice, no Security override** on the issue-pass form; an `exitCodeZoneIds` field sent by an old client is ignored. A pass with no type follows the zones' defaults. Widening a zone follows the same rule | Hosts and Security choose only the visitor type; the rule is set once by an Admin | Owner |
 | 2026-10-12 | `visit_request.exit_code_zone_ids` is left in place, no longer written | Upgrade migrations stay additive | F1 |
+| 2026-10-14 | **Which exits need the exit code moves onto the pass type** (`pass_type.exit_code_zone_ids`, chosen when "The exit needs the exit code" is ticked). The zones' "Exit code by default" is removed from the console and no longer read; existing types inherit today's default zones. A pass with no type never needs an exit code. *Supersedes the zone half of F1.* | One setting instead of two that looked like rivals; removes the "General needs a code" surprise | Owner (F2) |
+| 2026-10-14 | A live pass keeps the exit-code rule and terminals it was issued with; editing a pass type or zone affects new passes only. The console says how many live passes keep the old rule | Tightening a live pass could trap someone already inside (rule #9) | Owner (F2) |
+| 2026-10-14 | Two-zone sites never register people from the terminal: only Requests and Register person. Register person issues system visitor IDs; employees keep typing their own employee code | Owner | Owner (F2) |
+| 2026-10-14 | Person erasure on request (Administrator only by default): wipes identity, photo and documents, keeps the anonymised row, history and terminal ID. *Amends hard rule #3 for an explicit erasure request* | Client wants real deletion; DPDP erasure | Owner (F2) |
+| 2026-10-14 | Hosts may add companies and departments from the request form | Client | Owner (F2) |
+| 2026-10-14 | A zone can be deleted only if it never had a terminal, pass, employee grant or request; otherwise deactivate | Typos are fixable; used zones keep history | Owner (F2) |
+| 2026-10-14 | **A pass always takes its holder's pass type**; the issue-pass form no longer offers a choice. Changing it means editing the person, which re-checks their required details | A separately chosen pass type skipped that type's required fields | Owner (F2) |
+| 2026-10-14 | Port from 0.4.20–0.4.24: B1–B4, F-a, F-f (no shifts), F-g, F-h, F-j, F-m, D1–D3 (F3). Shift master and a time-in-zone attendance report are the second release (F4); unregistered search dropped. Every punch records its zone from now on (F-z) so that report stays correct after zones change | Owner | Owner (F3) |
 
 ## Open (awaiting client)
 
@@ -138,3 +146,4 @@ carried at the top; their full history is in `legacy/`.
 - Maximum customs pass length.
 - Blacklist authority (proposed: Security In-charge only).
 - HR and HOD duties inside the system.
+- Visitor ID format: `V00001` (today) or `V1`, `V2`… (F2 Q2).

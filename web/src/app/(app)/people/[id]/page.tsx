@@ -19,6 +19,7 @@ import {
 } from "@/lib/api";
 import { DocumentsCard } from "@/components/documents-card";
 import { IssuePassForm } from "@/components/issue-pass-form";
+import { ZonePicker } from "@/components/zone-picker";
 import { PassGates } from "@/components/pass-gates";
 import { BlacklistControl } from "@/components/blacklist-control";
 import { EMPTY_PROFILE, ProfileFields, draftFromPerson, profilePayload } from "@/components/profile-fields";
@@ -37,6 +38,7 @@ import {
   Empty,
   Field,
   Input,
+  SearchSelect,
   Select,
   Stat,
   Table,
@@ -243,10 +245,12 @@ export default function PersonDetailPage() {
           <Field label="Category"><Select disabled={!can("person_category:update")} value={profile.category} onChange={(e) => setProfile({ ...profile, category: e.target.value })}><option value="VISITOR">Visitor</option><option value="EMPLOYEE">Employee</option></Select></Field>
           {profile.category === "VISITOR" && (
             <Field label="Pass type" hint="decides which details are required">
-              <Select value={profile.passTypeId} onChange={(e) => setProfile({ ...profile, passTypeId: e.target.value })}>
-                <option value="">General</option>
-                {passTypes?.items.filter((t) => t.isActive || t.id === profile.passTypeId).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-              </Select>
+              <SearchSelect
+                value={profile.passTypeId}
+                onChange={(v) => setProfile({ ...profile, passTypeId: v })}
+                options={(passTypes?.items ?? []).filter((t) => t.isActive || t.id === profile.passTypeId).map((t) => ({ value: t.id, label: t.name }))}
+                emptyLabel="General"
+              />
             </Field>
           )}
           <div className="sm:col-span-2">
@@ -312,13 +316,14 @@ export default function PersonDetailPage() {
         </Card>
 
         <Card title="Device authorization" className="lg:col-span-2">
+          {person.category !== "EMPLOYEE" && <p className="mb-3 text-sm text-[var(--text-muted)]">Issue a pass to this registered visitor directly — e.g. a long-term pass. Planned visits normally go through Requests.</p>}
           {person.category === "EMPLOYEE" ? (
             <div className="space-y-4">
               {person.resignedAt ? (
                 <div className="space-y-3">
                   <Alert tone="warn">Resigned {formatDateTime(person.resignedAt)}{person.resignedReason ? ` · ${person.resignedReason}` : ""}. Device removal commands remain visible below.</Alert>
                   {can("employee_access:create") && <div>
-                    <Field label="Zones" hint="a zone also includes the gates of every zone it sits inside"><div className="flex flex-wrap gap-3">{(zoneList?.items ?? []).filter((zone) => zone.isActive).map((zone) => <label key={zone.id} className="flex items-center gap-1 text-sm"><input type="checkbox" checked={accessZoneIds.includes(zone.id)} onChange={() => setAccessZoneIds((current) => current.includes(zone.id) ? current.filter((value) => value !== zone.id) : [...current, zone.id])} />{zone.name}</label>)}</div></Field><Field label="Rehire on devices"><div className="flex flex-wrap gap-3">{devices.map((device) => <label key={device.id} className="flex items-center gap-1 text-sm"><input type="checkbox" checked={accessDeviceIds.includes(device.id)} onChange={() => setAccessDeviceIds((current) => current.includes(device.id) ? current.filter((value) => value !== device.id) : [...current, device.id])} />{device.name ?? device.serialNo}</label>)}</div></Field>
+                    <Field label="Zones" hint="a zone also includes the gates of every zone it sits inside"><ZonePicker zones={(zoneList?.items ?? []).filter((zone) => zone.isActive)} value={accessZoneIds} onChange={setAccessZoneIds} /></Field><Field label="Rehire on devices"><div className="flex flex-wrap gap-3">{devices.map((device) => <label key={device.id} className="flex items-center gap-1 text-sm"><input type="checkbox" checked={accessDeviceIds.includes(device.id)} onChange={() => setAccessDeviceIds((current) => current.includes(device.id) ? current.filter((value) => value !== device.id) : [...current, device.id])} />{device.name ?? device.serialNo}</label>)}</div></Field>
                     <Button className="mt-2" variant="primary" loading={busy === "rehire"} disabled={accessDeviceIds.length + accessZoneIds.length === 0} onClick={() => run("rehire", async () => { await api(`/api/people/${id}/rehire`, { method: "POST", body: { deviceIds: accessDeviceIds, zoneIds: accessZoneIds } }); setAccessDeviceIds([]); setAccessZoneIds([]); }, "Employee rehired; permanent access queued for the selected devices.")}>Rehire</Button>
                   </div>}
                 </div>
@@ -341,7 +346,7 @@ export default function PersonDetailPage() {
                   <td className="px-2 py-2">{!person.resignedAt && (access.desiredAccess ? can("employee_access:delete") && <Button variant="danger" onClick={() => { const reason = window.prompt("Optional removal reason") ?? undefined; void run("access", () => api(`/api/people/${id}/device-access/${access.device.id}`, { method: "DELETE", body: { reason } }), "Employee access removal queued."); }}>Remove</Button> : can("employee_access:create") && <Button onClick={() => run("access", () => api(`/api/people/${id}/device-access/${access.device.id}/restore`, { method: "POST" }), "Employee access restore queued.")}>Restore</Button>)}</td>
                 </tr>)}
               </Table>
-              {can("employee_access:create") && !person.resignedAt && <div><Field label="Zones" hint="a zone also includes the gates of every zone it sits inside"><div className="flex flex-wrap gap-3">{(zoneList?.items ?? []).filter((zone) => zone.isActive).map((zone) => <label key={zone.id} className="flex items-center gap-1 text-sm"><input type="checkbox" checked={accessZoneIds.includes(zone.id)} onChange={() => setAccessZoneIds((current) => current.includes(zone.id) ? current.filter((value) => value !== zone.id) : [...current, zone.id])} />{zone.name}</label>)}</div></Field><Field label="Add devices"><div className="flex flex-wrap gap-3">{devices.filter((device) => !employeeAccess.some((a) => a.device.id === device.id && a.desiredAccess)).map((device) => <label key={device.id} className="flex items-center gap-1 text-sm"><input type="checkbox" checked={accessDeviceIds.includes(device.id)} onChange={() => setAccessDeviceIds((current) => current.includes(device.id) ? current.filter((value) => value !== device.id) : [...current, device.id])} />{device.name ?? device.serialNo}</label>)}</div></Field><Button className="mt-2" disabled={accessDeviceIds.length + accessZoneIds.length === 0} onClick={() => run("access", async () => { await api(`/api/people/${id}/device-access`, { method: "POST", body: { deviceIds: accessDeviceIds, zoneIds: accessZoneIds } }); setAccessDeviceIds([]); setAccessZoneIds([]); }, "Employee access queued.")}>Assign selected</Button></div>}
+              {can("employee_access:create") && !person.resignedAt && <div><Field label="Zones" hint="a zone also includes the gates of every zone it sits inside"><ZonePicker zones={(zoneList?.items ?? []).filter((zone) => zone.isActive)} value={accessZoneIds} onChange={setAccessZoneIds} /></Field><Field label="Add devices"><div className="flex flex-wrap gap-3">{devices.filter((device) => !employeeAccess.some((a) => a.device.id === device.id && a.desiredAccess)).map((device) => <label key={device.id} className="flex items-center gap-1 text-sm"><input type="checkbox" checked={accessDeviceIds.includes(device.id)} onChange={() => setAccessDeviceIds((current) => current.includes(device.id) ? current.filter((value) => value !== device.id) : [...current, device.id])} />{device.name ?? device.serialNo}</label>)}</div></Field><Button className="mt-2" disabled={accessDeviceIds.length + accessZoneIds.length === 0} onClick={() => run("access", async () => { await api(`/api/people/${id}/device-access`, { method: "POST", body: { deviceIds: accessDeviceIds, zoneIds: accessZoneIds } }); setAccessDeviceIds([]); setAccessZoneIds([]); }, "Employee access queued.")}>Assign selected</Button></div>}
             </div>
           ) : activeEntry ? (
             <div className="space-y-4">

@@ -70,7 +70,9 @@ export async function widenZone(entryId: string, zoneId: string, actorId?: strin
   if (!zone || !zone.isActive) throw new ServiceError(400, "select an active zone");
   const have = new Set(entry.gates.map((g) => g.deviceId));
   const devices = (await zoneDevices([zoneId])).filter((d) => !have.has(d.id));
-  const exitCodeZoneIds = entry.entryMode === EntryMode.SINGLE_ENTRY && (entry.passType?.exitCodeRequired ?? true) && zone.exitCodeDefault ? [...entry.exitCodeZoneIds, zoneId] : entry.exitCodeZoneIds;
+  // Same rule as issuing (F2 #10): the pass type names the code-gated zones.
+  const gatedHere = entry.entryMode === EntryMode.SINGLE_ENTRY && entry.passType?.exitCodeRequired === true && entry.passType.exitCodeZoneIds.includes(zoneId);
+  const exitCodeZoneIds = gatedHere ? [...entry.exitCodeZoneIds, zoneId] : entry.exitCodeZoneIds;
   const now = new Date();
   const planned = planGates(devices, {
     entryMode: entry.entryMode,

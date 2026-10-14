@@ -3,6 +3,7 @@ import type { FastifyInstance, FastifyReply } from "fastify";
 import { z } from "zod";
 import { AuditAction, auditRow } from "../db/audit.js";
 import { prisma } from "../db/index.js";
+import { ACTIVE_ENTRY_STATES } from "../services/entries.js";
 import { wouldCreateCycle } from "../services/zones.js";
 import { actorId } from "./auth.js";
 import { requirePermission } from "./permissions.js";
@@ -13,14 +14,19 @@ import { requirePermission } from "./permissions.js";
 const createSchema = z.object({
   name: z.string().trim().min(1).max(100),
   parentZoneId: z.string().min(1).nullable().optional(),
-  exitCodeDefault: z.boolean().optional(),
 });
+// No exit-code flag: which exits need the code is set on the pass type
+// (F2 #10). An old client still sending `exitCodeDefault` has it stripped.
 const updateSchema = z.object({
   name: z.string().trim().min(1).max(100).optional(),
   parentZoneId: z.string().min(1).nullable().optional(),
-  exitCodeDefault: z.boolean().optional(),
   isActive: z.boolean().optional(),
 });
+
+/** Live passes naming this zone. They keep the terminals they were given. */
+function livePassesIn(zoneId: string) {
+  return prisma.entry.count({ where: { zoneIds: { has: zoneId }, state: { in: [...ACTIVE_ENTRY_STATES] } } });
+}
 
 // zod emits optional keys as `undefined`, which Prisma's exact types reject.
 function defined<T extends object>(value: T) {
@@ -77,7 +83,7 @@ export async function zoneRoutes(app: FastifyInstance): Promise<void> {
     if (!parsed.success || Object.keys(parsed.data).length === 0) {
       return reply.code(400).send({ error: "validation" });
     }
-    const zones = await prisma.zone.findMany({ select: { id: true, parentZoneId: true, name: true, isActive: true, exitCodeDefault: true } });
+    const zones = await prisma.zone.findMany({ select: { id: true, parentZoneId: true, name: true, isActive: true } });
     const before = zones.find((z) => z.id === id);
     if (!before) return reply.code(404).send({ error: "zone not found" });
     const { parentZoneId } = parsed.data;
@@ -88,6 +94,12 @@ export async function zoneRoutes(app: FastifyInstance): Promise<void> {
       if (wouldCreateCycle(zones, id, parentZoneId)) {
         return reply.code(400).send({ error: "a zone cannot sit inside itself or one of its own sub-zones" });
       }
+    }
+    // Deactivating hides a zone from new passes; one a live pass names stays
+    // until those passes end, so nobody's access is changed underneath them.
+    if (parsed.data.isActive === false && before.isActive) {
+      const live = await livePassesIn(id);
+      if (live > 0) return reply.code(409).send({ error: `${live} live pass(es) use this zone; deactivate it after they end` });
     }
     try {
       const zone = await prisma.zone.update({ where: { id }, data: defined(parsed.data) as Prisma.ZoneUncheckedUpdateInput });
@@ -102,5 +114,33 @@ export async function zoneRoutes(app: FastifyInstance): Promise<void> {
       });
       return reply.send(zone);
     } catch (err) { return conflict(reply, err); }
+  });
+
+  // A zone may be deleted only if nothing ever used it: a typo. Anything used
+  // is history (passes, requests, punches) and can only be deactivated.
+  app.delete("/zones/:id", { preHandler: requirePermission("zones:delete") }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const zone = await prisma.zone.findUnique({ where: { id } });
+    if (!zone) return reply.code(404).send({ error: "zone not found" });
+    const [children, devices, passes, requests, passTypes] = await Promise.all([
+      prisma.zone.count({ where: { parentZoneId: id } }),
+      prisma.device.count({ where: { zoneId: id } }),
+      prisma.entry.count({ where: { zoneIds: { has: id } } }),
+      prisma.visitRequest.count({ where: { zoneIds: { has: id } } }),
+      prisma.passType.count({ where: { exitCodeZoneIds: { has: id } } }),
+    ]);
+    const used = [
+      children && "zones inside it",
+      devices && "terminals",
+      passes && "passes",
+      requests && "visit requests",
+      passTypes && "pass types' exit-code settings",
+    ].filter(Boolean);
+    if (used.length > 0) return reply.code(409).send({ error: `this zone has been used (${used.join(", ")}); deactivate it instead` });
+    await prisma.$transaction([
+      prisma.zone.delete({ where: { id } }),
+      prisma.auditLog.create({ data: auditRow({ action: AuditAction.ZONE_DELETED, entityType: "zone", entityId: id, detail: { name: zone.name, parentZoneId: zone.parentZoneId }, actorId: actorId(request) }) }),
+    ]);
+    return reply.code(204).send();
   });
 }

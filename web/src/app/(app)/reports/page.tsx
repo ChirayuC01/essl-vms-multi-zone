@@ -4,7 +4,7 @@ import { useState } from "react";
 import { getApiBase, getToken, type AuditFacets, type DirectoryList, type ReportList, type ReportRun } from "@/lib/api";
 import { useApi } from "@/lib/swr";
 import { dayOfMonthIst, formatDateInputIst, formatDateTime } from "@/lib/format";
-import { Alert, Badge, Button, Card, Empty, Field, Input, Select, Table } from "@/components/ui";
+import { Alert, Badge, Button, Card, Empty, Field, Input, SearchSelect, Select, Table } from "@/components/ui";
 import { PersonAvatar } from "@/components/person-avatar";
 
 // The report catalogue (Phase 4 Milestone 20).
@@ -172,28 +172,23 @@ export default function ReportsPage() {
 
           {(selected.filters.includes("category") || selected.filters.includes("company") || selected.filters.includes("department")) && <div className="mb-3 grid gap-3 sm:grid-cols-3">
             {selected.filters.includes("category") && <Field label="Category"><Select value={category} onChange={(e) => { setCategory(e.target.value); setPage(1); }}><option value="">Employees and visitors</option><option value="EMPLOYEE">Employees</option><option value="VISITOR">Visitors</option></Select></Field>}
-            {selected.filters.includes("company") && <Field label="Company"><Select value={companyId} onChange={(e) => { setCompanyId(e.target.value); setPage(1); }}><option value="">All companies</option>{companies?.items.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</Select></Field>}
-            {selected.filters.includes("department") && <Field label="Department"><Select value={departmentId} onChange={(e) => { setDepartmentId(e.target.value); setPage(1); }}><option value="">All departments</option>{departments?.items.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</Select></Field>}
+            {selected.filters.includes("company") && <Field label="Company"><SearchSelect value={companyId} onChange={(v) => { setCompanyId(v); setPage(1); }} options={(companies?.items ?? []).map((x) => ({ value: x.id, label: x.name }))} emptyLabel="All companies" /></Field>}
+            {selected.filters.includes("department") && <Field label="Department"><SearchSelect value={departmentId} onChange={(v) => { setDepartmentId(v); setPage(1); }} options={(departments?.items ?? []).map((x) => ({ value: x.id, label: x.name }))} emptyLabel="All departments" /></Field>}
           </div>}
 
           {(selected.filters.includes("actor") || selected.filters.includes("action")) && (
             <div className="mb-3 grid gap-3 sm:grid-cols-3">
               {selected.filters.includes("actor") && (
                 <Field label="Operator">
-                  <Select
+                  <SearchSelect
                     value={actorId}
-                    onChange={(e) => {
-                      setActorId(e.target.value);
+                    onChange={(v) => {
+                      setActorId(v);
                       setPage(1);
                     }}
-                  >
-                    <option value="">Anyone</option>
-                    {facets?.actors.map((a) => (
-                      <option key={a.id} value={a.id}>
-                        {a.email}
-                      </option>
-                    ))}
-                  </Select>
+                    options={(facets?.actors ?? []).map((a) => ({ value: a.id, label: a.email }))}
+                    emptyLabel="Anyone"
+                  />
                 </Field>
               )}
               {selected.filters.includes("action") && (

@@ -1025,3 +1025,55 @@ field notes in `essl-vms-main`.
   not enrolled and record the reply; (2) B1: register an employee on one
   terminal only, enrol the same ID by hand on the other, punch there, resign,
   punch again → removal queued, critical alert, cleared once it succeeds.
+
+### 2026-10-14 — F2 step 2: exit-code exits on the pass type, zone edit/delete, searchable dropdowns
+
+Plan: `PLAN.md` § F2 (items 5, 6, 8, 9, 10, B, C).
+
+- **#10 Exit-code exits on the pass type:** new `pass_type.exit_code_zone_ids`
+  (migration `20261014120000_pass_type_exit_code_zones`: types requiring the
+  code take today's `exit_code_default` zones; nothing changes at the gate
+  for typed passes). Issuing, Clear, walk-ins and widening use the type's
+  zones ∩ the pass's zones; **no type = no code** (was: zones' defaults).
+  `zone.exit_code_default` is no longer read or written. The pass-types API
+  refuses a single-entry type requiring the code with no exits named (when
+  the site has zones); a new type needs the code only if it names exits.
+  PATCH returns `livePasses`; the console says they keep the old rule. Each
+  pass panel shows "Exit code: needed at … — as issued".
+- **#9 Zones:** Edit (rename, move under another; cycle-checked, as before)
+  and Delete (new cell `zones:delete`; refused if the zone has sub-zones,
+  terminals, passes, requests or pass-type exit settings; audited
+  `ZONE_DELETED`). Deactivating a zone a live pass names is refused (409).
+  The Zones card loses "Exit code by default".
+- **#8 + B:** `components/zone-picker.tsx` used by Issue pass, Request /
+  Walk-in, employee access and rehire on the person page, and Register
+  person: a ticked zone shows the zones around it ticked and locked ("with
+  Yard"); only ticked zones are sent. `POST /api/people` accepts `zoneIds`
+  for employees, expanded to terminals (zones with no terminals → 400).
+- **#5 + #6:** `SearchSelect` in `components/ui.tsx` (type to filter,
+  arrows/Enter/Escape, ARIA combobox) for companies, departments, pass types,
+  hosts / person to meet, zones (parent, terminal placement, widening), the
+  Directory bulk assignment and the report filters. "+ Add …" for companies
+  and departments wherever the operator holds `directory:create`
+  (`addToDirectory`, audited by the existing routes). Migration
+  `20261014130000_host_directory_create` grants it to the seeded Host role.
+- **C:** one-line "when to use this" on Requests, Walk-in, Provision and the
+  person page's Device authorization (visitors).
+- Dev note: `prisma generate` could not replace the engine DLL while the dev
+  backend (`npm run dev`) held it; the generated client was written and the
+  engine is byte-identical, so the leftover `.tmp` copy was removed. Restart
+  the dev backend and run `npx prisma migrate deploy` on the dev database
+  before trying the console.
+- Tests: e2e section 26 (zone flag ignored, employee registered by zone,
+  empty zone refused), 29 (exit-rule validation), 30 (no type = no code; the
+  type names the office exit; live pass keeps its rule and `livePasses`;
+  zone deactivation guard, delete never-used / refuse used, move), 33 (pass
+  type names the exit; a host adds a company).
+- **Verified:** typecheck PASS; `npm test` 111/111; `verify:e2e` **568
+  passed, 0 failed**; web lint + build PASS.
+- Owner verification (light and dark mode): Pass types → tick "The exit
+  needs the exit code", choose the premise exit, save; edit it while a pass
+  is live → notice. Devices → Zones: Edit (rename, move), Delete a fresh
+  zone, try deleting a used one, try deactivating one in use. Tick Yard in
+  any zone picker → Premise shows "with Yard". Register person: employee by
+  zone. Type in Company: filter, "+ Add" (also as a host on a request).

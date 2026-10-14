@@ -3,11 +3,12 @@
 import { Suspense, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { api, getApiBase, getToken, type DeviceList, type DirectoryList, type PassTypeList, type Person } from "@/lib/api";
+import { api, getApiBase, getToken, type DeviceList, type DirectoryList, type PassTypeList, type Person, type ZoneList } from "@/lib/api";
 import { EMPTY_PROFILE, ProfileFields, profilePayload } from "@/components/profile-fields";
 import { useApi } from "@/lib/swr";
-import { Alert, Button, Card, Field, Input, Select } from "@/components/ui";
+import { Alert, Button, Card, Field, Input, SearchSelect, Select } from "@/components/ui";
 import { WebcamCapture } from "@/components/webcam-capture";
+import { ZonePicker } from "@/components/zone-picker";
 import { normalizePhotoFile } from "@/lib/photo";
 
 // Registration covers both acquisition routes:
@@ -34,6 +35,7 @@ function RegisterForm() {
   const [passTypeId, setPassTypeId] = useState("");
   const [profile, setProfile] = useState(EMPTY_PROFILE);
   const [deviceIds, setDeviceIds] = useState<string[]>([]);
+  const [zoneIds, setZoneIds] = useState<string[]>([]);
   const [pin, setPin] = useState(claimingPin);
   const [photo, setPhoto] = useState<File | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -45,6 +47,8 @@ function RegisterForm() {
   const { data: departments } = useApi<DirectoryList>("/api/departments");
   const { data: devices } = useApi<DeviceList>("/api/devices");
   const { data: passTypes } = useApi<PassTypeList>("/api/pass-types");
+  const { data: zoneList } = useApi<ZoneList>("/api/zones");
+  const zones = (zoneList?.items ?? []).filter((z) => z.isActive);
   const passType = category === "VISITOR" ? passTypes?.items.find((t) => t.id === passTypeId) ?? null : null;
 
   async function onSubmit(event: React.FormEvent) {
@@ -63,6 +67,7 @@ function RegisterForm() {
           ...(passType ? { passTypeId: passType.id } : {}),
           ...profilePayload(profile, false),
           deviceIds: category === "EMPLOYEE" ? deviceIds : [],
+          zoneIds: category === "EMPLOYEE" ? zoneIds : [],
           esslUserId: pin.trim(),
         },
       });
@@ -134,16 +139,24 @@ function RegisterForm() {
 
           {category === "VISITOR" && (passTypes?.items.length ?? 0) > 0 && (
             <Field label="Pass type" hint="Decides which details are required and the rules of every pass they get. Leave as General for the standard set.">
-              <Select value={passTypeId} onChange={(e) => setPassTypeId(e.target.value)}>
-                <option value="">General (company, department, mobile, Aadhaar or PAN)</option>
-                {passTypes?.items.filter((t) => t.isActive).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-              </Select>
+              <SearchSelect
+                value={passTypeId}
+                onChange={setPassTypeId}
+                options={(passTypes?.items ?? []).filter((t) => t.isActive).map((t) => ({ value: t.id, label: t.name }))}
+                emptyLabel="General (company, department, mobile, Aadhaar or PAN)"
+              />
             </Field>
           )}
 
           <ProfileFields draft={profile} onChange={setProfile} category={category} passType={passType} companies={companies} departments={departments} />
 
-          {category === "EMPLOYEE" && <Field label="Permanent device access" hint="Employees remain on every selected device until an admin removes access."><div className="space-y-2">{devices?.items.map((device) => <label key={device.id} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={deviceIds.includes(device.id)} onChange={() => setDeviceIds((ids) => ids.includes(device.id) ? ids.filter((id) => id !== device.id) : [...ids, device.id])} />{device.name ?? device.serialNo}</label>)}</div></Field>}
+          {category === "EMPLOYEE" && zones.length > 0 && (
+            <Field label="Zones" hint="Permanent access to every terminal of the zone and of the zones around it">
+              <ZonePicker zones={zones} value={zoneIds} onChange={setZoneIds} />
+            </Field>
+          )}
+
+          {category === "EMPLOYEE" && <Field label={zones.length > 0 ? "Or individual terminals" : "Permanent device access"} hint="Employees remain on every selected device until an admin removes access."><div className="space-y-2">{devices?.items.map((device) => <label key={device.id} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={deviceIds.includes(device.id)} onChange={() => setDeviceIds((ids) => ids.includes(device.id) ? ids.filter((id) => id !== device.id) : [...ids, device.id])} />{device.name ?? device.serialNo}</label>)}</div></Field>}
 
           {!claiming && (
             <fieldset>

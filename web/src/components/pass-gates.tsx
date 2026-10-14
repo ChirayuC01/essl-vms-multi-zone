@@ -5,7 +5,7 @@ import { api, ApiError, type EntryDetail, type GateState, type ZoneList } from "
 import { useAuth } from "@/lib/auth";
 import { formatDateTime } from "@/lib/format";
 import { refresh, useApi } from "@/lib/swr";
-import { Alert, Badge, Button, Input, Select } from "@/components/ui";
+import { Alert, Badge, Button, Input, SearchSelect } from "@/components/ui";
 import { WebcamCapture } from "@/components/webcam-capture";
 
 // Where one pass stands on each terminal, plus the Security actions on it.
@@ -72,6 +72,13 @@ export function PassGates({ entryId }: { entryId: string }) {
           ))}
         </ul>
       )}
+      {/* The rule this pass was issued with; a later pass-type edit does not change it (F2 #10). */}
+      {entry.entryMode === "SINGLE_ENTRY" && (
+        <p className="text-xs">
+          Exit code: {(entry.exitCodeZoneIds?.length ?? 0) > 0 ? `needed at ${entry.exitCodeZoneIds!.map((id) => `${zoneName(id)} exit`).join(", ")}` : "not needed"}
+          <span className="text-[var(--text-muted)]"> — as issued</span>
+        </p>
+      )}
       {codeExitsMissing && <p className="text-xs text-[var(--text-muted)]">Exit terminals load after the exit code is verified, or a Security override.</p>}
       {live && codeExitsMissing && can("exit_override:update") && (
         <div className="flex flex-wrap items-center gap-2">
@@ -99,10 +106,9 @@ export function PassGates({ entryId }: { entryId: string }) {
       )}
       {live && can("zone_widen:update") && widenable.length > 0 && (
         <div className="flex flex-wrap items-end gap-2">
-          <Select className="max-w-xs" value={widenTo} onChange={(e) => setWidenTo(e.target.value)}>
-            <option value="">Add a zone…</option>
-            {widenable.map((z) => <option key={z.id} value={z.id}>{z.name}</option>)}
-          </Select>
+          <div className="w-full max-w-xs">
+            <SearchSelect value={widenTo} onChange={setWidenTo} options={widenable.map((z) => ({ value: z.id, label: z.name }))} placeholder="Add a zone…" />
+          </div>
           <Button disabled={!widenTo} onClick={() => void run("Zone added: its terminals are loading.", () => api(`${url}/widen`, { method: "POST", body: { zoneId: widenTo } }))}>
             Widen pass
           </Button>

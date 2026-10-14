@@ -3,8 +3,9 @@
 import { useMemo, useState } from "react";
 import { api, ApiError, type DeviceList, type OperatorOptionList, type PassTypeList, type PersonDetail, type ZoneList } from "@/lib/api";
 import { useApi } from "@/lib/swr";
-import { Alert, Button, Field, Input, Select } from "@/components/ui";
+import { Alert, Button, Field, Input, SearchSelect, Select } from "@/components/ui";
 import { localInput, ValidUntilField } from "@/components/valid-until-field";
+import { ZonePicker } from "@/components/zone-picker";
 import { endOfIstDay } from "@/lib/format";
 
 // Issue a pass. On a site with zones the operator picks zones (a zone also
@@ -38,8 +39,8 @@ export function IssuePassForm({ person, onIssued }: { person: PersonDetail; onIs
     return [...out].map((id) => byId.get(id)!).filter(Boolean);
   }, [zoneIds, zoneList]);
   const passType = passTypes?.items.find((t) => t.id === person.passTypeId);
-  // No type (General) keeps the zones' defaults, as the backend does.
-  const codeExits = (passType?.exitCodeRequired ?? true) ? covered.filter((z) => z.exitCodeDefault) : [];
+  // F2 #10: the pass type names the code-gated zones; no type, no code.
+  const codeExits = passType?.exitCodeRequired ? covered.filter((z) => passType.exitCodeZoneIds.includes(z.id)) : [];
   const modes = passType?.entryModes ?? ["MULTI_ENTRY", "SINGLE_ENTRY"];
   // The person's type may not allow the default mode.
   const entryMode = modes.includes(mode) ? mode : modes[0]!;
@@ -76,14 +77,7 @@ export function IssuePassForm({ person, onIssued }: { person: PersonDetail; onIs
       {person.blacklistedAt && <Alert>Blacklisted{person.blacklistReason ? `: ${person.blacklistReason}` : ""}. No pass can be issued until it is lifted.</Alert>}
       {useZones ? (
         <Field label="Zones" hint="A zone also opens the gates of every zone around it">
-          <div className="flex flex-wrap gap-4">
-            {zones.map((z) => (
-              <label key={z.id} className="flex items-center gap-2 text-sm">
-                <input type="checkbox" checked={zoneIds.includes(z.id)} onChange={() => { setZoneIds((ids) => (ids.includes(z.id) ? ids.filter((x) => x !== z.id) : [...ids, z.id])); }} />
-                {z.name}
-              </label>
-            ))}
-          </div>
+          <ZonePicker zones={zones} value={zoneIds} onChange={setZoneIds} />
         </Field>
       ) : (
         <p className="text-xs text-[var(--text-muted)]">No zones are set up, so the pass loads onto every registered terminal.</p>
@@ -114,10 +108,7 @@ export function IssuePassForm({ person, onIssued }: { person: PersonDetail; onIs
         </Field>
       )}
       <Field label="Person to meet" hint="Optional">
-        <Select value={personToMeetId} onChange={(e) => setPersonToMeetId(e.target.value)}>
-          <option value="">Not specified</option>
-          {operators?.items.map((o) => <option key={o.id} value={o.id}>{o.name ?? o.email}</option>)}
-        </Select>
+        <SearchSelect value={personToMeetId} onChange={setPersonToMeetId} options={(operators?.items ?? []).map((o) => ({ value: o.id, label: o.name ?? o.email }))} emptyLabel="Not specified" />
       </Field>
       <Field label="Purpose of visit" hint="Recorded permanently against this pass">
         <Input required maxLength={200} value={purpose} onChange={(e) => setPurpose(e.target.value)} placeholder="e.g. Lift maintenance, Block C" />

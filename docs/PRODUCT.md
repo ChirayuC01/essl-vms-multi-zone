@@ -37,11 +37,16 @@ The first two-zone deployment:
 Zone names, the tree and which terminal belongs to which zone are
 configuration. Nothing in code names a zone. An Admin manages zones on the
 **Devices** page: create a zone (optionally inside another), place each
-terminal into a zone, and set whether the zone's exit is code-gated by
-default. A zone lacking an entry or an exit terminal shows a warning.
-Employee access can be granted by zone; it expands to the terminals of that
-zone and every zone above it at the moment of granting, and is stored per
-terminal as before.
+terminal into a zone, rename a zone or move it under another later. A zone
+lacking an entry or an exit terminal shows a warning. Moving a zone affects
+new passes and grants only; live ones keep the terminals they were given. A
+zone a live pass uses can't be deactivated; only a zone nothing ever used
+(a typo) can be deleted (F2).
+Employee access can be granted by zone, at registration or later; it expands
+to the terminals of that zone and every zone above it at the moment of
+granting, and is stored per terminal as before. Every zone picker shows the
+zones above a ticked one as ticked too ("with Yard"), since their gates come
+with it.
 
 ## 3. People
 
@@ -68,6 +73,8 @@ defines:
 - short- or long-term
 - allowed entry modes (single / multi)
 - whether a host must Clear it
+- for single entry, whether the exit needs the exit code and at which
+  zones' exits (F2)
 - maximum validity in days
 - for every profile field: **required**, **optional** or **hidden**
 - optionally an external credential (a label, e.g. a port authority pass),
@@ -173,12 +180,15 @@ it on the person page ("scheduled / loading / loaded / removing / removed").
 | OUT punch on a terminal | That terminal drops the face **10 min** later | Nothing |
 | Pass ends | Entry faces removed; a visitor still inside is listed **overstayed** for Security | Faces removed; a visitor still inside keeps exit access until they leave |
 
-**Whether the exit needs the code** is set once on the **pass type**
-(Pass types → *Exit code*), not per request; nobody overrides it for one pass.
-**Which exits** it applies to comes from each zone's "exit code by default"
-setting (typically the office/outer exit, not the yard). An exit not covered
-by the code is loaded with the entry gates. A pass with no type ("General")
-follows the zones' defaults.
+**Whether the exit needs the code, and at which zones' exits,** is set once
+on the **pass type** (Pass types → *Exit code*; typically the office/outer
+exit, not the yard), not per request; nobody overrides it for one pass (F1,
+F2). A pass uses only the named exits of its own zones; an exit not covered
+by the code is loaded with the entry gates. **A pass with no type
+("General") needs no exit code.** The rule is copied onto the pass when it
+is issued: editing the type later changes new passes only, and the console
+says how many live passes keep the previous rule. Each pass panel shows the
+rule it was issued with. Widening a pass uses its type's current exits.
 
 Further rules:
 
@@ -262,7 +272,7 @@ grant it to a role on the Access page.
 | Administrator | Everything (system role, not editable) |
 | Security in-charge | Security, plus blacklist and audit trail |
 | Security | Gate work: view everything operational (not settings), people create/update/deactivate, passes, command retry, terminal refresh, companies/departments create and assign, walk-ins, long-term passes, exit override |
-| Host | Visit requests (view, create, decide) and zone widening. No site-wide view |
+| Host | Visit requests (view, create, decide), zone widening, and adding a company or department from the request form (F2). No site-wide view |
 | HR, HOD | View only (not settings), until the client confirms their duties |
 | Authorized person | The 0.4.19 operator role, unchanged |
 
@@ -288,8 +298,8 @@ old and new value of each changed setting.
 | Privacy notice | empty | The site's DPDP wording. The server stamps a new **version** (date-time) whenever the text changes, so each consent records exactly which wording was shown |
 
 The single/multi exit-code rule is **not** a setting. It is the client's
-confirmed rule. Which zone's exit is code-gated by default is set per zone on
-the Devices page.
+confirmed rule. Which zones' exits are code-gated is set per pass type
+(§6).
 
 ## 10. Privacy (Phases 3 and 5)
 
@@ -332,7 +342,7 @@ Admin in the console, which is how the flows are tested locally.
 
 **Implemented in Phase 5:**
 - **Requests** page: a host raises a request (visitor name, mobile, optional
-  email, company chosen from the Directory, pass type, entry mode, zones, exit-code exits, visit
+  email, company chosen from the Directory (or added there, F2), pass type, entry mode, zones, visit
   time, valid until, purpose). The visitor gets the link by SMS (and email if
   given). The host sees status, details (IDs masked), photo, documents and
   history; can send a new link (the old one stops working) or cancel with a

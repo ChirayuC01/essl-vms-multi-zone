@@ -60,8 +60,8 @@ export async function visitRequestRoutes(app: FastifyInstance): Promise<void> {
   // host holds no pass-type, zone or directory permissions, and needs only names.
   app.get("/visit-requests/options", { preHandler: requireAnyPermission("visit_requests:create", "visit_requests:update", "walkins:create") }, async (_request, reply) => {
     const [passTypes, zones, companies, departments, hosts] = await prisma.$transaction([
-      prisma.passType.findMany({ where: { isActive: true }, orderBy: { name: "asc" }, select: { id: true, name: true, entryModes: true, maxValidityDays: true, exitCodeRequired: true } }),
-      prisma.zone.findMany({ where: { isActive: true }, orderBy: { name: "asc" }, select: { id: true, name: true, parentZoneId: true, exitCodeDefault: true } }),
+      prisma.passType.findMany({ where: { isActive: true }, orderBy: { name: "asc" }, select: { id: true, name: true, entryModes: true, maxValidityDays: true, exitCodeRequired: true, exitCodeZoneIds: true } }),
+      prisma.zone.findMany({ where: { isActive: true }, orderBy: { name: "asc" }, select: { id: true, name: true, parentZoneId: true } }),
       prisma.company.findMany({ where: { isActive: true }, orderBy: { name: "asc" }, select: { id: true, name: true } }),
       prisma.department.findMany({ where: { isActive: true }, orderBy: { name: "asc" }, select: { id: true, name: true } }),
       prisma.appUser.findMany({ where: { isActive: true }, orderBy: [{ name: "asc" }, { email: "asc" }], select: { id: true, name: true, email: true } }),

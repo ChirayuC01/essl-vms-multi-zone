@@ -6,7 +6,8 @@ import { api, ApiError, getApiBase, getToken, type VisitRequestDetail, type Visi
 import { useAuth } from "@/lib/auth";
 import { formatBytes, formatDateTime, requestTone } from "@/lib/format";
 import { refresh, useApi } from "@/lib/swr";
-import { Alert, Badge, Button, Card, Field, Input, Select, Table } from "@/components/ui";
+import { Alert, Badge, Button, Card, Field, Input, SearchSelect, Table } from "@/components/ui";
+import { addToDirectory } from "@/components/profile-fields";
 
 const LABELS: Record<string, string> = {
   name: "Name",
@@ -178,10 +179,9 @@ export default function RequestDetailPage({ params }: { params: Promise<{ id: st
             )}
             {r.canReview && can("zone_widen:update") && (r.pass.state === "PROVISIONED" || r.pass.state === "INSIDE") && (
               <div className="flex flex-wrap items-end gap-2">
-                <Select className="max-w-xs" value={widenTo} onChange={(e) => setWidenTo(e.target.value)}>
-                  <option value="">Add a zone…</option>
-                  {options?.zones.filter((z) => !r.pass!.zoneIds.includes(z.id)).map((z) => <option key={z.id} value={z.id}>{z.name}</option>)}
-                </Select>
+                <div className="w-full max-w-xs">
+                  <SearchSelect value={widenTo} onChange={setWidenTo} options={(options?.zones ?? []).filter((z) => !r.pass!.zoneIds.includes(z.id)).map((z) => ({ value: z.id, label: z.name }))} placeholder="Add a zone…" />
+                </div>
                 <Button disabled={!widenTo} loading={busy === "widen"} onClick={() => void act("widen", `/api/entries/${r.pass!.id}/widen`, { zoneId: widenTo })}>Widen pass</Button>
               </div>
             )}
@@ -196,17 +196,23 @@ export default function RequestDetailPage({ params }: { params: Promise<{ id: st
               <>
                 <div className="flex flex-wrap items-end gap-2">
                   <Field label="Company" hint="From the Directory">
-                    <Select value={companyPick ?? r.companyId ?? ""} onChange={(e) => setCompanyPick(e.target.value)}>
-                      <option value="">—</option>
-                      {options?.companies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                    </Select>
+                    <SearchSelect
+                      value={companyPick ?? r.companyId ?? ""}
+                      onChange={setCompanyPick}
+                      options={(options?.companies ?? []).map((c) => ({ value: c.id, label: c.name }))}
+                      emptyLabel="—"
+                      onAdd={can("directory:create") ? (name) => addToDirectory("companies", name) : undefined}
+                    />
                   </Field>
-                  {(options?.departments.length ?? 0) > 0 && (
+                  {((options?.departments.length ?? 0) > 0 || can("directory:create")) && (
                     <Field label="Department" hint="Only if the pass type needs one">
-                      <Select value={departmentId} onChange={(e) => setDepartmentId(e.target.value)}>
-                        <option value="">—</option>
-                        {options?.departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-                      </Select>
+                      <SearchSelect
+                        value={departmentId}
+                        onChange={setDepartmentId}
+                        options={(options?.departments ?? []).map((d) => ({ value: d.id, label: d.name }))}
+                        emptyLabel="—"
+                        onAdd={can("directory:create") ? (name) => addToDirectory("departments", name) : undefined}
+                      />
                     </Field>
                   )}
                   <Button variant="primary" loading={busy === "clear"} onClick={() => void act("clear", undefined, { ...(companyPick ? { companyId: companyPick } : {}), ...(departmentId ? { departmentId } : {}) })}>Clear — issue the pass</Button>

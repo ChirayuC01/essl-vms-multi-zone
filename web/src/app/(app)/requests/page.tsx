@@ -25,6 +25,7 @@ export default function RequestsPage() {
   return (
     <div className="space-y-4">
       <h1 className="text-xl font-semibold">Visit requests</h1>
+      <p className="text-sm text-[var(--text-muted)]">For a planned visit: you invite the visitor, they fill in their own details and selfie on their phone, and the pass is issued when you Clear it (or at once, if the pass type needs no Clear).</p>
       {notice && <Alert tone="ok">{notice}</Alert>}
       {can("visit_requests:create") && (
         <Accordion title="New visit request">

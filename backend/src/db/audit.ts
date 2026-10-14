@@ -62,6 +62,7 @@ export const AuditAction = {
   // who it admits, so it is recorded with before/after like any access change.
   ZONE_CREATED: "ZONE_CREATED",
   ZONE_UPDATED: "ZONE_UPDATED",
+  ZONE_DELETED: "ZONE_DELETED",
   DEVICE_ZONE_CHANGED: "DEVICE_ZONE_CHANGED",
   // Site settings: detail carries each changed key with its old and new value.
   SETTINGS_CHANGED: "SETTINGS_CHANGED",

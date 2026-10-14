@@ -1,7 +1,24 @@
 "use client";
 
-import type { DirectoryList, FieldRule, PassType, Person } from "@/lib/api";
-import { Field, Input, Select } from "@/components/ui";
+import { api, type DirectoryList, type FieldRule, type PassType, type Person } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
+import { refresh } from "@/lib/swr";
+import { Field, Input, SearchSelect, Select } from "@/components/ui";
+
+/**
+ * Add a company or department from a dropdown (F2 #6) and return its id.
+ * Audited server-side like the Directory page; needs `directory:create`.
+ */
+export async function addToDirectory(kind: "companies" | "departments", name: string): Promise<string> {
+  const created = await api<{ id: string }>(`/api/${kind}`, { method: "POST", body: { name } });
+  await Promise.all([refresh(`/api/${kind}`), refresh("/api/visit-requests/options")]);
+  return created.id;
+}
+
+/** Directory entries as dropdown options: active ones, plus the current pick. */
+export function directoryOptions(list: { id: string; name: string; isActive?: boolean }[] | undefined, current?: string) {
+  return (list ?? []).filter((x) => x.isActive !== false || x.id === current).map((x) => ({ value: x.id, label: x.name }));
+}
 
 // The profile fields of a person, shown or hidden and marked required by the
 // person's pass type (or the default rule for employees and untyped
@@ -97,6 +114,8 @@ export function ProfileFields({
   /** Masked values already saved, shown as "on file" (edit form only). */
   onFile?: Partial<Record<MaskedField, string | null>>;
 }) {
+  const { can } = useAuth();
+  const canAdd = can("directory:create");
   const set = (key: keyof ProfileDraft, value: string) => onChange({ ...draft, [key]: value });
   const label = (text: string, field: keyof ProfileDraft) => (ruleOf(field, category, passType) === "required" ? `${text} *` : text);
   const show = (field: keyof ProfileDraft) => ruleOf(field, category, passType) !== "hidden";
@@ -110,18 +129,24 @@ export function ProfileFields({
       {show("email") && <Field label={label("Email", "email")}><Input type="email" value={draft.email} onChange={(e) => set("email", e.target.value)} /></Field>}
       {show("companyId") && (
         <Field label={label("Company", "companyId")}>
-          <Select value={draft.companyId} onChange={(e) => set("companyId", e.target.value)}>
-            <option value="">Select company</option>
-            {companies?.items.filter((x) => x.isActive || x.id === draft.companyId).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
-          </Select>
+          <SearchSelect
+            value={draft.companyId}
+            onChange={(v) => set("companyId", v)}
+            options={directoryOptions(companies?.items, draft.companyId)}
+            emptyLabel="Select company"
+            onAdd={canAdd ? (name) => addToDirectory("companies", name) : undefined}
+          />
         </Field>
       )}
       {show("departmentId") && (
         <Field label={label("Department", "departmentId")}>
-          <Select value={draft.departmentId} onChange={(e) => set("departmentId", e.target.value)}>
-            <option value="">Select department</option>
-            {departments?.items.filter((x) => x.isActive || x.id === draft.departmentId).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
-          </Select>
+          <SearchSelect
+            value={draft.departmentId}
+            onChange={(v) => set("departmentId", v)}
+            options={directoryOptions(departments?.items, draft.departmentId)}
+            emptyLabel="Select department"
+            onAdd={canAdd ? (name) => addToDirectory("departments", name) : undefined}
+          />
         </Field>
       )}
       {show("designation") && <Field label={label("Designation", "designation")}><Input maxLength={100} value={draft.designation} onChange={(e) => set("designation", e.target.value)} /></Field>}

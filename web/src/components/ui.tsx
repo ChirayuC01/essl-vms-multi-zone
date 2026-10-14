@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes } from "react";
+import { useId, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes } from "react";
 
 // Small shared vocabulary of building blocks. Every colour comes from a CSS
 // variable (see globals.css), so per-client branding in Phase 6 never has to
@@ -180,6 +180,121 @@ export function PasswordInput(props: Omit<InputHTMLAttributes<HTMLInputElement>,
 
 export function Select(props: SelectHTMLAttributes<HTMLSelectElement>) {
   return <select {...props} className={`${CONTROL} ${props.className ?? ""}`} />;
+}
+
+export interface SearchOption { value: string; label: string }
+
+/**
+ * A dropdown you can type into to filter (F2 #5). `emptyLabel`, when given,
+ * is a first option with value "" (e.g. "Not specified"). `onAdd`, when
+ * given, offers "+ Add …" for text matching no option; it must create the
+ * entry and return its value, which is then selected (F2 #6). Keyboard:
+ * arrows move, Enter picks, Escape closes.
+ */
+export function SearchSelect({
+  value,
+  onChange,
+  options,
+  emptyLabel,
+  placeholder = "Type to search…",
+  onAdd,
+  disabled,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  options: SearchOption[];
+  emptyLabel?: string;
+  placeholder?: string;
+  onAdd?: (text: string) => Promise<string>;
+  disabled?: boolean;
+}) {
+  const listId = useId();
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [active, setActive] = useState(0);
+  const [adding, setAdding] = useState(false);
+  const [addError, setAddError] = useState<string | null>(null);
+  const selected = options.find((o) => o.value === value);
+  const text = query.trim().toLowerCase();
+  const matches = [
+    ...(emptyLabel !== undefined && !text ? [{ value: "", label: emptyLabel }] : []),
+    ...options.filter((o) => o.label.toLowerCase().includes(text)),
+  ];
+  const canAdd = onAdd !== undefined && text !== "" && !options.some((o) => o.label.toLowerCase() === text);
+  const rows = matches.length + (canAdd ? 1 : 0);
+
+  const pick = async (index: number) => {
+    if (index < matches.length) onChange(matches[index]!.value);
+    else if (canAdd && onAdd) {
+      setAdding(true);
+      setAddError(null);
+      try {
+        onChange(await onAdd(query.trim()));
+      } catch (err) {
+        setAddError(err instanceof Error ? err.message : "could not add it");
+      } finally {
+        setAdding(false);
+      }
+    }
+    setQuery("");
+    setOpen(false);
+  };
+
+  return (
+    <div className="relative">
+      <input
+        role="combobox"
+        aria-expanded={open}
+        aria-controls={listId}
+        aria-autocomplete="list"
+        aria-activedescendant={open && rows > 0 ? `${listId}-${active}` : undefined}
+        className={CONTROL}
+        disabled={disabled || adding}
+        placeholder={selected ? selected.label : emptyLabel && !value ? emptyLabel : placeholder}
+        value={open ? query : selected?.label ?? (value ? value : "")}
+        onFocus={() => { setOpen(true); setQuery(""); setActive(0); }}
+        onBlur={() => setOpen(false)}
+        onChange={(e) => { setQuery(e.target.value); setActive(0); setOpen(true); }}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowDown") { e.preventDefault(); setOpen(true); setActive((i) => Math.min(i + 1, rows - 1)); }
+          else if (e.key === "ArrowUp") { e.preventDefault(); setActive((i) => Math.max(i - 1, 0)); }
+          else if (e.key === "Enter" && open && rows > 0) { e.preventDefault(); void pick(active); }
+          else if (e.key === "Escape") { setOpen(false); setQuery(""); }
+        }}
+      />
+      {open && (
+        <ul id={listId} role="listbox" className="absolute z-20 mt-1 max-h-60 w-full overflow-auto rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] py-1 text-sm shadow-lg">
+          {matches.map((o, i) => (
+            <li
+              key={o.value || "__empty"}
+              id={`${listId}-${i}`}
+              role="option"
+              aria-selected={o.value === value}
+              className={`cursor-pointer px-3 py-1.5 ${i === active ? "bg-[var(--surface-muted)]" : ""} ${o.value === value ? "font-medium" : ""}`}
+              onMouseDown={(e) => { e.preventDefault(); void pick(i); }}
+              onMouseEnter={() => setActive(i)}
+            >
+              {o.label}
+            </li>
+          ))}
+          {canAdd && (
+            <li
+              id={`${listId}-${matches.length}`}
+              role="option"
+              aria-selected={false}
+              className={`cursor-pointer px-3 py-1.5 text-[var(--brand)] ${active === matches.length ? "bg-[var(--surface-muted)]" : ""}`}
+              onMouseDown={(e) => { e.preventDefault(); void pick(matches.length); }}
+              onMouseEnter={() => setActive(matches.length)}
+            >
+              + Add &ldquo;{query.trim()}&rdquo;
+            </li>
+          )}
+          {rows === 0 && <li className="px-3 py-1.5 text-[var(--text-muted)]">No match</li>}
+        </ul>
+      )}
+      {addError && <span role="alert" className="mt-1 block text-xs text-[var(--danger)]">{addError}</span>}
+    </div>
+  );
 }
 
 export function Alert({ tone = "danger", children }: { tone?: Tone; children: ReactNode }) {

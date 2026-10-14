@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { api, type DirectoryItem, type DirectoryList, type Paged, type Person } from "@/lib/api";
 import { refresh, useApi } from "@/lib/swr";
-import { Alert, Badge, Button, Card, Field, Input, Select, Table } from "@/components/ui";
+import { Alert, Badge, Button, Card, Field, Input, SearchSelect, Table } from "@/components/ui";
 import { useAuth } from "@/lib/auth";
 
 export default function DirectoryPage() {
@@ -61,8 +61,8 @@ export default function DirectoryPage() {
     </div>
     <Card title="Bulk assignment">
       <div className="mb-3 grid gap-3 sm:grid-cols-3">
-        <Field label="Company"><Select value={companyId} onChange={(e) => setCompanyId(e.target.value)}><option value="">No change</option>{companies?.items.filter((x) => x.isActive).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</Select></Field>
-        <Field label="Department"><Select value={departmentId} onChange={(e) => setDepartmentId(e.target.value)}><option value="">No change</option>{departments?.items.filter((x) => x.isActive).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</Select></Field>
+        <Field label="Company"><SearchSelect value={companyId} onChange={setCompanyId} options={(companies?.items ?? []).filter((x) => x.isActive).map((x) => ({ value: x.id, label: x.name }))} emptyLabel="No change" /></Field>
+        <Field label="Department"><SearchSelect value={departmentId} onChange={setDepartmentId} options={(departments?.items ?? []).filter((x) => x.isActive).map((x) => ({ value: x.id, label: x.name }))} emptyLabel="No change" /></Field>
         <div className="flex items-end"><Button variant="primary" disabled={!selected.length || (!companyId && !departmentId)} onClick={assign}>Assign {selected.length} selected</Button></div>
       </div>
       <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{people?.items.map((person) => <label key={person.id} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={selected.includes(person.id)} onChange={() => setSelected((ids) => ids.includes(person.id) ? ids.filter((id) => id !== person.id) : [...ids, person.id])} />{person.name} <span className="text-xs text-[var(--text-muted)]">{person.category}</span></label>)}</div>

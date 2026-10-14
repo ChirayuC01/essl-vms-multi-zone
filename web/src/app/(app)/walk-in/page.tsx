@@ -36,6 +36,7 @@ export default function WalkInPage() {
   return (
     <div className="space-y-4">
       <h1 className="text-xl font-semibold">Walk-in</h1>
+      <p className="text-sm text-[var(--text-muted)]">For a visitor who arrives without a request: Security enters the visit here and takes the visitor through the same steps as the phone link, on this PC.</p>
       {notice && <Alert tone="ok">{notice}</Alert>}
       {activeId ? (
         <Card

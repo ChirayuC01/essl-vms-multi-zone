@@ -50,6 +50,7 @@ export default function QuickProvisionPage() {
 
   return (
     <div className="mx-auto max-w-2xl space-y-4">
+      <p className="text-sm text-[var(--text-muted)]">For a visitor already registered: find them by their ID, check the photo against the person in front of you, and issue today&apos;s pass.</p>
       <Card title="Provision a returning visitor">
         <form
           className="flex flex-wrap items-end gap-3"

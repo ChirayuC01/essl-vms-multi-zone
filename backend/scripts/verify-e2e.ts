@@ -3404,7 +3404,7 @@ async function main() {
     const yardRes = await zoneCreate({ name: "E2E Yard", parentZoneId: premiseZone.id });
     check("a child zone can be created under it", yardRes.statusCode === 201, yardRes.body);
     const yardZone = JSON.parse(yardRes.body) as { id: string; exitCodeDefault: boolean };
-    check("each zone keeps its own exit-code default", premiseZone.exitCodeDefault && !yardZone.exitCodeDefault);
+    check("a zone has no exit-code setting of its own; an old client's flag is ignored (F2 #10)", !premiseZone.exitCodeDefault && !yardZone.exitCodeDefault);
     const zoneDuplicate = await zoneCreate({ name: "e2e premise" });
     check("zone names are unique case-insensitively", zoneDuplicate.statusCode === 409, zoneDuplicate.body);
     const zoneCycle = await app.inject({
@@ -3490,6 +3490,13 @@ async function main() {
       "a yard-zone employee also gets the premise terminals they must pass first",
       JSON.stringify(await desiredGates(yardEmployeeId)) === JSON.stringify(Object.values(zoneGates).sort()),
     );
+
+    // F2 B: an employee can be registered by zone, expanded to its terminals.
+    const byZone = await app.inject({ method: "POST", url: "/api/people", headers: auth(token), payload: { ...registration("Registered By Zone", "EMPZONEREG"), category: "EMPLOYEE", zoneIds: [yardZone.id] } });
+    check("an employee can be registered with a zone instead of terminals", byZone.statusCode === 201, byZone.body);
+    check("...and gets every terminal of the zone and the zones around it", JSON.stringify(await desiredGates(JSON.parse(byZone.body).id)) === JSON.stringify(Object.values(zoneGates).sort()));
+    const byEmptyZone = await app.inject({ method: "POST", url: "/api/people", headers: auth(token), payload: { ...registration("Empty Zone Hire", "EMPZONEEMPTY"), category: "EMPLOYEE", zoneIds: [emptyZoneId] } });
+    check("...a zone with no terminals yet is refused", byEmptyZone.statusCode === 400, byEmptyZone.body);
 
     await app.inject({ method: "PATCH", url: `/api/zones/${emptyZoneId}`, headers: auth(token), payload: { isActive: false } });
     const inactiveGrant = await app.inject({
@@ -3667,7 +3674,13 @@ async function main() {
       fieldRules: { designation: "required", mobile: "hidden", companyId: "hidden", departmentId: "hidden" },
     });
     check("a pass type can be created with its field rules", official.statusCode === 201, official.body);
-    check("a new pass type needs the exit code unless told otherwise", JSON.parse(official.body).exitCodeRequired === true);
+    check("a new pass type needs no exit code unless it names exits (F2 #10)", JSON.parse(official.body).exitCodeRequired === false);
+    const premiseForType = await prisma.zone.findFirstOrThrow({ where: { name: "E2E Premise" } });
+    check("a type requiring the exit code must name which zones' exits", (await pt("POST", "/api/pass-types", { name: "E2E No Exits", exitCodeRequired: true })).statusCode === 400);
+    check("...a zone that does not exist is refused", (await pt("POST", "/api/pass-types", { name: "E2E Bad Exit", exitCodeRequired: true, exitCodeZoneIds: ["nope"] })).statusCode === 400);
+    const namedExits = await pt("POST", "/api/pass-types", { name: "E2E Named Exit", exitCodeZoneIds: [premiseForType.id] });
+    check("...naming exits turns the code on", namedExits.statusCode === 201 && JSON.parse(namedExits.body).exitCodeRequired === true, namedExits.body);
+    check("a multi-entry-only type needs no exits named", (await pt("POST", "/api/pass-types", { name: "E2E Multi Only", entryModes: ["MULTI_ENTRY"], exitCodeRequired: true })).statusCode === 201);
     const officialId = JSON.parse(official.body).id as string;
     const rep = await pt("POST", "/api/pass-types", {
       name: "E2E Credential Rep",
@@ -3835,13 +3848,39 @@ async function main() {
     check("multi entry never schedules a removal after use", Object.values(await gatesOf(laterId)).every((g) => g.unloadAt?.getTime() === outside.retentionExpiresAt?.getTime()));
     await close(laterId);
 
-    // --- single entry, office pass: the outer exit waits for the code
+    // --- F2 #10: no pass type = no exit code, whatever was ticked
+    const general = await issue({ zoneIds: [zPremise.id], entryMode: "SINGLE_ENTRY", exitCodeZoneIds: [zPremise.id] });
+    const generalId = JSON.parse(general.body).entry.id as string;
+    check("a single-entry pass with no type needs no exit code: the exit loads with the pass", Object.keys(await gatesOf(generalId)).sort().join() === "oIn,oOut", general.body);
+    await drainAll();
+    await close(generalId);
+
+    // --- single entry, office pass: the type names the outer exit
     // F1: a per-pass choice is no longer accepted; the field is ignored.
+    const officeType = await prisma.passType.create({ data: { name: "E2E Office Exit", entryModes: [EntryMode.SINGLE_ENTRY, EntryMode.MULTI_ENTRY], exitCodeZoneIds: [zPremise.id] } });
+    await prisma.person.update({ where: { id: gv.id }, data: { passTypeId: officeType.id } });
     const office = await issue({ zoneIds: [zPremise.id], entryMode: "SINGLE_ENTRY", exitCodeZoneIds: [] });
     const officeId = JSON.parse(office.body).entry.id as string;
     const officeGates = await gatesOf(officeId);
     check("single-entry office pass: only the outer entry loads; the exit waits for the code", Object.keys(officeGates).join() === "oIn", Object.keys(officeGates).join());
-    check("the pass records the office exit as code-gated by default", JSON.parse(office.body).entry.exitCodeZoneIds.join() === zPremise.id);
+    check("the pass records the office exit as code-gated, from its type", JSON.parse(office.body).entry.exitCodeZoneIds.join() === zPremise.id);
+    // F2 #9 / #10: a live pass keeps its rule; the zone it names stays active.
+    const retype = await ge("PATCH", `/api/pass-types/${officeType.id}`, { exitCodeRequired: false });
+    check("editing a pass type says how many live passes keep the old rule", retype.statusCode === 200 && JSON.parse(retype.body).livePasses === 1, retype.body);
+    check("...and the live pass keeps it", (await prisma.entry.findUniqueOrThrow({ where: { id: officeId } })).exitCodeZoneIds.join() === zPremise.id);
+    await ge("PATCH", `/api/pass-types/${officeType.id}`, { exitCodeRequired: true });
+    check("a zone a live pass uses cannot be deactivated", (await ge("PATCH", `/api/zones/${zPremise.id}`, { isActive: false })).statusCode === 409);
+    const typo = await ge("POST", "/api/zones", { name: "E2E Typo Zone" });
+    const typoId = JSON.parse(typo.body).id as string;
+    const del = await app.inject({ method: "DELETE", url: `/api/zones/${typoId}`, headers: auth(token) });
+    check("a zone never used can be deleted", del.statusCode === 204 && (await prisma.zone.count({ where: { id: typoId } })) === 0, del.body);
+    check("...and the deletion is audited", (await prisma.auditLog.count({ where: { action: "ZONE_DELETED", entityId: typoId } })) === 1);
+    const usedDel = await app.inject({ method: "DELETE", url: `/api/zones/${zPremise.id}`, headers: auth(token) });
+    check("a used zone cannot be deleted, only deactivated", usedDel.statusCode === 409 && usedDel.body.includes("terminals"), usedDel.body);
+    const moved = await ge("POST", "/api/zones", { name: "E2E Movable" });
+    const movedId = JSON.parse(moved.body).id as string;
+    check("a zone can be moved under another later", (await ge("PATCH", `/api/zones/${movedId}`, { parentZoneId: zPremise.id })).statusCode === 200);
+    await app.inject({ method: "DELETE", url: `/api/zones/${movedId}`, headers: auth(token) });
     await drainAll();
     await oIn.sim.punch(geNow(), 0, "ZONEV1" as unknown as number);
     const inGateAfter = (await gatesOf(officeId)).oIn!;
@@ -3865,7 +3904,7 @@ async function main() {
     check("after the 10 minutes both terminals are emptied", Object.values(await gatesOf(officeId)).every((g) => g.state === "DONE"));
     await close(officeId);
 
-    // --- single entry, yard pass: the yard zone has no exit-code default
+    // --- single entry, yard pass: the type does not name the yard exit
     const yardFree = await issue({ zoneIds: [zYard.id], entryMode: "SINGLE_ENTRY", exitCodeZoneIds: [zPremise.id, zYard.id] });
     const yardFreeId = JSON.parse(yardFree.body).entry.id as string;
     check("yard pass: the yard exit loads, only the outer exit waits (a per-pass tick is ignored)", Object.keys(await gatesOf(yardFreeId)).sort().join() === "oIn,yIn,yOut");
@@ -3873,7 +3912,7 @@ async function main() {
     await close(yardFreeId);
 
     // --- F1: the pass type decides whether the exit needs the code
-    const codeType = await prisma.passType.create({ data: { name: "E2E Code Exit", entryModes: [EntryMode.SINGLE_ENTRY] } });
+    const codeType = await prisma.passType.create({ data: { name: "E2E Code Exit", entryModes: [EntryMode.SINGLE_ENTRY], exitCodeZoneIds: [zPremise.id] } });
     const freeType = await prisma.passType.create({ data: { name: "E2E Free Exit", entryModes: [EntryMode.SINGLE_ENTRY], exitCodeRequired: false } });
     // F2 #13: a pass takes its holder's pass type; another one is refused.
     await prisma.person.update({ where: { id: gv.id }, data: { passTypeId: codeType.id } });
@@ -4401,9 +4440,13 @@ async function main() {
     };
     const hostX = await prisma.appUser.findUniqueOrThrow({ where: { email: "host@vms.local" } });
     const hostXTok = JSON.parse((await app.inject({ method: "POST", url: "/api/auth/login", payload: { email: "host@vms.local", password: "role-password" } })).body).token as string;
+    const hostAdds = await xc("POST", "/api/companies", { name: "E2E Host Added Co" }, hostXTok);
+    check("a host can add a company from the request form (F2 #6)", hostAdds.statusCode === 201, hostAdds.body);
+    // F2 #10: the pass type names the code-gated exit (the office).
+    const xcType = await prisma.passType.create({ data: { name: "E2E Exit Code Visitor", exitCodeZoneIds: [zOff.id] } });
     const visitor = async (name: string, pin: string, mobile: string) => {
       await testPhoto(pin);
-      const p = JSON.parse((await xc("POST", "/api/people", { ...registration(name, pin), mobile })).body) as { id: string };
+      const p = JSON.parse((await xc("POST", "/api/people", { ...registration(name, pin), mobile, passTypeId: xcType.id })).body) as { id: string };
       return p.id;
     };
     const issueNow = async (personId: string, entryMode: "SINGLE_ENTRY" | "MULTI_ENTRY", host = hostX.id) => {

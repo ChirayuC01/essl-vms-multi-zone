@@ -358,11 +358,13 @@ export async function provisionPerson(input: ProvisionInput): Promise<ProvisionR
     if (!devices.some((d) => d.role !== DeviceRole.OUT)) {
       throw new ServiceError(409, "the selected zones have no entry terminal placed in them yet");
     }
-    // F1: the pass type decides whether the exit needs the code (no type =
-    // required); the zones decide which exits. Nobody overrides it per pass.
-    if (input.entryMode === EntryMode.SINGLE_ENTRY && (passType?.exitCodeRequired ?? true)) {
-      const closure = devices.map((d) => d.zoneId).filter((z): z is string => z !== null);
-      exitCodeZoneIds = (await prisma.zone.findMany({ where: { id: { in: closure }, exitCodeDefault: true }, select: { id: true } })).map((z) => z.id);
+    // F1 / F2 #10: the pass type decides whether the exit needs the code
+    // and at which zones' exits; no type = no code. Copied onto the pass, so
+    // a later edit of the type leaves this pass as issued. Nobody overrides
+    // it per pass.
+    if (input.entryMode === EntryMode.SINGLE_ENTRY && passType?.exitCodeRequired) {
+      const closure = new Set(devices.map((d) => d.zoneId).filter((z): z is string => z !== null));
+      exitCodeZoneIds = passType.exitCodeZoneIds.filter((id) => closure.has(id));
     }
   } else {
     devices = await resolveTargetDevices(input.deviceIds);

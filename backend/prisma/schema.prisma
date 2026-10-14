@@ -255,9 +255,11 @@ model PassType {
   credentialLabel        String?     @map("credential_label")
   // A pass of this type ends no later than the credential's expiry.
   credentialCapsValidity Boolean     @default(false) @map("credential_caps_validity")
-  // Single entry: whether the exit needs the exit code (F1). Which exits is
-  // the zones' `exitCodeDefault`. Final — no per-pass override.
+  // Single entry: whether the exit needs the exit code (F1), and which
+  // zones' exits (F2 #10). Final — no per-pass override; a pass copies the
+  // result when issued, so editing a type affects new passes only.
   exitCodeRequired       Boolean     @default(true) @map("exit_code_required")
+  exitCodeZoneIds        String[]    @default([]) @map("exit_code_zone_ids")
   isActive               Boolean     @default(true) @map("is_active")
   createdAt              DateTime    @default(now()) @map("created_at")
   updatedAt              DateTime    @updatedAt @map("updated_at")
@@ -440,9 +442,8 @@ model Zone {
   name            String
   parentZoneId    String?  @map("parent_zone_id")
   isActive        Boolean  @default(true) @map("is_active")
-  // Whether this zone's exit gates are code-gated by default on a
-  // single-entry pass. The per-pass choice starts from this value; it is a
-  // site decision (the office exit by default, the yard exit optional).
+  // No longer read (F2 #10): which exits need the code is set on the pass
+  // type. Kept because upgrade migrations are additive.
   exitCodeDefault Boolean  @default(false) @map("exit_code_default")
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")

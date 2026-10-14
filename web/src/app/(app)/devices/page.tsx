@@ -6,7 +6,7 @@ import { ZonesCard } from "@/components/zones-card";
 import { useAuth } from "@/lib/auth";
 import { useApi, refresh } from "@/lib/swr";
 import { formatDateTime, formatRelative } from "@/lib/format";
-import { Alert, Badge, Button, Card, Empty, Field, Input, Select, Stat } from "@/components/ui";
+import { Alert, Badge, Button, Card, Empty, Field, Input, SearchSelect, Select, Stat } from "@/components/ui";
 
 // Device status. Every identifying field shown here — capacity, firmware,
 // algorithm — comes from the device's own INFO response, never from a spec
@@ -446,17 +446,13 @@ export default function DevicesPage() {
                   <Stat
                     label="Zone"
                     value={
-                      <Select
-                        className="mt-1 py-1 text-sm"
+                      <SearchSelect
                         value={device.zoneId ?? ""}
                         disabled={savingZone === device.id}
-                        onChange={(e) => saveZone(device.id, e.target.value)}
-                      >
-                        <option value="">Not placed</option>
-                        {zones?.items.filter((z) => z.isActive || z.id === device.zoneId).map((z) => (
-                          <option key={z.id} value={z.id}>{z.name}</option>
-                        ))}
-                      </Select>
+                        onChange={(v) => saveZone(device.id, v)}
+                        options={(zones?.items ?? []).filter((z) => z.isActive || z.id === device.zoneId).map((z) => ({ value: z.id, label: z.name }))}
+                        emptyLabel="Not placed"
+                      />
                     }
                     sub="the zone whose gate this terminal is"
                   />

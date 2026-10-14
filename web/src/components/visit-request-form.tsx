@@ -3,8 +3,11 @@
 import { useMemo, useState } from "react";
 import { api, ApiError, type VisitRequestOptions } from "@/lib/api";
 import { useApi } from "@/lib/swr";
-import { Alert, Button, Field, Input, Select } from "@/components/ui";
+import { Alert, Button, Field, Input, SearchSelect, Select } from "@/components/ui";
+import { addToDirectory } from "@/components/profile-fields";
+import { useAuth } from "@/lib/auth";
 import { localInput, ValidUntilField } from "@/components/valid-until-field";
+import { ZonePicker } from "@/components/zone-picker";
 import { endOfIstDay } from "@/lib/format";
 
 /**
@@ -13,6 +16,7 @@ import { endOfIstDay } from "@/lib/format";
  */
 export function VisitRequestForm({ walkIn = false, onCreated }: { walkIn?: boolean; onCreated: (id: string, message: string) => void }) {
   const { data: options } = useApi<VisitRequestOptions>("/api/visit-requests/options");
+  const { can } = useAuth();
   const [form, setForm] = useState({ visitorName: "", visitorMobile: "", visitorEmail: "", purpose: "" });
   const [companyId, setCompanyId] = useState("");
   const [passTypeId, setPassTypeId] = useState("");
@@ -30,12 +34,12 @@ export function VisitRequestForm({ walkIn = false, onCreated }: { walkIn?: boole
   const entryMode = modes.includes(mode) ? mode : modes[0]!;
   const covered = useMemo(() => {
     const byId = new Map((options?.zones ?? []).map((z) => [z.id, z]));
-    const out = new Map<string, { id: string; name: string; exitCodeDefault: boolean }>();
+    const out = new Map<string, { id: string; name: string }>();
     for (const id of zoneIds) for (let z = byId.get(id); z && !out.has(z.id); z = z.parentZoneId ? byId.get(z.parentZoneId) : undefined) out.set(z.id, z);
     return [...out.values()];
   }, [zoneIds, options]);
   // F1: the pass type decides; shown here, never chosen per request.
-  const codeExits = passType?.exitCodeRequired ? covered.filter((z) => z.exitCodeDefault) : [];
+  const codeExits = passType?.exitCodeRequired ? covered.filter((z) => passType.exitCodeZoneIds.includes(z.id)) : [];
   const set = (key: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) => setForm((f) => ({ ...f, [key]: e.target.value }));
 
   async function create() {
@@ -77,25 +81,22 @@ export function VisitRequestForm({ walkIn = false, onCreated }: { walkIn?: boole
         <Field label="Visitor name"><Input value={form.visitorName} onChange={set("visitorName")} maxLength={100} /></Field>
         {walkIn && (
           <Field label="Host" hint="Who the visitor is meeting">
-            <Select value={hostId} onChange={(e) => setHostId(e.target.value)}>
-              <option value="">Select…</option>
-              {options?.hosts.map((h) => <option key={h.id} value={h.id}>{h.name ?? h.email}</option>)}
-            </Select>
+            <SearchSelect value={hostId} onChange={setHostId} options={(options?.hosts ?? []).map((h) => ({ value: h.id, label: h.name ?? h.email }))} placeholder="Type a name…" />
           </Field>
         )}
         <Field label="Mobile" hint={walkIn ? "The verification code goes here" : "The link and the verification code go here"}><Input value={form.visitorMobile} onChange={set("visitorMobile")} inputMode="tel" maxLength={20} /></Field>
         <Field label="Email" hint={walkIn ? "Optional" : "Optional — the link is emailed too"}><Input type="email" value={form.visitorEmail} onChange={set("visitorEmail")} maxLength={200} /></Field>
-        <Field label="Company" hint="From the Directory. Not listed? Ask an Admin to add it, or choose at Clear.">
-          <Select value={companyId} onChange={(e) => setCompanyId(e.target.value)}>
-            <option value="">Not specified</option>
-            {options?.companies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </Select>
+        <Field label="Company" hint={can("directory:create") ? "From the Directory; type a new name to add it." : "From the Directory. Not listed? Ask an Admin to add it, or choose at Clear."}>
+          <SearchSelect
+            value={companyId}
+            onChange={setCompanyId}
+            options={(options?.companies ?? []).map((c) => ({ value: c.id, label: c.name }))}
+            emptyLabel="Not specified"
+            onAdd={can("directory:create") ? (name) => addToDirectory("companies", name) : undefined}
+          />
         </Field>
         <Field label="Pass type">
-          <Select value={passTypeId} onChange={(e) => setPassTypeId(e.target.value)}>
-            <option value="">Select…</option>
-            {options?.passTypes.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-          </Select>
+          <SearchSelect value={passTypeId} onChange={setPassTypeId} options={(options?.passTypes ?? []).map((t) => ({ value: t.id, label: t.name }))} />
         </Field>
         <Field label="Entry mode" hint={entryMode === "SINGLE_ENTRY" ? "One visit" : "Come and go until the pass ends"}>
           <Select value={entryMode} onChange={(e) => setMode(e.target.value as typeof mode)}>
@@ -107,14 +108,7 @@ export function VisitRequestForm({ walkIn = false, onCreated }: { walkIn?: boole
         <ValidUntilField from={from} until={until} onChange={setUntil} singleEntry={entryMode === "SINGLE_ENTRY"} maxDays={passType?.maxValidityDays} />
       </div>
       <Field label="Zones" hint="A zone also opens the gates of every zone around it">
-        <div className="flex flex-wrap gap-4">
-          {options?.zones.map((z) => (
-            <label key={z.id} className="flex items-center gap-2 text-sm">
-              <input type="checkbox" checked={zoneIds.includes(z.id)} onChange={() => { setZoneIds((ids) => (ids.includes(z.id) ? ids.filter((x) => x !== z.id) : [...ids, z.id])); }} />
-              {z.name}
-            </label>
-          ))}
-        </div>
+        <ZonePicker zones={options?.zones ?? []} value={zoneIds} onChange={setZoneIds} />
       </Field>
       {entryMode === "SINGLE_ENTRY" && passType && covered.length > 0 && (
         <Field label="Exit code" hint="Set by the pass type">

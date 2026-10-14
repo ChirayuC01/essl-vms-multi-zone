@@ -9,6 +9,7 @@ import { AuditAction, auditRow } from "../db/audit.js";
 import { actorId } from "./auth.js";
 import { isJpeg, jpegDimensions } from "./jpeg.js";
 import { MAX_USER_ID_LENGTH, parseUserId, photoPathFor } from "../user-id.js";
+import { zoneDevices } from "../services/zones.js";
 import { hasPermission, requirePermission } from "./permissions.js";
 import { assignEmployeeDevices, removeEmployeeDevice } from "../services/employee-access.js";
 import { describeGaps, profileGaps } from "../services/pass-types.js";
@@ -90,6 +91,9 @@ export const createPersonSchema = z.object({
   ...identityFields,
   ...profileFields,
   deviceIds: z.array(z.string().min(1)).max(50).default([]),
+  // Employees: zones grant the terminals of each zone and every zone around
+  // it, expanded now and stored per terminal (as on the person page).
+  zoneIds: z.array(z.string().min(1)).max(50).default([]),
   // The ID already typed on the terminal (device-first), or one the operator
   // chooses. Never auto-allocated — an ID somebody has to read back off a
   // person card is a decision, not a side effect.
@@ -104,8 +108,8 @@ export const createPersonSchema = z.object({
       message: `user ID must be letters and digits only, 1-${MAX_USER_ID_LENGTH} characters`,
     }),
 }).superRefine((value, ctx) => {
-  if (value.category === PersonCategory.EMPLOYEE && value.deviceIds.length === 0) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "employees require at least one device", path: ["deviceIds"] });
+  if (value.category === PersonCategory.EMPLOYEE && value.deviceIds.length + value.zoneIds.length === 0) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "employees require at least one zone or device", path: ["deviceIds"] });
   }
 });
 
@@ -223,6 +227,11 @@ export async function personRoutes(app: FastifyInstance): Promise<void> {
 
     if (input.category === PersonCategory.EMPLOYEE && !(await hasPermission(request, "person_category:update"))) {
       return reply.code(403).send({ error: "only an administrator can register employees" });
+    }
+    if (input.category === PersonCategory.EMPLOYEE && input.zoneIds.length > 0) {
+      const fromZones = (await zoneDevices(input.zoneIds)).map((d) => d.id);
+      input.deviceIds = [...new Set([...input.deviceIds, ...fromZones])];
+      if (input.deviceIds.length === 0) return reply.code(400).send({ error: "the selected zones have no terminals placed in them yet" });
     }
     const [company, department] = await prisma.$transaction([
       prisma.company.findFirst({ where: { id: input.companyId ?? "", isActive: true } }),

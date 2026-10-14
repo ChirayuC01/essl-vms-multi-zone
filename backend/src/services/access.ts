@@ -84,7 +84,12 @@ export const RESOURCES = {
 
   devices: { label: "Terminals", group: "Terminals", actions: ["view", "create", "update"], notes: { create: "register", update: "role, zone, patterns, timezone" } },
   device_refresh: { label: "Refresh from terminal", group: "Terminals", actions: ["update"] },
-  zones: { label: "Zones", group: "Terminals", actions: ["view", "create", "update"] },
+  zones: {
+    label: "Zones",
+    group: "Terminals",
+    actions: ["view", "create", "update", "delete"],
+    notes: { update: "rename, move, deactivate", delete: "only a zone never used (a typo)" },
+  },
   commands: { label: "Command queue", group: "Terminals", actions: ["view", "update"], notes: { update: "retry a command" } },
   maintenance: {
     label: "Maintenance jobs",

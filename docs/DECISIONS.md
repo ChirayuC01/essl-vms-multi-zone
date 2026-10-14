@@ -137,6 +137,10 @@ carried at the top; their full history is in `legacy/`.
 | 2026-10-14 | The reconciliation sweep takes visitors from `pass_gate` (loaded, or cleared within `RECONCILE_REMOVED_DAYS`, default 30) rather than from entry states and PROVISION commands; Employees as in 0.4.20 | A gate is the two-zone truth for "should this face be on this terminal"; a recently cleared gate is the dangerous direction | F3 B2 |
 | 2026-10-14 | The failed-commands alert counts a failure only if it is under 7 days old and no later command of the same type for the same person on that terminal succeeded. The command queue still lists every failure | A permanent critical alert gets ignored (0.4.x field case) | F3 B4 |
 | 2026-10-14 | B3 (face counted after one of two commands) does not apply to two-zone: a gate counts a face only when both commands succeeded on that terminal, and only a LOADED gate gives one back. Pinned by e2e | Checked, no code change | F3 B3 |
+| 2026-10-14 | A new pass type needs the exit code only if it names exits; a single-entry type that requires the code must name at least one zone (a site with no zones yet is exempt) | No half-configured rule that silently gates nothing | F2 #10 |
+| 2026-10-14 | Widening a live pass uses its pass type's current exit-code zones | Widening is a new action; it follows today's rule like a new pass | F2 #10 |
+| 2026-10-14 | New access cell `zones:delete` (Administrator only by default); delete is refused for a zone with sub-zones, terminals, passes, requests or pass-type exit settings, and audited `ZONE_DELETED` | The one place "delete" removes a row: a typo nothing references | F2 #9 |
+| 2026-10-14 | Searchable dropdowns for every list that comes from data (companies, departments, pass types, hosts, zones, report filters); fixed two- to four-option lists (category, entry mode, kind, yes/no, status, field rule) and the admin-only role pickers stay native | Search only helps where the list grows | F2 #5 |
 
 ## Open (awaiting client)
 

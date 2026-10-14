@@ -197,8 +197,6 @@ export interface DirectoryList { items: DirectoryItem[] }
 
 export interface Zone extends DirectoryItem {
   parentZoneId: string | null;
-  /** Whether this zone's exit is code-gated by default on a single-entry pass. */
-  exitCodeDefault: boolean;
   gates: { IN: number; OUT: number; BOTH: number };
   /** Set while the zone lacks an entry or exit terminal. */
   warning: string | null;
@@ -532,6 +530,8 @@ export interface PassType {
   credentialLabel: string | null;
   credentialCapsValidity: boolean;
   exitCodeRequired: boolean;
+  /** Zones whose exits need the code, when `exitCodeRequired` (F2 #10). */
+  exitCodeZoneIds: string[];
   isActive: boolean;
 }
 export interface PassTypeList { items: PassType[]; fields: Record<string, string>; rules: FieldRule[] }
@@ -589,8 +589,8 @@ export interface VisitRequestDetail extends Omit<VisitRequestRow, "passTypeName"
 }
 
 export interface VisitRequestOptions {
-  passTypes: { id: string; name: string; entryModes: ("SINGLE_ENTRY" | "MULTI_ENTRY")[]; maxValidityDays: number | null; exitCodeRequired: boolean }[];
-  zones: { id: string; name: string; parentZoneId: string | null; exitCodeDefault: boolean }[];
+  passTypes: { id: string; name: string; entryModes: ("SINGLE_ENTRY" | "MULTI_ENTRY")[]; maxValidityDays: number | null; exitCodeRequired: boolean; exitCodeZoneIds: string[] }[];
+  zones: { id: string; name: string; parentZoneId: string | null }[];
   companies: { id: string; name: string }[];
   departments: { id: string; name: string }[];
   hosts: { id: string; name: string | null; email: string }[];

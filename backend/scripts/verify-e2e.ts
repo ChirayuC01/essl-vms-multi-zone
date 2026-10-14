@@ -47,6 +47,7 @@ import { resetLimits } from "../src/services/rate-limit.js";
 import { expireRequests } from "../src/services/visit-review.js";
 import { issueDueExitCodes } from "../src/services/exit-codes.js";
 import { outageCheck } from "../src/services/outages.js";
+import { reconcileSweep } from "../src/services/reconcile.js";
 
 const SN = "E2ESIMDEVICE01";
 // IDs are TEXT. Numeric-looking ones are still the common case, and at least
@@ -3891,6 +3892,26 @@ async function main() {
     await close(typedFreeId);
     await prisma.person.update({ where: { id: gv.id }, data: { passTypeId: null } });
 
+    // --- F3 B3: a face counts only when both halves landed on that terminal
+    const facesOn = async (id: string) => (await prisma.device.findUniqueOrThrow({ where: { id } })).facesUsed;
+    const halfFacesBefore = await facesOn(oIn.id);
+    const halfLoaded = await issue({ zoneIds: [zPremise.id], entryMode: "MULTI_ENTRY" });
+    const halfId = JSON.parse(halfLoaded.body).entry.id as string;
+    await tick();
+    for (let i = 0; i < 10; i++) {
+      const cmd = await oIn.sim.poll();
+      if (!cmd) break;
+      await oIn.sim.ack(cmd.wireId, cmd.text.includes("BIOPHOTO") ? -1001 : 0);
+    }
+    check("a terminal whose photo was refused is not counted as loaded (B3)", (await gatesOf(halfId)).oIn?.state === "LOADING" && (await facesOn(oIn.id)) === halfFacesBefore);
+    // The operator retries the photo (the console's Retry): now both halves landed.
+    const refused = await prisma.syncCommand.findFirstOrThrow({ where: { entryId: halfId, targetDeviceId: oIn.id, type: CommandType.PUSH_PHOTO, status: CommandStatus.FAILED } });
+    check("...the operator can retry the refused photo", (await ge("POST", `/api/commands/${refused.id}/retry`)).statusCode === 200);
+    await drainAll();
+    check("...after which it is counted exactly once", (await gatesOf(halfId)).oIn?.state === "LOADED" && (await facesOn(oIn.id)) === halfFacesBefore + 1);
+    await close(halfId);
+    check("...and ending the pass gives exactly that face back", (await facesOn(oIn.id)) === halfFacesBefore, `${await facesOn(oIn.id)} vs ${halfFacesBefore}`);
+
     // --- widening
     const narrow = await issue({ zoneIds: [zPremise.id], entryMode: "MULTI_ENTRY" });
     const narrowId = JSON.parse(narrow.body).entry.id as string;
@@ -4593,6 +4614,158 @@ async function main() {
     check("a hostile file name never reaches the disk path", stored.every((d) => !d.storedPath.includes("..") && !d.fileName.includes("/")), JSON.stringify(stored.map((d) => [d.fileName, d.storedPath])));
     check("no selfie was accepted from fuzzed bytes", (await prisma.visitRequest.findFirstOrThrow({ where: { visitorMobile: "9777000001" } })).selfiePath === null);
     resetLimits();
+  }
+
+  // ======================================================================
+  section("37. Revoked employees — a terminal VMS never assigned, failed removals, rotation, alert clearing (F3 B1 B2 B4)");
+  // ======================================================================
+  {
+    const inGate = await prisma.device.findUniqueOrThrow({ where: { serialNo: SN } });
+    const outGate = await prisma.device.upsert({
+      where: { serialNo: "E2ESIMOUTGATE" },
+      create: { serialNo: "E2ESIMOUTGATE", name: "simulated out gate", role: "OUT", timezoneOffsetMinutes: TZ_OFFSET },
+      update: {},
+    });
+    invalidateDevice(outGate.serialNo);
+    const outSim = new SimulatedDevice(app, outGate.serialNo);
+    await device.drain(50);
+    await outSim.drain(50);
+
+    // Device-local wall clock a minute from now: after any resignation made
+    // in this section, which is what a punch has to be to prove anything.
+    const localSoon = (): string =>
+      new Date(Date.now() + (TZ_OFFSET + 1) * 60_000).toISOString().slice(0, 19).replace("T", " ");
+    const punchOn = async (serialNo: string, pin: string): Promise<void> => {
+      await app.inject({ method: "POST", url: `/iclock/cdata.aspx?SN=${serialNo}&table=ATTLOG`, payload: `${pin}\t${localSoon()}\t1\t15\t0\t0` });
+    };
+    const userOn = async (serialNo: string, pin: string): Promise<void> => {
+      await app.inject({
+        method: "POST",
+        url: `/iclock/cdata.aspx?SN=${serialNo}&table=OPERLOG`,
+        payload: `USER PIN=${pin}\tName=Revoked Test\tPri=0\tPasswd=\tCard=\tGrp=1\tTZ=0000000100000000\tVerify=-1\tViceCard=\tStartDatetime=0\tEndDatetime=0`,
+      });
+    };
+    const employeeOnIn = async (name: string, pin: string): Promise<string> => {
+      const res = await app.inject({ method: "POST", url: "/api/people", headers: auth(token), payload: { ...registration(name, pin), category: "EMPLOYEE", deviceIds: [inGate.id] } });
+      check(`employee ${pin} registered`, res.statusCode === 201, res.body);
+      return JSON.parse(res.body).id as string;
+    };
+    const resign = (personId: string) => app.inject({ method: "POST", url: `/api/people/${personId}/resign`, headers: auth(token), payload: {} });
+    const outDeletes = (personId: string) =>
+      prisma.syncCommand.findMany({ where: { personId, targetDeviceId: outGate.id, type: CommandType.DEPROVISION }, orderBy: { seq: "asc" } });
+    // Collect OUT's queue until `commandId` is handed over, acking everything
+    // ahead of it with 0. The target is acked with `returnCode`, or left SENT.
+    const deliver = async (commandId: string, returnCode: number | null): Promise<void> => {
+      for (let i = 0; i < 100; i++) {
+        const cmd = await outSim.poll();
+        if (!cmd) return;
+        const row = await prisma.syncCommand.findFirst({ where: { targetDeviceId: outGate.id, deviceCmdId: cmd.wireId } });
+        if (row?.id !== commandId) {
+          await outSim.ack(cmd.wireId);
+          continue;
+        }
+        if (returnCode !== null) await outSim.ack(cmd.wireId, returnCode);
+        return;
+      }
+    };
+    const alertIds = async (): Promise<string[]> => {
+      const res = await app.inject({ method: "GET", url: "/api/alerts", headers: auth(token) });
+      return (JSON.parse(res.body).items as { id: string }[]).map((a) => a.id);
+    };
+
+    // A: resigned with an access row for IN only, then punches at OUT.
+    const resignedId = await employeeOnIn("Revoked Out Gate", "EMPREVOKE1");
+    await resign(resignedId);
+    check("resign with an IN-only row and no OUT punch queues nothing for OUT", (await outDeletes(resignedId)).length === 0);
+    const punchesBefore = await prisma.punchEvent.count({ where: { deviceId: outGate.id } });
+    await punchOn(outGate.serialNo, "EMPREVOKE1");
+    const afterPunch = await outDeletes(resignedId);
+    check("a resigned employee's OUT punch queues a DEPROVISION on OUT", afterPunch.length === 1 && afterPunch[0]?.status === CommandStatus.PENDING);
+    check("...and the punch is still recorded", (await prisma.punchEvent.count({ where: { deviceId: outGate.id } })) === punchesBefore + 1);
+    const outRow = await prisma.employeeDeviceAccess.findUnique({ where: { personId_deviceId: { personId: resignedId, deviceId: outGate.id } } });
+    check("...and OUT gets a not-desired access row the sweep will follow", outRow !== null && !outRow.desiredAccess && outRow.removedAt !== null);
+    check("...and it is audited as a self-heal", (await prisma.auditLog.count({ where: { action: "RECONCILE_HEALED", entityId: resignedId, detail: { path: ["drift"], equals: "REVOKED_EMPLOYEE_PUNCHED" } } })) === 1);
+    check("...and raises a critical alert", (await alertIds()).includes("revoked-employee-punched"));
+    await punchOn(outGate.serialNo, "EMPREVOKE1");
+    check("a second punch while the removal is in flight queues nothing more", (await outDeletes(resignedId)).length === 1);
+
+    // B: that removal FAILS. The sweep must come back to it.
+    await deliver(afterPunch[0]!.id, 1);
+    check("the OUT removal is FAILED", (await outDeletes(resignedId))[0]?.status === CommandStatus.FAILED);
+    check("...the revoked alert stays up", (await alertIds()).includes("revoked-employee-punched"));
+    check("...and the failed-commands alert is raised for OUT", (await alertIds()).includes(`commands-failed:${outGate.id}`));
+    await reconcileSweep(silentLog, 500);
+    const resent = (await outDeletes(resignedId)).filter((c) => (c.payload as { bestEffort?: boolean }).bestEffort);
+    const followUpQuery = await prisma.syncCommand.findFirst({ where: { personId: resignedId, targetDeviceId: outGate.id, type: CommandType.QUERY_USER } });
+    check("the sweep re-queues the failed removal", resent.length === 1 && resent[0]?.status === CommandStatus.PENDING);
+    check("...followed by a presence check", followUpQuery !== null && followUpQuery.seq > (resent[0]?.seq ?? Infinity));
+    await deliver(resent[0]!.id, 1);
+    const resentAfter = await prisma.syncCommand.findUniqueOrThrow({ where: { id: resent[0]!.id } });
+    check("a best-effort re-send replying non-zero is not a FAILED command", resentAfter.status === CommandStatus.SUCCESS && resentAfter.lastError !== null);
+    check("...and does not clear the revoked alert", (await alertIds()).includes("revoked-employee-punched"));
+    // The query is collected (SENT) and the USER reply arrives before its ack.
+    if (followUpQuery) await deliver(followUpQuery.id, null);
+    await userOn(outGate.serialNo, "EMPREVOKE1");
+    const strict = (await outDeletes(resignedId)).filter((c) => c.status === CommandStatus.PENDING);
+    check("the presence check's USER reply drives a strict removal, despite the query being in flight", strict.length === 1 && !(strict[0]?.payload as { bestEffort?: boolean }).bestEffort);
+    await outSim.drain(10);
+    const afterConfirm = await alertIds();
+    check("a confirmed removal clears the revoked alert", !afterConfirm.includes("revoked-employee-punched"));
+    check("...and the failed-commands alert, since a later removal succeeded (B4)", !afterConfirm.includes(`commands-failed:${outGate.id}`), JSON.stringify(afterConfirm));
+
+    // B4: a failure older than 7 days no longer raises the alert.
+    const stale = await prisma.syncCommand.create({
+      data: { type: CommandType.DEVICE_INFO, targetDeviceId: outGate.id, payload: {}, idempotencyKey: `e2e-stale-failure:${Date.now()}`, status: CommandStatus.FAILED, createdAt: new Date(Date.now() - 8 * 86_400_000) },
+    });
+    check("a failure older than 7 days does not raise the failed-commands alert", !(await alertIds()).includes(`commands-failed:${outGate.id}`));
+    await prisma.syncCommand.update({ where: { id: stale.id }, data: { createdAt: new Date() } });
+    check("...the same failure, recent and not followed by a success, does", (await alertIds()).includes(`commands-failed:${outGate.id}`));
+    await prisma.syncCommand.update({ where: { id: stale.id }, data: { status: CommandStatus.SUCCESS } });
+
+    // A resigned employee seen on a terminal with no row, even one adopted
+    // from that terminal, is never given access back.
+    const adoptedId = await employeeOnIn("Revoked Adopted", "EMPREVOKE2");
+    await resign(adoptedId);
+    await prisma.person.update({ where: { id: adoptedId }, data: { adoptedFromDevice: true } });
+    await outSim.drain(10);
+    await userOn(outGate.serialNo, "EMPREVOKE2");
+    const adoptedRow = await prisma.employeeDeviceAccess.findUnique({ where: { personId_deviceId: { personId: adoptedId, deviceId: outGate.id } } });
+    check("a resigned employee's USER record creates a not-desired row", adoptedRow !== null && !adoptedRow.desiredAccess && adoptedRow.removalReason === "Employee resigned");
+    check("...and queues a DEPROVISION whatever adoptedFromDevice says", (await outDeletes(adoptedId)).some((c) => c.status === CommandStatus.PENDING));
+    await outSim.drain(10);
+
+    // A working employee punching on a terminal VMS never assigned is the
+    // site's own enrolment. Never touched.
+    const activeId = await employeeOnIn("Active Unassigned", "EMPACTIVE1");
+    await punchOn(outGate.serialNo, "EMPACTIVE1");
+    check("a non-resigned employee punching on an unassigned terminal is not deleted", (await outDeletes(activeId)).length === 0);
+    check("...and gets no access row from the punch", (await prisma.employeeDeviceAccess.count({ where: { personId: activeId, deviceId: outGate.id } })) === 0);
+    await resign(activeId);
+    check("resign queues a delete on a terminal that has seen the employee punch", (await outDeletes(activeId)).length === 1);
+    await device.drain(50);
+    await outSim.drain(50);
+
+    // B2 rotation: more candidates than the limit, all covered over successive runs.
+    const rotation = await Promise.all(
+      Array.from({ length: 7 }, (_, i) => prisma.person.create({ data: { name: `Rotation ${i}`, category: "EMPLOYEE", esslUserId: `EMPROT${i}` } })),
+    );
+    await prisma.employeeDeviceAccess.createMany({ data: rotation.map((p) => ({ personId: p.id, deviceId: inGate.id })) });
+    const queried = new Set<string>();
+    let maxPerRun = 0;
+    for (let run = 0; run < 100 && queried.size < rotation.length; run++) {
+      const before = new Date();
+      const result = await reconcileSweep(silentLog, 3);
+      maxPerRun = Math.max(maxPerRun, result.queried);
+      const fresh = await prisma.syncCommand.findMany({ where: { type: CommandType.QUERY_USER, personId: { in: rotation.map((p) => p.id) }, createdAt: { gte: before } } });
+      for (const c of fresh) queried.add(c.personId!);
+      if (result.queried === 0) break;
+    }
+    check("the sweep checks at most `limit` pairs per run", maxPerRun <= 3);
+    check("...and rotates through every candidate over successive runs", queried.size === rotation.length, `${queried.size}/${rotation.length}`);
+    await prisma.employeeDeviceAccess.updateMany({ where: { personId: { in: rotation.map((p) => p.id) } }, data: { desiredAccess: false } });
+    await prisma.person.updateMany({ where: { id: { in: rotation.map((p) => p.id) } }, data: { isActive: false, resignedAt: new Date(Date.now() - 400 * 86_400_000) } });
+    await device.drain(100);
+    await outSim.drain(100);
   }
 
   // ======================================================================

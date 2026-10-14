@@ -134,6 +134,9 @@ carried at the top; their full history is in `legacy/`.
 | 2026-10-14 | A zone can be deleted only if it never had a terminal, pass, employee grant or request; otherwise deactivate | Typos are fixable; used zones keep history | Owner (F2) |
 | 2026-10-14 | **A pass always takes its holder's pass type**; the issue-pass form no longer offers a choice. Changing it means editing the person, which re-checks their required details | A separately chosen pass type skipped that type's required fields | Owner (F2) |
 | 2026-10-14 | Port from 0.4.20–0.4.24: B1–B4, F-a, F-f (no shifts), F-g, F-h, F-j, F-m, D1–D3 (F3). Shift master and a time-in-zone attendance report are the second release (F4); unregistered search dropped. Every punch records its zone from now on (F-z) so that report stays correct after zones change | Owner | Owner (F3) |
+| 2026-10-14 | The reconciliation sweep takes visitors from `pass_gate` (loaded, or cleared within `RECONCILE_REMOVED_DAYS`, default 30) rather than from entry states and PROVISION commands; Employees as in 0.4.20 | A gate is the two-zone truth for "should this face be on this terminal"; a recently cleared gate is the dangerous direction | F3 B2 |
+| 2026-10-14 | The failed-commands alert counts a failure only if it is under 7 days old and no later command of the same type for the same person on that terminal succeeded. The command queue still lists every failure | A permanent critical alert gets ignored (0.4.x field case) | F3 B4 |
+| 2026-10-14 | B3 (face counted after one of two commands) does not apply to two-zone: a gate counts a face only when both commands succeeded on that terminal, and only a LOADED gate gives one back. Pinned by e2e | Checked, no code change | F3 B3 |
 
 ## Open (awaiting client)
 

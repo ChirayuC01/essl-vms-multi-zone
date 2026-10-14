@@ -57,7 +57,8 @@ published to the internet only through a Cloudflare Tunnel whose ingress allows
 - **Jobs** (`jobs/index.ts`, pg-boss on the same database, own schema
   `pgboss`):
   - **gate engine** tick every minute (`GATE_TICK_CRON`)
-  - reconcile hourly, 25 IDs per sweep
+  - reconcile hourly, 25 (person, terminal) pairs per sweep, least recently
+    checked first, queued in bulk (F3 B2)
   - retention at 03:30
   - roster scan tick every minute
 
@@ -79,6 +80,13 @@ published to the internet only through a Cloudflare Tunnel whose ingress allows
   loading or loaded is removed, even while the pass itself is active (e.g. a
   used single-entry entry gate). Expected face counts are the loaded and
   unloading gates.
+  - The sweep takes visitors from `pass_gate` (loaded, or cleared within
+    `RECONCILE_REMOVED_DAYS`) and Employees from `employee_device_access`
+    (desired, or removed/resigned within that window, whose removal is
+    re-sent best-effort before each check).
+  - A punch from a resigned or removed Employee re-queues their removal on
+    that terminal at ingest (`removeRevokedEmployeesFromPunches`) and raises
+    the `revoked-employee-punched` alert (F3 B1).
 - **Audit** — every state change writes `audit_log`; system actions have a null
   actor. `sync_command.initiated_by` attributes device writes to operators.
 - **Visitor portal** (Phase 5). Backend routes under `/public-api` (`api/portal.ts`)

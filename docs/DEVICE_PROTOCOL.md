@@ -180,6 +180,8 @@ Record results verbatim in this file and `KNOWN_ISSUES.md`.
 - [ ] Admin card opens the barrier with the VMS stopped; whether a card release produces a punch record
 - [ ] The admin card holder's ID matches neither Employee nor Visitor pattern
 - [ ] Only the VMS manages the roster (no eTimeTrackLite or other software pointed at it)
+- [ ] Attendance log capacity (records and photos, used / total) and the cyclic-delete setting, recorded verbatim (`INSTALL_GUIDE.md` § Terminal attendance log). A full log refuses every face
+- [ ] Reply to `DATA DELETE USERINFO PIN=<pin>` for a PIN **not** on the terminal (`KNOWN_ISSUES.md`, F3 D3)
 
 ## 10. Network setup traps (already debugged once)
 

@@ -358,6 +358,26 @@ If PostgreSQL still stops, inspect `C:\VMS\backend\vms-postgres.err.log` and `C:
 
 Classified Employee/Visitor USER or BIOPHOTO data creates People automatically. Employees stay on the originating device with permanent desired access. Visitors are removed only after their photo is durable, and need a completed profile plus explicit Entry to return. Unmatched/ambiguous IDs are review-only and are never touched.
 
+## Terminal attendance log — enable cyclic deletion
+
+*From 0.4.x (field, October 2026, on a ZAM230 IN terminal).* A terminal whose attendance (T&A) log fills up **refuses every face** (`Failed to verify` / `Error! Reach T&A data max capacity`) and the barrier stays shut. VMS cannot clear terminal logs yet and does not warn as they fill (see `KNOWN_ISSUES.md`), so set every terminal to make room for itself. Do this at installation and on every terminal already in service.
+
+> **Not yet verified on our units.** The menu path and value ranges below are the usual eSSL/ZKTeco firmware layout. They have not been confirmed on the ZAM180 or ZAM230 firmware in the field. Record the exact path, option names and allowed values each firmware actually shows, and correct this section.
+
+**Before you start:** the terminal must show **online** on the VMS Devices page. Cyclic deletion removes the oldest records on the terminal without checking VMS. That is safe only while punches reach VMS within seconds of being made. Clearing or rotating the terminal log never touches the history held in VMS.
+
+1. **Check how full the terminal is:** **Menu → System Info → Device Capacity**. Note *Attendance records* (used / total) and *Attendance photos* (used / total).
+2. **Open the attendance settings:** **Menu → System → Attendance**. On some firmware this is called *Attendance Parameters* or *Att. Rule*.
+3. **Cyclic Delete ATT Data:** change it from *Disabled* to a number. When the log is full, the terminal then deletes that many of its oldest records and carries on, instead of refusing faces. Use the largest value offered (999 if the range is 1–999), so deletions happen rarely and in one batch. Note whether the screen describes the value as a record count or something else.
+4. **Cyclic Delete ATT Photo:** if present, set it the same way. Attendance photo storage is far smaller than record storage (1,000 on the ZAM180) and can fill within days.
+5. **Logs Alert / Attendance Log Alert:** if present, set it to a few thousand records (e.g. 5000). The terminal then warns on screen before the log is full.
+6. **Attendance photos:** if the site does not need a photo of every punch, set the camera/photo option (often *Camera Mode* or *Save attendance photo*) to *No photo*.
+7. **Leave Duplicate Punch Period unchanged.** VMS records its value in each device's settings; if you change it on the terminal, update the Devices page too.
+8. **Save and leave the menu.** Some firmware saves only when you back out of the screen.
+9. **Verify:** scan a known face. It should verify, and the punch should appear in VMS for this terminal with the correct IN/OUT direction.
+
+If the terminal is **already full** and refusing faces, cyclic deletion may only take effect at the next write. In that case clear the attendance data once by hand first: **Menu → Data Mgt. → Delete Data → Delete Attendance Data** (and attendance photos if full). Before doing so, export any history from before VMS was connected that the client needs, and confirm that the latest terminal records already appear in VMS. **Never** choose *Delete All Data* or any option that deletes users: that wipes every enrolled face.
+
 ## Bringing People from another installation
 
 When a site takes over People already registered on another VMS installation — a department moving, or a second site for the same operator — their details and enrollment photographs can be transferred instead of re-registered and re-captured. `backend/scripts/transfer-people.mjs` exports a department or company from the source installation over its operator API and registers them here, creating the companies and departments as it goes.
@@ -390,6 +410,8 @@ version, making the two builds impossible to distinguish. Increment
 If startup reports the legacy `vendor` table, stop. Archive/relocate the old PostgreSQL and photo directories deliberately; do not delete them until ownership confirms no production data is required.
 
 ## Backup
+
+Licence keys cannot be revoked: installing a shorter key over a longer one takes effect at once, but the replaced key stays valid for that installation until its own expiry (`KNOWN_ISSUES.md`).
 
 Back up PostgreSQL, backend photo/logo storage, and ProgramData license marker together. Test restore on a separate machine; a changed MachineGuid requires a replacement paid key. See `LICENSING.md` and the full acceptance guide.
 

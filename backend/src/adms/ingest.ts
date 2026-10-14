@@ -9,7 +9,7 @@ import { processPunches } from "../services/punches.js";
 import { issueDueExitCodes } from "../services/exit-codes.js";
 import { reconcileUserRecord } from "../services/reconcile.js";
 import { enqueue, publishCommand } from "./queue.js";
-import { adoptEmployeeOnDevice } from "../services/employee-access.js";
+import { adoptEmployeeOnDevice, removeRevokedEmployeesFromPunches } from "../services/employee-access.js";
 import {
   attlogHash,
   deviceTimestamps,
@@ -109,7 +109,7 @@ async function autoRegisterPerson(
     where: { esslUserId: { equals: pin, mode: "insensitive" } },
   });
   if (existing) {
-    if (existing.category === PersonCategory.EMPLOYEE) await adoptEmployeeOnDevice(existing.id, device.id);
+    if (existing.category === PersonCategory.EMPLOYEE) await adoptEmployeeOnDevice(existing.id, device.id, existing.resignedAt);
     if (reportedName?.trim() && existing.name === `Device user ${existing.esslUserId}`) {
       return prisma.person.update({ where: { id: existing.id }, data: { name: reportedName.trim() } });
     }
@@ -127,7 +127,7 @@ async function autoRegisterPerson(
       },
     });
     if (category === PersonCategory.EMPLOYEE) {
-      await adoptEmployeeOnDevice(person.id, device.id);
+      await adoptEmployeeOnDevice(person.id, device.id, null);
     }
     await prisma.auditLog.create({
       data: {
@@ -151,7 +151,7 @@ async function autoRegisterPerson(
   } catch (err) {
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
       const concurrent = await prisma.person.findFirst({ where: { esslUserId: { equals: pin, mode: "insensitive" } } });
-      if (concurrent?.category === PersonCategory.EMPLOYEE) await adoptEmployeeOnDevice(concurrent.id, device.id);
+      if (concurrent?.category === PersonCategory.EMPLOYEE) await adoptEmployeeOnDevice(concurrent.id, device.id, concurrent.resignedAt);
       return concurrent;
     }
     throw err;
@@ -310,6 +310,9 @@ export async function ingestAttlog(
 
   if (inserted.length > 0) {
     await discoverPeopleFromPunches(device, inserted.map((p) => p.esslUserId), log);
+    // A punch proves enrolment. A resigned or removed Employee punching here
+    // means a removal failed or was undone; queue it again (0.4.20 field fix).
+    await removeRevokedEmployeesFromPunches(device, inserted, log);
     await publishPunches(device, inserted);
     // Only newly-inserted rows are processed, so a Stamp-replay cannot move
     // an entry twice. Runs inline rather than as a job because the state

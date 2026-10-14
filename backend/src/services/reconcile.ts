@@ -1,6 +1,6 @@
 import { CommandStatus, CommandType, EntryState, GateState, PersonCategory, type Device } from "@prisma/client";
 import { buildSetGroup } from "../adms/commands.js";
-import { enqueue } from "../adms/queue.js";
+import { enqueue, publishCommand } from "../adms/queue.js";
 import type { UserRecord } from "../adms/parsers.js";
 import { config } from "../config/index.js";
 import { AuditAction, auditRow } from "../db/audit.js";
@@ -154,17 +154,32 @@ export async function reconcileUserRecord(
     });
     if (inFlight > 0) return { pin: user.pin, drift: "IN_SYNC", healed: false };
   }
+  // QUERY_USER is excluded: it changes nothing, and the sweep's own query is
+  // still SENT when its USER reply arrives. Counting it made every swept
+  // Employee look "in flight" and the observation was thrown away.
   const employeeInFlight = await prisma.syncCommand.count({
     where: {
       personId: person.id,
       targetDeviceId: device.id,
       entryId: null,
+      type: { not: CommandType.QUERY_USER },
       status: { in: [CommandStatus.PENDING, CommandStatus.SENT, CommandStatus.RETRY] },
     },
   });
   if (employeeInFlight > 0) return { pin: user.pin, drift: "IN_SYNC", healed: false };
 
-  if (person.category === PersonCategory.EMPLOYEE && employeeAccess?.desiredAccess) {
+  // A resigned Employee on a terminal is never in sync, whatever an access
+  // row or adoption flag says. 0.4.19 could re-adopt them with desired
+  // access; undo that here so it cannot recur on the next observation.
+  const resigned = person.category === PersonCategory.EMPLOYEE && person.resignedAt !== null;
+  if (resigned && employeeAccess?.desiredAccess) {
+    await prisma.employeeDeviceAccess.update({
+      where: { id: employeeAccess.id },
+      data: { desiredAccess: false, removedAt: new Date(), removalReason: "Employee resigned" },
+    });
+  }
+
+  if (person.category === PersonCategory.EMPLOYEE && employeeAccess?.desiredAccess && !resigned) {
     if (user.grp !== null && user.grp !== device.normalGroupId) {
       await enqueue({
         type: CommandType.UNBLOCK,
@@ -200,7 +215,7 @@ export async function reconcileUserRecord(
     // This function removes only what it can prove is a stale record of
     // ours. Here the proof runs the other way, so it reports and stops.
     // Provisioning them clears the flag and restores the full self-heal.
-    if (person.adoptedFromDevice) {
+    if (person.adoptedFromDevice && !resigned) {
       log.warn(
         { pin: user.pin, device: device.serialNo },
         "device holds a person enrolled at the terminal and never provisioned by us — " +
@@ -398,12 +413,20 @@ export interface ReconcileResult {
  *
  * Rate-limited on purpose. Every query is a command the device collects on a
  * poll, so reconciling a whole roster at once would fill the queue and starve
- * real work behind it. A slice per run, oldest-checked first, covers the
- * roster over time without ever competing with a provision an operator is
+ * real work behind it. A slice per run, least-recently-checked first, covers
+ * the roster over time without ever competing with a provision an operator is
  * waiting on.
  *
- * Recently closed entries are included: those are the ones whose removal
- * might have been missed, and they are precisely the dangerous direction.
+ * Candidates, one per (person, terminal):
+ *   - a visitor's pass gate that is loaded, or was cleared within
+ *     RECONCILE_REMOVED_DAYS: those removals are the dangerous direction;
+ *   - an Employee with access, or whose access was removed (or who resigned)
+ *     within RECONCILE_REMOVED_DAYS: that removal is re-sent and re-checked.
+ *
+ * Rotation is by the last QUERY_USER (or self-heal PROVISION) for each pair.
+ * Ordering by ID, as before (0.4.20 field fix), picked the same first `limit`
+ * pairs every run and never checked anyone else. Commands go in bulk, not
+ * one statement per row (CLAUDE.md #4).
  */
 export async function reconcileSweep(
   log: Logger,
@@ -412,74 +435,121 @@ export async function reconcileSweep(
   const devices = await prisma.device.findMany({ select: { id: true, serialNo: true } });
   if (devices.length === 0) return { queried: 0, devices: 0 };
 
-  // One row per (person, device): an entry can span more than one device (an
-  // IN terminal and an OUT terminal), and reconciliation has to check the
-  // person's presence on EVERY device it was provisioned onto, not just
-  // whichever device happened to receive the latest PROVISION command.
+  const removedDays = config.reconcileRemovedDays;
+  const removedSince = new Date(Date.now() - removedDays * 86_400_000).toISOString();
+
   const candidates = await prisma.$queryRaw<
-    { personId: string; esslUserId: string; targetDeviceId: string }[]
+    { personId: string; esslUserId: string; targetDeviceId: string; removed: boolean }[]
   >`
-    SELECT DISTINCT ON (q."esslUserId", q."targetDeviceId") *
+    SELECT c."personId", c."esslUserId", c."targetDeviceId", c.removed
       FROM (
-        SELECT v."id" AS "personId", v."essl_user_id" AS "esslUserId",
-               sc."target_device_id" AS "targetDeviceId", e."created_at" AS changed_at
-          FROM "entry" e
-          JOIN "person" v ON v."id" = e."person_id"
-          JOIN "sync_command" sc ON sc."entry_id" = e."id" AND sc."type" = 'PROVISION'::"CommandType"
-         WHERE e."state" IN ('PROVISIONED'::"EntryState", 'INSIDE'::"EntryState", 'REGISTERED'::"EntryState")
-        UNION ALL
-        SELECT v."id", v."essl_user_id", a."device_id", a."updated_at"
-          FROM "employee_device_access" a
-          JOIN "person" v ON v."id" = a."person_id"
-         WHERE a."desired_access" = true
-      ) q
-     ORDER BY q."esslUserId", q."targetDeviceId", q.changed_at DESC
+        SELECT DISTINCT ON (q."personId", q."targetDeviceId") q.*
+          FROM (
+            SELECT v."id" AS "personId", v."essl_user_id" AS "esslUserId",
+                   g."device_id" AS "targetDeviceId", false AS removed
+              FROM "pass_gate" g
+              JOIN "entry" e ON e."id" = g."entry_id"
+              JOIN "person" v ON v."id" = e."person_id"
+             WHERE g."state" IN ('LOADED'::"GateState", 'UNLOADING'::"GateState")
+                OR (g."state" = 'DONE'::"GateState" AND g."loaded_at" IS NOT NULL
+                    AND g."done_at" >= ${removedSince}::timestamptz AT TIME ZONE 'UTC')
+            UNION ALL
+            SELECT v."id", v."essl_user_id", a."device_id",
+                   (a."desired_access" = false OR v."resigned_at" IS NOT NULL)
+              FROM "employee_device_access" a
+              JOIN "person" v ON v."id" = a."person_id"
+             WHERE (a."desired_access" = true AND v."resigned_at" IS NULL)
+                OR (${removedDays} > 0
+                    AND GREATEST(a."removed_at", v."resigned_at") >= ${removedSince}::timestamptz AT TIME ZONE 'UTC')
+          ) q
+         ORDER BY q."personId", q."targetDeviceId", q.removed DESC
+      ) c
+      LEFT JOIN LATERAL (
+        SELECT MAX(s."created_at") AS last
+          FROM "sync_command" s
+         WHERE s."person_id" = c."personId" AND s."target_device_id" = c."targetDeviceId"
+           AND s."type" = 'QUERY_USER'::"CommandType"
+      ) l ON true
+     ORDER BY l.last ASC NULLS FIRST, c."personId", c."targetDeviceId"
      LIMIT ${limit}
   `;
 
-  let queried = 0;
   const bucket = Math.floor(Date.now() / 3_600_000);
-  for (const c of candidates) {
-    const command = await enqueue({
-      type: CommandType.QUERY_USER,
-      targetDeviceId: c.targetDeviceId,
-      payload: { pin: c.esslUserId },
-      // Hourly bucket: a sweep that runs often must not queue the same
-      // question repeatedly, and the answer does not change minute to minute.
-      idempotencyKey: `reconcile-query:${c.targetDeviceId}:${c.esslUserId}:${bucket}`,
-      personId: c.personId,
-    });
-    if (command.status === CommandStatus.PENDING) queried += 1;
-  }
+  const checks = await prisma.syncCommand.createManyAndReturn({
+    data: candidates.flatMap((c) => [
+      // This firmware cannot answer "missing" reliably, so a removed
+      // Employee's delete is simply re-sent. bestEffort: a PIN already gone
+      // may not reply Return=0, and that must not raise a failed-command
+      // alert. The query after it is the real check: if they are still there,
+      // the USER reply drives a normal (strict) removal.
+      ...(c.removed
+        ? [{
+            type: CommandType.DEPROVISION,
+            targetDeviceId: c.targetDeviceId,
+            personId: c.personId,
+            payload: { pin: c.esslUserId, countedOnDevice: false, bestEffort: true },
+            idempotencyKey: `employee-removed-resend:${c.personId}:${c.targetDeviceId}:${bucket}`,
+          }]
+        : []),
+      {
+        type: CommandType.QUERY_USER,
+        targetDeviceId: c.targetDeviceId,
+        personId: c.personId,
+        payload: { pin: c.esslUserId },
+        // Hourly bucket: a sweep that runs often must not queue the same
+        // question repeatedly, and the answer does not change minute to minute.
+        idempotencyKey: `reconcile-query:${c.targetDeviceId}:${c.esslUserId}:${bucket}`,
+      },
+    ]),
+    skipDuplicates: true,
+  });
 
   // This firmware cannot answer "missing" for a QUERY_USER reliably. Re-send
   // the desired employee state once per hour: UPDATE is idempotent and repairs
   // a device purge without putting VMS in the barrier path.
-  const permanent = await prisma.employeeDeviceAccess.findMany({
-    where: { desiredAccess: true, person: { isActive: true, biometric: { isNot: null } } },
-    include: { person: { include: { biometric: true } }, device: true },
-    orderBy: { updatedAt: "asc" },
-    take: limit,
+  const permanent = await prisma.$queryRaw<
+    { id: string; personId: string; deviceId: string; esslUserId: string; name: string; photoPath: string; grp: number }[]
+  >`
+    SELECT a."id", a."person_id" AS "personId", a."device_id" AS "deviceId",
+           v."essl_user_id" AS "esslUserId", v."name", b."photo_path" AS "photoPath",
+           d."normal_group_id" AS grp
+      FROM "employee_device_access" a
+      JOIN "person" v ON v."id" = a."person_id"
+      JOIN "person_biometric" b ON b."person_id" = v."id"
+      JOIN "device" d ON d."id" = a."device_id"
+      LEFT JOIN LATERAL (
+        SELECT MAX(s."created_at") AS last
+          FROM "sync_command" s
+         WHERE s."person_id" = a."person_id" AND s."target_device_id" = a."device_id"
+           AND s."type" = 'PROVISION'::"CommandType"
+      ) l ON true
+     WHERE a."desired_access" = true AND v."is_active" = true AND v."resigned_at" IS NULL
+     ORDER BY l.last ASC NULLS FIRST, a."id"
+     LIMIT ${limit}
+  `;
+  const heals = await prisma.syncCommand.createManyAndReturn({
+    // Interleaved so each PROVISION gets a lower seq than its PUSH_PHOTO.
+    data: permanent.flatMap((access) => [
+      {
+        type: CommandType.PROVISION,
+        targetDeviceId: access.deviceId,
+        personId: access.personId,
+        payload: { pin: access.esslUserId, name: access.name, grp: access.grp },
+        idempotencyKey: `employee-self-heal:${access.id}:${bucket}`,
+      },
+      {
+        type: CommandType.PUSH_PHOTO,
+        targetDeviceId: access.deviceId,
+        personId: access.personId,
+        payload: { pin: access.esslUserId, photoPath: access.photoPath },
+        idempotencyKey: `employee-self-heal-photo:${access.id}:${bucket}`,
+      },
+    ]),
+    skipDuplicates: true,
   });
-  for (const access of permanent) {
-    const photo = access.person.biometric;
-    if (!photo) continue;
-    await enqueue({
-      type: CommandType.PROVISION,
-      targetDeviceId: access.deviceId,
-      personId: access.personId,
-      payload: { pin: access.person.esslUserId, name: access.person.name, grp: access.device.normalGroupId },
-      idempotencyKey: `employee-self-heal:${access.id}:${bucket}`,
-    });
-    await enqueue({
-      type: CommandType.PUSH_PHOTO,
-      targetDeviceId: access.deviceId,
-      personId: access.personId,
-      payload: { pin: access.person.esslUserId, photoPath: photo.photoPath },
-      idempotencyKey: `employee-self-heal-photo:${access.id}:${bucket}`,
-    });
-  }
+  for (const command of [...checks, ...heals]) publishCommand(command);
 
+  const queried = checks.filter((command) => command.type === CommandType.QUERY_USER).length;
   if (queried > 0) {
     log.info({ queried, devices: devices.length }, "reconciliation sweep queued roster checks");
   }

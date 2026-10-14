@@ -24,7 +24,7 @@ const SWEEP_INTERVAL_MS = 60_000;
 export type CommandPayload =
   | { pin: string; name: string; grp: number } // PROVISION
   | { pin: string; photoPath: string } // PUSH_PHOTO
-  | { pin: string; countedOnDevice: boolean } // DEPROVISION
+  | { pin: string; countedOnDevice: boolean; bestEffort?: boolean } // DEPROVISION
   | { pin: string } // QUERY_USER
   | { pin: string; grp: number } // BLOCK / UNBLOCK
   | Record<string, never>; // DEVICE_INFO
@@ -267,11 +267,20 @@ export async function resolveDeviceReply(
   if (!command) return { command: null };
 
   const ok = returnCode === 0;
+  // A reconciliation re-send of a removal may target an ID that is already
+  // gone, and what this firmware returns for that is unverified
+  // (KNOWN_ISSUES.md). Not a failure: the QUERY_USER queued behind it is what
+  // proves presence.
+  const bestEffort =
+    command.type === CommandType.DEPROVISION &&
+    (command.payload as { bestEffort?: boolean } | null)?.bestEffort === true;
   const updated = await prisma.syncCommand.update({
     where: { id: command.id },
     data: {
-      status: ok ? CommandStatus.SUCCESS : CommandStatus.FAILED,
-      lastError: ok ? null : `device Return=${returnCode ?? "(none)"}`,
+      status: ok || bestEffort ? CommandStatus.SUCCESS : CommandStatus.FAILED,
+      lastError: ok
+        ? null
+        : `device Return=${returnCode ?? "(none)"}${bestEffort ? " (best-effort removal re-send; ID likely absent)" : ""}`,
       completedAt: new Date(),
     },
   });

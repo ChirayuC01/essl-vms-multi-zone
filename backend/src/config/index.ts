@@ -102,6 +102,11 @@ const schema = z.object({
   // on a poll, so a whole roster at once would starve real work behind it.
   // The roster is covered over time rather than all at once.
   RECONCILE_BATCH: z.coerce.number().int().min(1).max(500).default(25),
+  // Days a removed face stays in the sweep: an Employee after resigning or
+  // losing a terminal, a visitor after their gate is cleared. The firmware
+  // cannot answer "missing", so an Employee's removal is re-sent and
+  // re-checked hourly for this long. 0 turns the follow-up off.
+  RECONCILE_REMOVED_DAYS: z.coerce.number().int().min(0).max(3650).default(30),
   // How long raw punches are kept before being rolled into day summaries and
   // deleted. The movement record survives the prune — only its granularity is
   // lost — so this is rotation, not erasure.
@@ -211,6 +216,7 @@ export const config = {
   retentionPassesPerRun: env.RETENTION_PASSES_PER_RUN,
   reconcileCron: env.RECONCILE_CRON,
   reconcileBatch: env.RECONCILE_BATCH,
+  reconcileRemovedDays: env.RECONCILE_REMOVED_DAYS,
   databaseLogQueries: env.DATABASE_LOG_QUERIES,
   deviceOfflineAfterSeconds: env.DEVICE_OFFLINE_AFTER_SECONDS,
   gateTickCron: env.GATE_TICK_CRON,
@@ -251,6 +257,7 @@ export function redactedConfig(): Record<string, string | number> {
     databaseLogQueries: String(config.databaseLogQueries),
     reconcileCron: config.reconcileCron,
     reconcileBatch: config.reconcileBatch,
+    reconcileRemovedDays: config.reconcileRemovedDays,
     jobsPoolSize: config.jobsPoolSize,
     jobsSchema: config.jobsSchema,
     licensePublicKeyConfigured: config.licensePublicKey !== null ? "true" : "false",

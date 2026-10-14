@@ -972,3 +972,56 @@ same day in `DECISIONS.md`.
   field order; a request and an issued pass with a 90-day type (latest
   allowed shown, 6 months enabled, 1 year disabled); single entry allows
   only "today"; the person page shows the pass type read-only.
+
+### 2026-10-14 — F3 step 1: resigned-employee removal, sweep rotation, alert clearing, field docs
+
+Plan: `PLAN.md` § F3 (B1, B2, B3, B4, D1–D3), ported from 0.4.20 and later
+field notes in `essl-vms-main`.
+
+- **B1 Resigned employees stay removed** (`services/employee-access.ts`,
+  `adms/ingest.ts`, `services/reconcile.ts`):
+  - Resign targets every access row and every terminal with a punch from the
+    ID; terminals with no row get a not-desired one. Commands in one bulk insert.
+  - `removeRevokedEmployeesFromPunches`: at ATTLOG ingest, a punch from a
+    resigned Employee, or one whose access to that terminal was removed, made
+    after the revocation, queues a DEPROVISION there, writes
+    `RECONCILE_HEALED` (`REVOKED_EMPLOYEE_PUNCHED`). One read, three bulk writes.
+  - Alert `revoked-employee-punched` (critical), derived from the audit rows;
+    clears when a strict removal on that terminal succeeds.
+  - Adoption from a terminal USER record never gives a resigned Employee
+    access; reconciliation always removes them and fixes a stale desired row.
+  - Migration `20261014090000_revoked_employee_reconcile`: index
+    `sync_command(person_id, target_device_id, type, created_at)` (IF NOT
+    EXISTS) and repair of desired rows of resigned people.
+- **B2 Sweep** (`reconcileSweep`): candidates are visitor `pass_gate` rows
+  (loaded, or cleared within `RECONCILE_REMOVED_DAYS`) and Employee access
+  rows (desired, or removed/resigned within the window); ordered by the last
+  QUERY_USER per pair, so it rotates; removed Employees get a best-effort
+  DEPROVISION before the query; the employee self-heal rotates by last
+  PROVISION; all commands in bulk (`createManyAndReturn`). The employee
+  in-flight check ignores QUERY_USER, so the sweep's own reply is no longer
+  dropped. New setting `RECONCILE_REMOVED_DAYS` (default 30, 0 = off).
+- **Best-effort removals** (`adms/queue.ts`): a DEPROVISION marked
+  `bestEffort` that gets `Return≠0` is SUCCESS with the code in `last_error`.
+- **B4** (`services/alerts.ts`): failed-commands alert counts only failures
+  under 7 days old with no later success of the same type for the same person
+  on that terminal.
+- **B3:** checked, not affected (gate counts only after both commands
+  succeed; only LOADED gates give a face back). e2e pins it.
+- **D1–D3:** `INSTALL_GUIDE.md` § Terminal attendance log (cyclic deletion,
+  unverified on our units) and a licence-revocation note; `DEVICE_PROTOCOL.md`
+  §9 two checklist items; `KNOWN_ISSUES.md` rows for the full-log refusal,
+  non-revocable keys, the untested delete-absent-PIN reply, and B1/B4 fixed.
+  `ARCHITECTURE.md`, `.env.example` updated.
+- Tests: unit `employee-access.test.ts` (4, from 0.4.20). e2e section 37
+  (revoked employees across terminals, failed removal → best-effort re-send →
+  strict removal, alerts raised and cleared, 7-day window, adoption, rotation);
+  section 30 B3 checks (refused photo not counted; retry counts once; closing
+  gives it back).
+- **Verified:** typecheck PASS; `npm test` **111/111**; `verify:e2e` **552
+  passed, 0 failed** (after clearing `data/photos-e2e`, left by a run that
+  crashed on a test typo).
+- Owner verification: on the hardware terminal, (1) D3: delete an ID that is
+  not enrolled and record the reply; (2) B1: register an employee on one
+  terminal only, enrol the same ID by hand on the other, punch there, resign,
+  punch again → removal queued, critical alert, cleared once it succeeds.

@@ -79,6 +79,61 @@ async function unresolvedOrphanPins(now: Date): Promise<string[]> {
   return rows.map((r) => r.pin);
 }
 
+/** Failures older than this stop raising the alert; the queue still lists them. */
+const FAILED_ALERT_DAYS = 7;
+
+/**
+ * FAILED commands per terminal that still matter: recent, and not followed by
+ * a SUCCESS of the same type for the same person on the same terminal. Before
+ * this, every failure ever counted, so the critical alert never cleared even
+ * after a retry or a later command had done the job (field, October 2026).
+ */
+async function failuresThatStillMatter(now: Date): Promise<{ targetDeviceId: string; count: number }[]> {
+  const since = new Date(now.getTime() - FAILED_ALERT_DAYS * 86_400_000).toISOString();
+  return prisma.$queryRaw<{ targetDeviceId: string; count: number }[]>`
+    SELECT f."target_device_id" AS "targetDeviceId", COUNT(*)::int AS count
+      FROM "sync_command" f
+     WHERE f."status" = 'FAILED'::"CommandStatus"
+       AND f."created_at" >= ${since}::timestamptz AT TIME ZONE 'UTC'
+       AND NOT EXISTS (
+         SELECT 1 FROM "sync_command" s
+          WHERE s."target_device_id" = f."target_device_id"
+            AND s."type" = f."type"
+            AND s."person_id" IS NOT DISTINCT FROM f."person_id"
+            AND s."status" = 'SUCCESS'::"CommandStatus"
+            AND s."created_at" > f."created_at"
+       )
+     GROUP BY f."target_device_id"
+  `;
+}
+
+/**
+ * Resigned or removed Employees seen punching on a terminal in the last week,
+ * whose removal from that terminal has not since been confirmed. Derived, so
+ * it clears itself the moment a strict DEPROVISION succeeds there.
+ */
+async function revokedEmployeesStillEnrolled(now: Date): Promise<string[]> {
+  const since = new Date(now.getTime() - 7 * 86_400_000).toISOString();
+  const rows = await prisma.$queryRaw<{ pin: string }[]>`
+    SELECT DISTINCT a."detail"->>'pin' AS pin
+      FROM "audit_log" a
+     WHERE a."action" = 'RECONCILE_HEALED'
+       AND a."detail"->>'drift' = 'REVOKED_EMPLOYEE_PUNCHED'
+       AND a."created_at" >= ${since}::timestamptz AT TIME ZONE 'UTC'
+       AND NOT EXISTS (
+         SELECT 1 FROM "sync_command" s
+          WHERE s."person_id" = a."entity_id"
+            AND s."target_device_id" = a."detail"->>'deviceId'
+            AND s."type" = 'DEPROVISION'::"CommandType"
+            AND s."status" = 'SUCCESS'::"CommandStatus"
+            AND s."last_error" IS NULL
+            AND s."completed_at" > a."created_at"
+       )
+     ORDER BY pin ASC
+  `;
+  return rows.map((r) => r.pin);
+}
+
 /**
  * Everything currently wrong, worst first.
  *
@@ -90,7 +145,7 @@ export async function collectAlerts(now: Date = new Date()): Promise<Alert[]> {
   const offlineCutoff = new Date(now.getTime() - config.deviceOfflineAfterSeconds * 1000);
   const stuckCutoff = new Date(now.getTime() - config.commandStuckMinutes * 60_000);
 
-  const [devices, failedCommands, stuckCommands, overdueInsideCount, unknownPins, drift, gaps, license] =
+  const [devices, failedCommands, stuckCommands, overdueInsideCount, unknownPins, drift, gaps, license, revokedPins] =
     await Promise.all([
       prisma.device.findMany({
         select: {
@@ -104,11 +159,7 @@ export async function collectAlerts(now: Date = new Date()): Promise<Alert[]> {
           duplicatePunchPeriodMinutes: true,
         },
       }),
-      prisma.syncCommand.groupBy({
-        by: ["targetDeviceId"],
-        where: { status: CommandStatus.FAILED },
-        _count: { _all: true },
-      }),
+      failuresThatStillMatter(now),
       prisma.syncCommand.groupBy({
         by: ["targetDeviceId"],
         where: {
@@ -124,9 +175,10 @@ export async function collectAlerts(now: Date = new Date()): Promise<Alert[]> {
       faceCountDrift(),
       punchGaps(),
       getLicenseStatus(now),
+      revokedEmployeesStillEnrolled(now),
     ]);
 
-  const failedBy = new Map(failedCommands.map((r) => [r.targetDeviceId, r._count._all]));
+  const failedBy = new Map(failedCommands.map((r) => [r.targetDeviceId, r.count]));
   const stuckBy = new Map(stuckCommands.map((r) => [r.targetDeviceId, r._count._all]));
   const alerts: Alert[] = [];
 
@@ -203,7 +255,7 @@ export async function collectAlerts(now: Date = new Date()): Promise<Alert[]> {
         severity: "critical",
         title: `${failed} command${failed === 1 ? "" : "s"} failed on ${label}`,
         detail:
-          "A failed command means an intended change never reached the terminal — a person not loaded, not removed, or not blocked. The device and the database disagree until this is dealt with.",
+          "A failed command means an intended change never reached the terminal — a person not loaded, not removed, or not blocked. The device and the database disagree until this is dealt with. Failures older than 7 days, or followed by a success of the same command for the same person, are not counted here; the command queue still lists them.",
         action: "Open the command queue, read the error, and retry or resolve each one.",
         entityType: "device",
         entityId: d.id,
@@ -324,6 +376,19 @@ export async function collectAlerts(now: Date = new Date()): Promise<Alert[]> {
       title: `License expires in ${license.daysRemaining} day${license.daysRemaining === 1 ? "" : "s"}`,
       detail: `Expires ${license.expiresAt}.`,
       action: "Install a renewed license key from the License page ahead of time.",
+    });
+  }
+
+  if (revokedPins.length > 0) {
+    alerts.push({
+      id: "revoked-employee-punched",
+      severity: "critical",
+      title: `${revokedPins.length} removed or resigned employee${revokedPins.length === 1 ? "" : "s"} still enrolled on a terminal`,
+      detail:
+        `${revokedPins.join(", ")} punched on a terminal after their access was removed, so the terminal still opens the barrier for them. ` +
+        "A removal has been queued automatically.",
+      action:
+        "Open the command queue and confirm the removal succeeds. If it fails, or the punch recurs, delete the user directly on the terminal and check that no other software (eTimeTrackLite) is re-adding them.",
     });
   }
 

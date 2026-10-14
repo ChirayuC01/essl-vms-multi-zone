@@ -703,7 +703,7 @@ model before it is built. Reference for each item: `essl-vms-main`
 Runs **after F2 step 1** and before F2's larger items, because B1 and B4 are
 gate-security and alert-noise fixes the client will hit first.
 
-1. B1, B2, B4, D1–D3 (security and field knowledge), then B3.
+1. B1, B2, B4, D1–D3 (security and field knowledge), then B3. **Done 14 Oct 2026, awaiting owner verification** (`EXECUTION_LOG.md`).
 2. F-a, F-j, F-m.
 3. F-z, F-h, F-g, then F-f.
 

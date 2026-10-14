@@ -250,7 +250,7 @@ export async function expireRequests(now = new Date()) {
 }
 
 /**
- * Submit, then decide. A host Clear is needed when the visitor type requires
+ * Submit, then decide. A host Clear is needed when the pass type requires
  * one — and, for a walk-in, only while the site's "walk-in requires host
  * Clear" setting is on. Otherwise the pass is issued at once; if that fails
  * (e.g. an ID clash), the request waits for the host like any other.
@@ -266,7 +266,7 @@ export async function submitAndDecide(request: PortalRequest, ctx: VisitorContex
   const name = ((request.submission ?? {}) as { name?: string }).name ?? request.visitorName;
   try {
     const automaticReason = passType && !passType.requiresHostClear
-      ? `the visitor type "${passType.name}" does not require one`
+      ? `the pass type "${passType.name}" does not require one`
       : "walk-ins do not require one (site setting)";
     const cleared = await clearRequest(request.id, ctx.actorId ?? null, { automatic: true, automaticReason });
     await messageHost(request, "PASS_ISSUED", `${name} has been issued a pass to visit you (${when(request.expectedAt)}).`);

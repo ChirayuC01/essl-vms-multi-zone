@@ -84,6 +84,16 @@ profile, a directory bulk assignment, or their pass type's rules change. An
 incomplete visitor appears in the needs-details list and can't be issued a
 pass.
 
+**A pass always takes its holder's pass type** (F2). Issuing a pass offers no
+choice of type; to change it, edit the person, which re-checks their required
+details. A request names its type and Clear stores it on the person.
+
+**How long a pass may run** is counted in IST calendar days, the visit day
+being day 1: a type's maximum validity of 90 days from a visit on 14 October
+allows up to 11 January 23:59. A single-entry pass ends the day it starts.
+The same rule applies to a request and to the pass issued from it, and the
+forms show the latest allowed end before saving.
+
 **Recommended setup for the first two-zone site.** An Admin creates these;
 they're configuration, not built in:
 
@@ -132,7 +142,7 @@ decision is kept with full history.
 
 The **Walk-in** page (Security): register the visit and the host, then the
 same steps as the portal on the gate PC. The pass is issued straight away
-when the site's setting allows it and the visitor type does not need a host
+when the site's setting allows it and the pass type does not need a host
 Clear; otherwise the host is told the visitor is at the gate.
 
 Security enters the same details at the gate, sends and types the mobile OTP,
@@ -163,7 +173,7 @@ it on the person page ("scheduled / loading / loaded / removing / removed").
 | OUT punch on a terminal | That terminal drops the face **10 min** later | Nothing |
 | Pass ends | Entry faces removed; a visitor still inside is listed **overstayed** for Security | Faces removed; a visitor still inside keeps exit access until they leave |
 
-**Whether the exit needs the code** is set once on the **visitor type**
+**Whether the exit needs the code** is set once on the **pass type**
 (Pass types → *Exit code*), not per request; nobody overrides it for one pass.
 **Which exits** it applies to comes from each zone's "exit code by default"
 setting (typically the office/outer exit, not the yard). An exit not covered
@@ -322,7 +332,7 @@ Admin in the console, which is how the flows are tested locally.
 
 **Implemented in Phase 5:**
 - **Requests** page: a host raises a request (visitor name, mobile, optional
-  email, company chosen from the Directory, visitor type, entry mode, zones, exit-code exits, visit
+  email, company chosen from the Directory, pass type, entry mode, zones, exit-code exits, visit
   time, valid until, purpose). The visitor gets the link by SMS (and email if
   given). The host sees status, details (IDs masked), photo, documents and
   history; can send a new link (the old one stops working) or cancel with a
@@ -332,7 +342,7 @@ Admin in the console, which is how the flows are tested locally.
   1. confirm the mobile with an SMS code (the page shows nothing personal
      before this);
   2. read and accept the privacy notice;
-  3. fill the fields the visitor type asks for (a returning visitor sees
+  3. fill the fields the pass type asks for (a returning visitor sees
      their saved details, ID numbers masked);
   4. take a live photo inside a face oval (camera only);
   5. optionally attach documents;
@@ -353,7 +363,7 @@ Reports page, grouped. New for the two-zone product:
 | Report | Who (default) | Answers |
 |---|---|---|
 | Visit requests | report viewers | every request: origin, visitor, company, type, host, visit time, status, number of queries **with the questions**, decision time and note; filter by date, host, company |
-| Visitor type usage | report viewers | passes per visitor type: single/multi, people, how many were used |
+| Pass type usage | report viewers | passes per pass type: single/multi, people, how many were used |
 | Inside now, by zone | on-site viewers | who is inside, in which zone, pass end, **overstayed** |
 | Exit overrides | audit viewers (Security In-charge) | operator, visitor, time, reason |
 | Blacklist history | audit viewers | every blacklisting and lift, operator, reason |

@@ -777,7 +777,7 @@ export const REPORTS: ReportDef[] = [
       { key: "visitor", label: "Visitor" },
       { key: "mobile", label: "Mobile" },
       { key: "company", label: "Company" },
-      { key: "visitor_type", label: "Visitor type" },
+      { key: "pass_type", label: "Pass type" },
       { key: "host", label: "Host" },
       { key: "expected_at", label: "Visit" },
       { key: "status", label: "Status" },
@@ -788,7 +788,7 @@ export const REPORTS: ReportDef[] = [
     ],
     base: (f) => Prisma.sql`
       SELECT v."created_at", v."origin", v."visitor_name" AS visitor, v."visitor_mobile" AS mobile,
-             COALESCE(c."name", v."company_name") AS company, pt."name" AS visitor_type,
+             COALESCE(c."name", v."company_name") AS company, pt."name" AS pass_type,
              COALESCE(h."name", h."email") AS host, v."expected_at", v."status",
              (SELECT COUNT(*) FROM "visit_request_event" e WHERE e."request_id" = v."id" AND e."to_status" = 'QUERIED')::int AS queries,
              (SELECT string_agg(e."note", ' | ' ORDER BY e."created_at") FROM "visit_request_event" e WHERE e."request_id" = v."id" AND e."to_status" = 'QUERIED') AS query_history,
@@ -810,13 +810,13 @@ export const REPORTS: ReportDef[] = [
   },
   {
     key: "pass-type-usage",
-    title: "Visitor type usage",
-    description: "Passes issued per visitor type: single and multi entry, distinct people, and how many were actually used.",
+    title: "Pass type usage",
+    description: "Passes issued per pass type: single and multi entry, distinct people, and how many were actually used.",
     group: "Visits",
     permission: "reports:view",
     filters: ["dateRange"],
     columns: [
-      { key: "visitor_type", label: "Visitor type" },
+      { key: "pass_type", label: "Pass type" },
       { key: "passes", label: "Passes" },
       { key: "single_entry", label: "Single entry" },
       { key: "multi_entry", label: "Multi entry" },
@@ -824,7 +824,7 @@ export const REPORTS: ReportDef[] = [
       { key: "used", label: "Used (came in)" },
     ],
     base: (f) => Prisma.sql`
-      SELECT COALESCE(pt."name", '(no type)') AS visitor_type,
+      SELECT COALESCE(pt."name", '(no type)') AS pass_type,
              COUNT(*)::int AS passes,
              COUNT(*) FILTER (WHERE e."entry_mode" = 'SINGLE_ENTRY')::int AS single_entry,
              COUNT(*) FILTER (WHERE e."entry_mode" = 'MULTI_ENTRY')::int AS multi_entry,
@@ -836,7 +836,7 @@ export const REPORTS: ReportDef[] = [
          ${dateAtLeast(istDate(Prisma.sql`e."created_at"`), f.from)}
          ${dateAtMost(istDate(Prisma.sql`e."created_at"`), f.to)}
        GROUP BY 1
-       ORDER BY passes DESC, visitor_type`,
+       ORDER BY passes DESC, pass_type`,
   },
   {
     key: "zone-presence",

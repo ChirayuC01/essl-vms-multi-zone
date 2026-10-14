@@ -4,23 +4,14 @@ import { useMemo, useState } from "react";
 import { api, ApiError, type DeviceList, type OperatorOptionList, type PassTypeList, type PersonDetail, type ZoneList } from "@/lib/api";
 import { useApi } from "@/lib/swr";
 import { Alert, Button, Field, Input, Select } from "@/components/ui";
+import { localInput, ValidUntilField } from "@/components/valid-until-field";
+import { endOfIstDay } from "@/lib/format";
 
 // Issue a pass. On a site with zones the operator picks zones (a zone also
-// opens the gates of every zone around it). Whether a single-entry exit needs
-// the exit code follows the pass type (F1), never a choice here. A site
-// without zones yet falls back to every registered terminal, as before.
-
-const pad = (n: number) => String(n).padStart(2, "0");
-/** A datetime-local value for a Date, in the browser's local time. */
-function localInput(d: Date): string {
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-function endOfDay(d: Date, plusDays = 0): Date {
-  const e = new Date(d);
-  e.setDate(e.getDate() + plusDays);
-  e.setHours(23, 59, 0, 0);
-  return e;
-}
+// opens the gates of every zone around it). The pass takes the person's own
+// pass type (F2 #13): their details were checked against it, and it decides
+// entry modes, how long the pass may run and the exit code. A site without
+// zones yet falls back to every registered terminal, as before.
 
 export function IssuePassForm({ person, onIssued }: { person: PersonDetail; onIssued: (message: string) => void }) {
   const { data: zoneList } = useApi<ZoneList>("/api/zones");
@@ -32,9 +23,8 @@ export function IssuePassForm({ person, onIssued }: { person: PersonDetail; onIs
   const useZones = zones.length > 0;
   const [zoneIds, setZoneIds] = useState<string[]>([]);
   const [mode, setMode] = useState<"MULTI_ENTRY" | "SINGLE_ENTRY">("MULTI_ENTRY");
-  const [passTypeId, setPassTypeId] = useState(person.passTypeId ?? "");
   const [from, setFrom] = useState(() => localInput(new Date()));
-  const [until, setUntil] = useState(() => localInput(endOfDay(new Date())));
+  const [until, setUntil] = useState(() => localInput(endOfIstDay(new Date())));
   const [purpose, setPurpose] = useState("");
   const [personToMeetId, setPersonToMeetId] = useState("");
   const [busy, setBusy] = useState(false);
@@ -47,12 +37,12 @@ export function IssuePassForm({ person, onIssued }: { person: PersonDetail; onIs
     for (const id of zoneIds) for (let z = byId.get(id); z && !out.has(z.id); z = z.parentZoneId ? byId.get(z.parentZoneId) : undefined) out.add(z.id);
     return [...out].map((id) => byId.get(id)!).filter(Boolean);
   }, [zoneIds, zoneList]);
-  const passType = passTypes?.items.find((t) => t.id === passTypeId);
+  const passType = passTypes?.items.find((t) => t.id === person.passTypeId);
   // No type (General) keeps the zones' defaults, as the backend does.
   const codeExits = (passType?.exitCodeRequired ?? true) ? covered.filter((z) => z.exitCodeDefault) : [];
   const modes = passType?.entryModes ?? ["MULTI_ENTRY", "SINGLE_ENTRY"];
-
-  const preset = (days: number) => setUntil(localInput(endOfDay(new Date(from), days)));
+  // The person's type may not allow the default mode.
+  const entryMode = modes.includes(mode) ? mode : modes[0]!;
 
   async function issue() {
     setBusy(true);
@@ -62,8 +52,7 @@ export function IssuePassForm({ person, onIssued }: { person: PersonDetail; onIs
         method: "POST",
         body: {
           ...(useZones ? { zoneIds } : { deviceIds: (deviceList?.items ?? []).map((d) => d.id) }),
-          ...(passTypeId ? { passTypeId } : {}),
-          entryMode: mode,
+          entryMode,
           retentionPolicy: "CUSTOM",
           expectedInAt: new Date(from).toISOString(),
           validUntil: new Date(until).toISOString(),
@@ -101,15 +90,15 @@ export function IssuePassForm({ person, onIssued }: { person: PersonDetail; onIs
       )}
       <div className="grid gap-3 sm:grid-cols-2">
         {(passTypes?.items.length ?? 0) > 0 && (
-          <Field label="Pass type">
-            <Select value={passTypeId} onChange={(e) => setPassTypeId(e.target.value)}>
-              <option value="">General</option>
-              {passTypes?.items.filter((t) => t.isActive || t.id === passTypeId).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-            </Select>
+          <Field label="Pass type" hint="The person's own; edit the person to change it">
+            <p className="mt-2 text-sm">
+              {passType ? passType.name : "General"}
+              {passType?.maxValidityDays ? <span className="text-[var(--text-muted)]"> · at most {passType.maxValidityDays} day(s)</span> : null}
+            </p>
           </Field>
         )}
-        <Field label="Entry mode" hint={mode === "SINGLE_ENTRY" ? "One visit today; faces leave each terminal 10 min after use" : "Come and go freely until the pass ends"}>
-          <Select value={mode} onChange={(e) => setMode(e.target.value as typeof mode)}>
+        <Field label="Entry mode" hint={entryMode === "SINGLE_ENTRY" ? "One visit today; faces leave each terminal 10 min after use" : "Come and go freely until the pass ends"}>
+          <Select value={entryMode} onChange={(e) => setMode(e.target.value as typeof mode)}>
             {modes.includes("MULTI_ENTRY") && <option value="MULTI_ENTRY">Multi entry</option>}
             {modes.includes("SINGLE_ENTRY") && <option value="SINGLE_ENTRY">Single entry</option>}
           </Select>
@@ -117,21 +106,9 @@ export function IssuePassForm({ person, onIssued }: { person: PersonDetail; onIs
         <Field label="Visit time" hint="Faces load a few minutes before this">
           <Input type="datetime-local" value={from} onChange={(e) => setFrom(e.target.value)} />
         </Field>
-        <Field label="Valid until">
-          <Input type="datetime-local" value={until} onChange={(e) => setUntil(e.target.value)} />
-          <div className="mt-1 flex flex-wrap gap-2 text-xs">
-            <button type="button" className="underline" onClick={() => preset(0)}>today</button>
-            {mode === "MULTI_ENTRY" && (
-              <>
-                <button type="button" className="underline" onClick={() => preset(6)}>1 week</button>
-                <button type="button" className="underline" onClick={() => preset(29)}>1 month</button>
-                <button type="button" className="underline" onClick={() => preset(89)}>3 months</button>
-              </>
-            )}
-          </div>
-        </Field>
+        <ValidUntilField from={from} until={until} onChange={setUntil} singleEntry={entryMode === "SINGLE_ENTRY"} maxDays={passType?.maxValidityDays} />
       </div>
-      {useZones && mode === "SINGLE_ENTRY" && covered.length > 0 && (
+      {useZones && entryMode === "SINGLE_ENTRY" && covered.length > 0 && (
         <Field label="Exit code" hint="Set by the pass type">
           <p className="mt-2 text-sm">{codeExits.length ? `Needed at: ${codeExits.map((z) => `${z.name} exit`).join(", ")}` : "Not needed — the exits load with the pass"}</p>
         </Field>

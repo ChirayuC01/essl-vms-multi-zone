@@ -3874,17 +3874,22 @@ async function main() {
     // --- F1: the pass type decides whether the exit needs the code
     const codeType = await prisma.passType.create({ data: { name: "E2E Code Exit", entryModes: [EntryMode.SINGLE_ENTRY] } });
     const freeType = await prisma.passType.create({ data: { name: "E2E Free Exit", entryModes: [EntryMode.SINGLE_ENTRY], exitCodeRequired: false } });
-    const typedCode = await issue({ zoneIds: [zPremise.id], entryMode: "SINGLE_ENTRY", passTypeId: codeType.id });
+    // F2 #13: a pass takes its holder's pass type; another one is refused.
+    await prisma.person.update({ where: { id: gv.id }, data: { passTypeId: codeType.id } });
+    check("a pass with a type other than the person's is refused", (await issue({ zoneIds: [zPremise.id], entryMode: "SINGLE_ENTRY", passTypeId: freeType.id })).statusCode === 400);
+    const typedCode = await issue({ zoneIds: [zPremise.id], entryMode: "SINGLE_ENTRY" });
     const typedCodeId = JSON.parse(typedCode.body).entry.id as string;
     check("a type needing the exit code: the outer exit waits", Object.keys(await gatesOf(typedCodeId)).join() === "oIn", typedCode.body);
     await drainAll();
     await close(typedCodeId);
-    const typedFree = await issue({ zoneIds: [zYard.id], entryMode: "SINGLE_ENTRY", passTypeId: freeType.id, exitCodeZoneIds: [zPremise.id] });
+    await prisma.person.update({ where: { id: gv.id }, data: { passTypeId: freeType.id } });
+    const typedFree = await issue({ zoneIds: [zYard.id], entryMode: "SINGLE_ENTRY", exitCodeZoneIds: [zPremise.id] });
     const typedFreeId = JSON.parse(typedFree.body).entry.id as string;
     check("a type without the exit code: every exit loads with the pass, whatever was ticked", Object.keys(await gatesOf(typedFreeId)).sort().join() === "oIn,oOut,yIn,yOut", typedFree.body);
     check("...and the pass records no code-gated exit", JSON.parse(typedFree.body).entry.exitCodeZoneIds.length === 0);
     await drainAll();
     await close(typedFreeId);
+    await prisma.person.update({ where: { id: gv.id }, data: { passTypeId: null } });
 
     // --- widening
     const narrow = await issue({ zoneIds: [zPremise.id], entryMode: "MULTI_ENTRY" });
@@ -4017,7 +4022,9 @@ async function main() {
     })).body) as { id: string };
     const portalZone = await prisma.zone.findFirstOrThrow({ where: { name: "E2E Premise" } });
     const soon = new Date(Date.now() + 2 * 3_600_000);
-    const later = new Date(Date.now() + 6 * 3_600_000);
+    // Same IST day as `soon`: a single-entry visit ends the day it starts.
+    const istMidnightAfterSoon = (() => { const ist = new Date(soon.getTime() + 330 * 60_000); return Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), ist.getUTCDate() + 1) - 330 * 60_000; })();
+    const later = new Date(Math.min(Date.now() + 6 * 3_600_000, istMidnightAfterSoon - 60_000));
     const newRequest = (mobile: string, extra: object = {}, as = token) =>
       vr("POST", "/api/visit-requests", {
         visitorName: "Portal Visitor", visitorMobile: mobile, visitorEmail: "portal.visitor@example.com", purpose: "E2E meeting",
@@ -4026,6 +4033,13 @@ async function main() {
 
     check("a request whose pass type forbids its entry mode is refused", (await vr("POST", "/api/pass-types", { name: "E2E Single Only", entryModes: ["SINGLE_ENTRY"] })).statusCode === 201
       && (await newRequest("9123400000", { passTypeId: (await prisma.passType.findFirstOrThrow({ where: { name: "E2E Single Only" } })).id, entryMode: "MULTI_ENTRY" })).statusCode === 400);
+    // F2 A: a request is held to the same length rules as the pass it becomes.
+    check("a single-entry request spanning two days is refused", (await newRequest("9123400000", { validUntil: new Date(soon.getTime() + 30 * 3_600_000).toISOString() })).statusCode === 400);
+    const oneDay = JSON.parse((await vr("POST", "/api/pass-types", { name: "E2E One Day", maxValidityDays: 1 })).body) as { id: string };
+    const istNow = new Date(Date.now() + 330 * 60_000);
+    const tomorrow10 = new Date(Date.UTC(istNow.getUTCFullYear(), istNow.getUTCMonth(), istNow.getUTCDate() + 1, 10) - 330 * 60_000);
+    const overnight = await newRequest("9123400000", { passTypeId: oneDay.id, entryMode: "MULTI_ENTRY", expectedAt: tomorrow10.toISOString(), validUntil: new Date(tomorrow10.getTime() + 23 * 3_600_000).toISOString() });
+    check("a 1-day type counts calendar days: 10:00 to 09:00 next day is refused (under 24 h)", overnight.statusCode === 400 && overnight.body.includes("at most 1 day"), overnight.body);
     const created = await newRequest("+91 91234 00001");
     check("a host raises a visit request", created.statusCode === 201, created.body);
     const reqId = JSON.parse(created.body).id as string;
@@ -4145,7 +4159,7 @@ async function main() {
     check("a host lists only their own requests", hostList.items.length === 1 && hostList.items[0]!.id === own, JSON.stringify(hostList.items.map((i) => i.id)));
     check("...and cannot open someone else's", (await vr("GET", `/api/visit-requests/${reqId}`, undefined, hostTok)).statusCode === 404);
     const hostOptions = await vr("GET", "/api/visit-requests/options", undefined, hostTok);
-    check("a host can load the request form's visitor types and zones", hostOptions.statusCode === 200 && JSON.parse(hostOptions.body).passTypes.some((t: { id: string }) => t.id === portalType.id), hostOptions.body.slice(0, 200));
+    check("a host can load the request form's pass types and zones", hostOptions.statusCode === 200 && JSON.parse(hostOptions.body).passTypes.some((t: { id: string }) => t.id === portalType.id), hostOptions.body.slice(0, 200));
     check("the outbox is Admin-only by default", (await vr("GET", "/api/messages", undefined, hostTok)).statusCode === 403);
 
     // --- the portal's own rate limit
@@ -4494,7 +4508,7 @@ async function main() {
     const zp = await rep("zone-presence");
     check("inside-by-zone shows where the multi-entry visitor is", zp.rows.some((r) => r.pin === "XC2" && r.location === "E2E Premise"), JSON.stringify(zp.rows).slice(0, 300));
     const usage = await rep("pass-type-usage");
-    check("visitor type usage counts passes per type", usage.rows.some((r) => r.visitor_type === "E2E Reviewed Visitor" && (r.passes as number) >= 2));
+    check("pass type usage counts passes per type", usage.rows.some((r) => r.pass_type === "E2E Reviewed Visitor" && (r.passes as number) >= 2));
     const sent = await rep("messages-sent");
     check("messages sent lists them without their text", sent.rows.length > 0 && !("body" in sent.rows[0]!));
     const sentCsv = await csv("messages-sent");

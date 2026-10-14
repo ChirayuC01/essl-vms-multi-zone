@@ -4,7 +4,7 @@ import { z } from "zod";
 
 // Pass types and per-type profile rules (two-zone rebuild, Phase 3).
 //
-// A site's visitor types differ (a customs official needs only a name and a
+// A site's pass types differ (a customs official needs only a name and a
 // designation; a long-term contractor needs a police-clearance answer and an
 // external credential). That difference is configuration on the pass type,
 // never a branch in code (CLAUDE.md #2): each profile field is "required",

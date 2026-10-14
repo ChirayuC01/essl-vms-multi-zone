@@ -27,6 +27,16 @@ export function formatDateInputIst(value: Date): string {
   return `${part("year")}-${part("month")}-${part("day")}`;
 }
 
+/**
+ * The last instant of the `days`-th IST calendar day counting `from`'s day as
+ * day 1 — the server's pass-length rule (`passLengthProblem`).
+ */
+export function endOfIstDay(from: Date, days = 1): Date {
+  const offset = 330 * 60_000;
+  const ist = new Date(from.getTime() + offset);
+  return new Date(Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), ist.getUTCDate() + days) - offset - 1);
+}
+
 export function dayOfMonthIst(value: Date): number {
   return Number(new Intl.DateTimeFormat("en-IN", { timeZone: IST, day: "numeric" }).format(value));
 }

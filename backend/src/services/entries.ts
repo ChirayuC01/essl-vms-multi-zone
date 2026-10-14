@@ -82,6 +82,28 @@ function endOfIstDay(date: Date, inclusiveDays = 1): Date {
 }
 
 /**
+ * How long a pass may run, in calendar days (IST, the visit day is day 1).
+ * One rule for a request and for the pass issued from it, so a request is
+ * never accepted only to be refused at Clear.
+ */
+export function passLengthProblem(
+  passType: { name: string; maxValidityDays: number | null } | null,
+  entryMode: EntryMode,
+  validFrom: Date,
+  validUntil: Date,
+): string | null {
+  if (passType?.maxValidityDays != null && validUntil > endOfIstDay(validFrom, passType.maxValidityDays)) {
+    return `${passType.name} passes last at most ${passType.maxValidityDays} day(s)`;
+  }
+  // One entry, one day: a single-entry face is removed after use, so a
+  // multi-day single-entry pass would lock its holder out after day one.
+  if (entryMode === EntryMode.SINGLE_ENTRY && validUntil > endOfIstDay(validFrom)) {
+    return "single entry passes end the same day; use multi entry for longer passes";
+  }
+  return null;
+}
+
+/**
  * Resolve the retention window's end.
  *
  * There is no device-native expiry — Phase 0 proved `EndDatetime` is stored
@@ -303,10 +325,15 @@ export async function provisionPerson(input: ProvisionInput): Promise<ProvisionR
   });
   if (active) throw new ServiceError(409, `person already has an active entry (${active.state}) — de-provision it first`);
 
-  // Pass type: the one asked for, else the person's own.
-  const passTypeId = input.passTypeId ?? person.passTypeId ?? null;
+  // A pass always takes its holder's pass type. Their details were checked
+  // against that type; a different one would skip its required fields.
+  // Changing it means editing the person, which re-checks them.
+  if (input.passTypeId && input.passTypeId !== person.passTypeId) {
+    throw new ServiceError(400, "a pass takes the person's own pass type; edit the person to change it");
+  }
+  const passTypeId = person.passTypeId ?? null;
   const passType = passTypeId ? await prisma.passType.findUnique({ where: { id: passTypeId } }) : null;
-  if (passTypeId && (!passType || !passType.isActive)) throw new ServiceError(400, "select an active pass type");
+  if (passTypeId && (!passType || !passType.isActive)) throw new ServiceError(400, "the person's pass type is inactive; edit the person to choose an active one");
   if (passType) {
     if (!passType.entryModes.includes(input.entryMode)) {
       throw new ServiceError(400, `${passType.name} passes do not allow ${input.entryMode === EntryMode.SINGLE_ENTRY ? "single" : "multi"} entry`);
@@ -317,15 +344,9 @@ export async function provisionPerson(input: ProvisionInput): Promise<ProvisionR
       if (cap.getTime() <= now.getTime()) throw new ServiceError(409, `${passType.credentialLabel} has expired`);
       if (cap < validUntil) validUntil = cap;
     }
-    if (passType.maxValidityDays !== null && validUntil > endOfIstDay(validFrom, passType.maxValidityDays)) {
-      throw new ServiceError(400, `${passType.name} passes last at most ${passType.maxValidityDays} day(s)`);
-    }
   }
-  // One entry, one day: a single-entry face is removed after use, so a
-  // multi-day single-entry pass would lock its holder out after day one.
-  if (input.entryMode === EntryMode.SINGLE_ENTRY && validUntil > endOfIstDay(validFrom)) {
-    throw new ServiceError(400, "single entry passes end the same day; use multi entry for longer passes");
-  }
+  const lengthProblem = passLengthProblem(passType, input.entryMode, validFrom, validUntil);
+  if (lengthProblem) throw new ServiceError(400, lengthProblem);
 
   // Terminals: by zone (their ancestors included), or an explicit list.
   let devices: Device[];

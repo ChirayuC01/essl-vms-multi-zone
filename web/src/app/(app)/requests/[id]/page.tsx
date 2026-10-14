@@ -202,7 +202,7 @@ export default function RequestDetailPage({ params }: { params: Promise<{ id: st
                     </Select>
                   </Field>
                   {(options?.departments.length ?? 0) > 0 && (
-                    <Field label="Department" hint="Only if the visitor type needs one">
+                    <Field label="Department" hint="Only if the pass type needs one">
                       <Select value={departmentId} onChange={(e) => setDepartmentId(e.target.value)}>
                         <option value="">—</option>
                         {options?.departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}

@@ -4,9 +4,8 @@ import { useMemo, useState } from "react";
 import { api, ApiError, type VisitRequestOptions } from "@/lib/api";
 import { useApi } from "@/lib/swr";
 import { Alert, Button, Field, Input, Select } from "@/components/ui";
-
-const pad = (n: number) => String(n).padStart(2, "0");
-const localInput = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+import { localInput, ValidUntilField } from "@/components/valid-until-field";
+import { endOfIstDay } from "@/lib/format";
 
 /**
  * The visit details a host enters for a planned visit, and Security enters
@@ -21,19 +20,21 @@ export function VisitRequestForm({ walkIn = false, onCreated }: { walkIn?: boole
   const [mode, setMode] = useState<"SINGLE_ENTRY" | "MULTI_ENTRY">("SINGLE_ENTRY");
   const [hostId, setHostId] = useState("");
   const [from, setFrom] = useState(() => { if (walkIn) return localInput(new Date()); const d = new Date(Date.now() + 3_600_000); d.setMinutes(0, 0, 0); return localInput(d); });
-  const [until, setUntil] = useState(() => { const d = new Date(); d.setHours(23, 59, 0, 0); return localInput(d); });
+  const [until, setUntil] = useState(() => localInput(endOfIstDay(new Date())));
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
 
   const passType = options?.passTypes.find((t) => t.id === passTypeId);
   const modes = passType?.entryModes ?? ["SINGLE_ENTRY", "MULTI_ENTRY"];
+  // The chosen type may not allow the default mode.
+  const entryMode = modes.includes(mode) ? mode : modes[0]!;
   const covered = useMemo(() => {
     const byId = new Map((options?.zones ?? []).map((z) => [z.id, z]));
     const out = new Map<string, { id: string; name: string; exitCodeDefault: boolean }>();
     for (const id of zoneIds) for (let z = byId.get(id); z && !out.has(z.id); z = z.parentZoneId ? byId.get(z.parentZoneId) : undefined) out.set(z.id, z);
     return [...out.values()];
   }, [zoneIds, options]);
-  // F1: the visitor type decides; shown here, never chosen per request.
+  // F1: the pass type decides; shown here, never chosen per request.
   const codeExits = passType?.exitCodeRequired ? covered.filter((z) => z.exitCodeDefault) : [];
   const set = (key: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) => setForm((f) => ({ ...f, [key]: e.target.value }));
 
@@ -52,7 +53,7 @@ export function VisitRequestForm({ walkIn = false, onCreated }: { walkIn?: boole
           purpose: form.purpose,
           passTypeId,
           zoneIds,
-          entryMode: mode,
+          entryMode,
           expectedAt: new Date(from).toISOString(),
           validUntil: new Date(until).toISOString(),
         },
@@ -90,20 +91,20 @@ export function VisitRequestForm({ walkIn = false, onCreated }: { walkIn?: boole
             {options?.companies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </Select>
         </Field>
-        <Field label="Visitor type">
+        <Field label="Pass type">
           <Select value={passTypeId} onChange={(e) => setPassTypeId(e.target.value)}>
             <option value="">Select…</option>
             {options?.passTypes.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
           </Select>
         </Field>
-        <Field label="Entry mode" hint={mode === "SINGLE_ENTRY" ? "One visit" : "Come and go until the pass ends"}>
-          <Select value={mode} onChange={(e) => setMode(e.target.value as typeof mode)}>
+        <Field label="Entry mode" hint={entryMode === "SINGLE_ENTRY" ? "One visit" : "Come and go until the pass ends"}>
+          <Select value={entryMode} onChange={(e) => setMode(e.target.value as typeof mode)}>
             {modes.includes("SINGLE_ENTRY") && <option value="SINGLE_ENTRY">Single entry</option>}
             {modes.includes("MULTI_ENTRY") && <option value="MULTI_ENTRY">Multi entry</option>}
           </Select>
         </Field>
         <Field label="Visit time"><Input type="datetime-local" value={from} onChange={(e) => setFrom(e.target.value)} /></Field>
-        <Field label="Valid until"><Input type="datetime-local" value={until} onChange={(e) => setUntil(e.target.value)} /></Field>
+        <ValidUntilField from={from} until={until} onChange={setUntil} singleEntry={entryMode === "SINGLE_ENTRY"} maxDays={passType?.maxValidityDays} />
       </div>
       <Field label="Zones" hint="A zone also opens the gates of every zone around it">
         <div className="flex flex-wrap gap-4">
@@ -115,8 +116,8 @@ export function VisitRequestForm({ walkIn = false, onCreated }: { walkIn?: boole
           ))}
         </div>
       </Field>
-      {mode === "SINGLE_ENTRY" && passType && covered.length > 0 && (
-        <Field label="Exit code" hint="Set by the visitor type">
+      {entryMode === "SINGLE_ENTRY" && passType && covered.length > 0 && (
+        <Field label="Exit code" hint="Set by the pass type">
           <p className="mt-2 text-sm">{codeExits.length ? `Needed at: ${codeExits.map((z) => `${z.name} exit`).join(", ")}` : "Not needed — the exits load with the pass"}</p>
         </Field>
       )}

@@ -932,3 +932,43 @@ result) · issues · next action.
 - **Verified:** `npm test` 107/107; `verify:e2e` 516/516; staged
   `LICENSE_PUBLIC_KEY` = the production key. `AppVersion` 0.5.2.
 
+
+### 2026-10-14 — F2 step 1: small fixes from the first client demo
+
+Plan: `PLAN.md` § F2 (items 3, 4, 7, 11, 12, 13, A). Decisions recorded the
+same day in `DECISIONS.md`.
+
+- **#7 Dark mode date picker:** `color-scheme: light dark` on `:root`
+  (`globals.css`), so native date/time controls follow the dark palette.
+- **#4 "Pass type" everywhere:** console labels (Register person, person page,
+  request form and page), the report *Pass type usage* (column key
+  `pass_type`), the Clear history note, comments. Nothing in the schema.
+- **#3 Register person:** Category is the first field and takes focus.
+- **#11, #12 Valid until:** new `components/valid-until-field.tsx`, used by
+  the Issue pass and Request forms. Shortcuts today / 1 week / 1 month /
+  3 months / 6 months / 1 year, counted in IST calendar days as the server
+  does (they used the browser's local day, wrong on a PC set to UTC); a
+  shortcut longer than the type or entry mode allows is disabled. The field
+  shows "Latest allowed: …", sets `max`, and flags a later value.
+- **#13 The pass takes its holder's pass type:** the Issue pass form (person
+  page and Provision) no longer offers a type; it shows the person's.
+  `provisionPerson` refuses a `passTypeId` other than the person's (400) and
+  an inactive one says to edit the person. Clear already stored the
+  request's type on the person first, so it is unaffected.
+- **A One length rule:** `passLengthProblem` (`services/entries.ts`) holds the
+  max-validity (calendar days) and single-entry-same-day rules; the request
+  path (`services/visit-requests.ts`) used 24-hour blocks and skipped the
+  same-day rule, so a request could be accepted and refused at Clear.
+- Also fixed in both forms: when the pass type doesn't allow the default
+  entry mode, the form now submits a mode the type allows (it sent the
+  hidden default and was refused).
+- Tests: e2e section 30 gives the person the type instead of the pass and
+  checks a different type is refused; the request section checks a
+  single-entry request over two days and a 1-day type 10:00 → 09:00 next day
+  (under 24 h) are refused. Its default visit end is capped at 23:59 IST.
+- **Verified:** typecheck PASS; `npm test` 107/107; `verify:e2e` **519
+  passed, 0 failed**; web lint + build PASS.
+- Owner verification: in the console, light and dark mode — Register person
+  field order; a request and an issued pass with a 90-day type (latest
+  allowed shown, 6 months enabled, 1 year disabled); single entry allows
+  only "today"; the person page shows the pass type read-only.

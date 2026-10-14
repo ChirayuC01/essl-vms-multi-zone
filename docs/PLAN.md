@@ -649,7 +649,7 @@ client.** Schema changes: item 1 (erasure marker), item 10 (`pass_type.exit_code
 
 #### Order and verification
 
-1. Items 7, 4, 3, 11, 12, 13, A — small, no client answer needed.
+1. Items 7, 4, 3, 11, 12, 13, A — small, no client answer needed. **Done 14 Oct 2026, awaiting owner verification** (`EXECUTION_LOG.md`).
 2. Items 5 + 6 (one component), 8 + B (one helper), 9 (edit), 10 (exit-code exits on the pass type).
 3. Items 1, 2, 9-delete. Item 2 ships with `V00001`; the format follows Q2.
 

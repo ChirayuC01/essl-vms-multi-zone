@@ -7,6 +7,7 @@ import { AuditAction, auditRow, type AuditActionName } from "../db/audit.js";
 import { prisma } from "../db/index.js";
 import { getBranding } from "./branding.js";
 import { checkCode, hashLinkToken, issueCode, newLinkToken } from "./codes.js";
+import { passLengthProblem } from "./entries.js";
 import { ServiceError } from "./errors.js";
 import { sendMessage } from "./notify.js";
 import { PROFILE_FIELDS, ruleFor, type ProfileField, type RuleSource } from "./pass-types.js";
@@ -111,9 +112,8 @@ export async function createVisitRequest(
   if (!passType.entryModes.includes(input.entryMode)) {
     throw new ServiceError(400, `${passType.name} passes do not allow ${input.entryMode === EntryMode.SINGLE_ENTRY ? "single" : "multi"} entry`);
   }
-  if (passType.maxValidityDays !== null && input.validUntil.getTime() - input.expectedAt.getTime() > passType.maxValidityDays * 86_400_000) {
-    throw new ServiceError(400, `${passType.name} passes last at most ${passType.maxValidityDays} day(s)`);
-  }
+  const lengthProblem = passLengthProblem(passType, input.entryMode, input.expectedAt, input.validUntil);
+  if (lengthProblem) throw new ServiceError(400, lengthProblem);
   const company = input.companyId ? await prisma.company.findFirst({ where: { id: input.companyId, isActive: true } }) : null;
   if (input.companyId && !company) throw new ServiceError(400, "select an active company");
   const zoneIds = [...new Set(input.zoneIds)];

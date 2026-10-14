@@ -222,7 +222,7 @@ export default function PersonDetailPage() {
         {!editing && (
           <dl className="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-3">
             {([
-              ["Visitor type", person.category === "VISITOR" ? passTypes?.items.find((t) => t.id === person.passTypeId)?.name ?? "General" : null],
+              ["Pass type", person.category === "VISITOR" ? passTypes?.items.find((t) => t.id === person.passTypeId)?.name ?? "General" : null],
               ["Mobile", person.mobile],
               ["Email", person.email],
               ["Designation", person.designation],
@@ -242,7 +242,7 @@ export default function PersonDetailPage() {
           <Field label="Name"><Input value={profile.name} onChange={(e) => setProfile({ ...profile, name: e.target.value })} /></Field>
           <Field label="Category"><Select disabled={!can("person_category:update")} value={profile.category} onChange={(e) => setProfile({ ...profile, category: e.target.value })}><option value="VISITOR">Visitor</option><option value="EMPLOYEE">Employee</option></Select></Field>
           {profile.category === "VISITOR" && (
-            <Field label="Visitor type" hint="decides which details are required">
+            <Field label="Pass type" hint="decides which details are required">
               <Select value={profile.passTypeId} onChange={(e) => setProfile({ ...profile, passTypeId: e.target.value })}>
                 <option value="">General</option>
                 {passTypes?.items.filter((t) => t.isActive || t.id === profile.passTypeId).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}

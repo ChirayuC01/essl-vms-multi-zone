@@ -55,7 +55,7 @@ function RegisterForm() {
     try {
       const person = await api<Person>("/api/people", {
         method: "POST",
-        // Which fields are required depends on the visitor type; the API
+        // Which fields are required depends on the pass type; the API
         // enforces it and names anything missing.
         body: {
           name: name.trim(),
@@ -104,6 +104,9 @@ function RegisterForm() {
             </div>
           )}
 
+          {/* Category first: everything below depends on it. */}
+          <Field label="Category"><Select value={category} onChange={(e) => setCategory(e.target.value as "EMPLOYEE" | "VISITOR")} autoFocus><option value="VISITOR">Visitor</option><option value="EMPLOYEE">Employee</option></Select></Field>
+
           <Field
             label={category === "VISITOR" ? "Visitor ID" : "Employee ID"}
             hint={claiming ? "Assigned by the terminal and cannot be changed." : "Use the same ID that will be enrolled on the terminal."}
@@ -126,14 +129,11 @@ function RegisterForm() {
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="Ramesh Kumar"
-              autoFocus
             />
           </Field>
 
-          <Field label="Category"><Select value={category} onChange={(e) => setCategory(e.target.value as "EMPLOYEE" | "VISITOR")}><option value="VISITOR">Visitor</option><option value="EMPLOYEE">Employee</option></Select></Field>
-
           {category === "VISITOR" && (passTypes?.items.length ?? 0) > 0 && (
-            <Field label="Visitor type" hint="Decides which details are required. Leave as General for the standard set.">
+            <Field label="Pass type" hint="Decides which details are required and the rules of every pass they get. Leave as General for the standard set.">
               <Select value={passTypeId} onChange={(e) => setPassTypeId(e.target.value)}>
                 <option value="">General (company, department, mobile, Aadhaar or PAN)</option>
                 {passTypes?.items.filter((t) => t.isActive).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}

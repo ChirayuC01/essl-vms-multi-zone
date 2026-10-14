@@ -9,6 +9,10 @@
  * refactor.
  */
 :root {
+  /* Native controls (date pickers, scrollbars) follow the OS theme too;
+     without it the calendar icon is drawn black on the dark palette. */
+  color-scheme: light dark;
+
   --brand: #2563eb;
   --brand-hover: #1d4ed8;
   --brand-contrast: #ffffff;

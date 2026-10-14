@@ -5,7 +5,7 @@ import { renderDevicePhoto } from "@/lib/photo";
 import { Alert, Button, Card, Field, Input, Select } from "@/components/ui";
 
 // The visitor's steps (two-zone rebuild, Phases 5 and 6): verify the mobile,
-// accept the privacy notice, fill in what the visitor type asks for, take a
+// accept the privacy notice, fill in what the pass type asks for, take a
 // live photo, optionally attach documents, submit.
 //
 // Used twice: by the visitor on their own phone (the portal, /v/<link>, which

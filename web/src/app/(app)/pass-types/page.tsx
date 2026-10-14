@@ -149,7 +149,7 @@ function Editor({ draft, zones, fields, onChange }: { draft: Draft; zones: { id:
             <label className="mt-2 flex items-center gap-2 text-sm"><input type="checkbox" checked={draft.exitCodeRequired} onChange={(e) => set("exitCodeRequired", e.target.checked)} />The exit needs the exit code</label>
             {draft.exitCodeRequired && (
               zones.length === 0 ? (
-                <p className="mt-1 text-xs text-[var(--text-muted)]">No zones yet: set up zones on the Devices page first.</p>
+                <p className="mt-1 text-xs text-[var(--text-muted)]">No zones yet: set them up on the Zones page first.</p>
               ) : (
                 <div className="mt-2 space-y-1">
                   <p className="text-xs text-[var(--text-muted)]">At these exits (a pass only uses those of its own zones):</p>

@@ -1198,3 +1198,29 @@ Plan: `PLAN.md` § F2 (items 1 and 2). Hard rule #3 amended in `CLAUDE.md`.
 - **Follow-up (same day):** pass type "Kind" removed from the Pass types
   form and table (label only; owner). Erasure kept (owner). Moving Zones to
   their own page is deferred to the UI redesign.
+
+### 2026-10-14 — Console: sidebar navigation, Zones page
+
+Owner-approved design (Claude Design canvas "Sidebar Navigation").
+
+- `web/src/app/(app)/layout.tsx`: the top tab bar becomes a left sidebar —
+  organisation logo / name and version on top; Overview, Visitors, People,
+  Site setup, Administration groups with icons; the operator (→ profile) and
+  Sign out at the bottom. Collapse to a 72 px icon rail (labels as tooltips
+  and aria-labels; remembered per browser in `localStorage`, ignored if
+  storage is blocked). Under 768 px a top bar with a menu button opens the
+  sidebar as a drawer over the dimmed page (closes on a page choice, the
+  backdrop, the close button or Escape). Entries still follow the access
+  grid; a group with no visible entry is hidden. The header shows the
+  current group and page (orientation only; each page keeps its own h1)
+  and the alerts badge. New tokens `--active-bg` / `--active-text`.
+- **Zones page** (`/zones`, `zones:view`): the Zones card moves out of
+  Devices; terminals are still placed into zones on the Devices page.
+  Install guide, product spec and the pass-type hint updated.
+- The live-updates indicator stays on the pages that open a live stream
+  (Dashboard, Inside now, Command queue), as before.
+- **Verified:** web lint + build PASS. No backend change.
+- Owner verification: desktop expanded and collapsed (reload keeps it),
+  light and dark mode, as Admin, Security and Host (groups trim); a phone
+  width (browser dev tools) opens and closes the drawer; Zones page works
+  and is gone from Devices.

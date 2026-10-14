@@ -153,6 +153,7 @@ carried at the top; their full history is in `legacy/`.
 | 2026-10-14 | Pass type "Kind" (short/long-term) removed from the console; the column and API field stay (additive) but nothing reads them | It was a label only; one visit vs. a period is what entry modes and maximum validity decide | Owner |
 | 2026-10-14 | Erasure stays alongside Deactivate: Deactivate is the everyday removal (data kept), Erase the Administrator-only answer to a formal DPDP erasure request | Deactivating keeps the personal data; only erasure satisfies a request | Owner |
 | 2026-10-14 | Zones move to their own page out of Devices; to be done with the UI redesign | Zones are site layout, not terminal settings | Owner |
+| 2026-10-14 | Console navigation is a left sidebar in five groups (Overview, Visitors, People, Site setup, Administration), collapsible to an icon rail (remembered per browser), a drawer on phones; entries and empty groups hidden by the access grid as before. Zones get their own page | Owner-approved design (Claude Design canvas "Sidebar Navigation") | Owner |
 
 ## Open (awaiting client)
 

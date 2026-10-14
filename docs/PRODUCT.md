@@ -36,8 +36,9 @@ The first two-zone deployment:
 
 Zone names, the tree and which terminal belongs to which zone are
 configuration. Nothing in code names a zone. An Admin manages zones on the
-**Devices** page: create a zone (optionally inside another), place each
-terminal into a zone, rename a zone or move it under another later. A zone
+**Zones** page: create a zone (optionally inside another), rename it or move
+it under another later; each terminal is placed into a zone on the
+**Devices** page. A zone
 lacking an entry or an exit terminal shows a warning. Moving a zone affects
 new passes and grants only; live ones keep the terminals they were given. A
 zone a live pass uses can't be deactivated; only a zone nothing ever used

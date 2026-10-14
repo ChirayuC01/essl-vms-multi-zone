@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { api, type DeviceList, type ZoneList } from "@/lib/api";
-import { ZonesCard } from "@/components/zones-card";
 import { useAuth } from "@/lib/auth";
 import { useApi, refresh } from "@/lib/swr";
 import { formatDateTime, formatRelative } from "@/lib/format";
@@ -387,8 +386,6 @@ export default function DevicesPage() {
               </Button>
             </div>
           )}
-
-          <ZonesCard />
 
           {data.items.length === 0 && (
             <Card title="Devices">

@@ -85,11 +85,12 @@ If anything looks wrong, stop the services, restore the backed-up
    **distinct** Employee / Visitor ID patterns. The visitor pattern must cover
    the system visitor IDs: `V*` with the default prefix (or the digit prefix
    you chose, e.g. `9*`, for terminals that accept only numbers).
-2. **Devices → Zones:** create the zones (e.g. Premise, and Yard inside it),
-   place each terminal, and tick **exit code by default** on the zone whose
-   exit needs the code (the office/outer zone).
+2. **Zones:** create the zones (e.g. Premise, and Yard inside it); then on
+   **Devices** place each terminal into its zone.
 3. **Pass types:** the site's visitor types with their required fields,
-   maximum validity and whether the host must Clear.
+   maximum validity, whether the host must Clear, and for single entry
+   whether the exit needs the exit code and at which zones' exits (usually
+   the office/outer one).
 4. **Settings:** privacy notice text (visitors cannot proceed without it),
    timings, visitor ID prefix, walk-in rule, document limits.
 5. **Access / Operators:** roles' grids; give hosts a mobile number (exit

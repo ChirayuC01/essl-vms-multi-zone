@@ -4183,7 +4183,10 @@ async function main() {
     const zoneTerms = await prisma.device.findMany({ where: { serialNo: { startsWith: "E2EZONE" } } });
     const zoneSims = zoneTerms.map((d) => new SimulatedDevice(app, d.serialNo));
     const start = new Date(Date.now() + 2 * 3_600_000);
-    const end = new Date(Date.now() + 8 * 3_600_000);
+    // Capped at 23:59 IST: a single-entry pass may not cross midnight, and
+    // +8h did from 16:00 IST on.
+    const istDay = 86_400_000, ist = 5.5 * 3_600_000;
+    const end = new Date(Math.min(Date.now() + 8 * 3_600_000, Math.floor((Date.now() + ist) / istDay) * istDay + istDay - ist - 60_000));
     const raise = (mobile: string, as = hostTok) =>
       rv("POST", "/api/visit-requests", {
         visitorName: "Review Visitor", visitorMobile: mobile, purpose: "E2E review", passTypeId: reviewType.id, companyId: reviewCo.id,

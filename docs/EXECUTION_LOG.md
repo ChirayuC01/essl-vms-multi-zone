@@ -916,3 +916,19 @@ result) · issues · next action.
   (shared `%ProgramData%\VMS`); re-run per `DEVELOPMENT_SETUP.md` §8 passed.
 - Owner verification: `VERIFICATION.md` § F1. Then 0.5.1 is packaged.
 
+### 2026-10-12 — 0.5.2: production licence key in the installer
+
+- **Found on a client clean install:** a correctly issued production key was
+  refused ("not valid for this installation or is corrupted"). 0.5.0 and
+  0.5.1 had been staged with `VMS_LICENSE_PUBLIC_KEY_FILE` pointing at a
+  development key pair, so they accept only dev-signed keys.
+- **Fix:** the production public key is committed at
+  `installer/license-public.pem`; `build-release.mjs` always embeds it (no env
+  var). `INSTALL_GUIDE.md` and `VERSIONS.md` updated; 0.5.0/0.5.1 marked do
+  not deploy. Field workaround for a 0.5.1 site: replace `LICENSE_PUBLIC_KEY`
+  in `backend\.env`, restart `VmsBackend`.
+- e2e section 32 booked a single-entry visit ending now + 8 h, which crosses
+  IST midnight from 16:00 IST; capped at 23:59 IST (`KNOWN_ISSUES.md`).
+- **Verified:** `npm test` 107/107; `verify:e2e` 516/516; staged
+  `LICENSE_PUBLIC_KEY` = the production key. `AppVersion` 0.5.2.
+

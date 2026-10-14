@@ -204,7 +204,12 @@ trusts the forwarded visitor address only from the web app on the same PC.
 - Decide distinct, non-overlapping Employee and Visitor ID patterns before connecting any terminal. For example, `1*` for Employees and `9*` for Visitors. Empty patterns classify nobody automatically; an ID matching both categories is rejected/left unclaimed.
 - Obtain organization name/logo and the initial Admin details.
 - For this schema-changing release, do not reuse old persistent PostgreSQL data. Uninstall preserves data; archive old database/photos manually after confirming they are not needed.
-- The release owner must stage with `VMS_LICENSE_PUBLIC_KEY_FILE` pointing to the production Ed25519 public key.
+- Release staging always embeds the production Ed25519 public key committed at `installer/license-public.pem` (since 0.5.2; 0.5.0/0.5.1 embedded a dev key by mistake). Issue client keys only with the matching private key in `C:\Secure\VMS-Licensing`.
+- **A site on 0.5.0/0.5.1** refuses real keys ("not valid for this installation or is corrupted"). Install 0.5.2 over it, or replace the **last** `LICENSE_PUBLIC_KEY=` line in `C:\VMS\backend\.env` with the line below and restart `VmsBackend`:
+
+  ```
+  LICENSE_PUBLIC_KEY="-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAo1ZliCVoXSRy8Vuu2mS4TsSjj+v9de9EB9n4ZADRpq4=\n-----END PUBLIC KEY-----"
+  ```
 
 ## Install
 

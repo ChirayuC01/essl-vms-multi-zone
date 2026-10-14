@@ -52,7 +52,7 @@ patch version for every changed installer.
 
 ## The register
 
-> **Current boundary (8 October 2026):** 0.4.19 is the deployed artifact (notes below); 0.5.1 is the two-zone release candidate (0.5.0 + F1), built 12 October 2026. Earlier: 0.4.18 was the packaged artifact on 10 September. Do not deploy 0.4.14: its frontend baked in `localhost:48102`.
+> **Current boundary (8 October 2026):** 0.4.19 is the deployed artifact (notes below); 0.5.2 is the two-zone release candidate (0.5.0 + F1, production licence key), built 12 October 2026; do not deploy 0.5.0 or 0.5.1 (development licence key). Earlier: 0.4.18 was the packaged artifact on 10 September. Do not deploy 0.4.14: its frontend baked in `localhost:48102`.
 
 | Version | Date | Built from | Installer | Size | Migrations added |
 |---|---|---|---|---|---|
@@ -88,7 +88,26 @@ patch version for every changed installer.
 > This is precisely the failure this document exists to prevent. Fill the row
 > in *at build time*, not afterwards.
 
-## 0.5.1 — F1: exit code decided by the visitor type (release candidate)
+## 0.5.2 — 0.5.1 with the production licence key (release candidate)
+
+- **Why:** 0.5.0 and 0.5.1 were staged with a **development** licence key pair
+  (`vms-dev-licensing`), not the production one in `C:\Secure\VMS-Licensing`
+  that 0.4.x shipped. They reject every correctly issued client key ("license
+  key is not valid for this installation or is corrupted"; found on a client
+  clean install, 12 October 2026).
+- **Fix:** the production **public** key is now committed at
+  `installer/license-public.pem` and `build-release.mjs` always embeds it;
+  `VMS_LICENSE_PUBLIC_KEY_FILE` is gone. Code otherwise identical to 0.5.1.
+- **Field fix for a site already on 0.5.1:** replace the last
+  `LICENSE_PUBLIC_KEY=` line in `C:\VMS\backend\.env` with the production key
+  (`INSTALL_GUIDE.md`), restart `VmsBackend`; or install 0.5.2 over it.
+- **Built:** 12 October 2026 from the commit that adds
+  `installer/license-public.pem` (see `git log`). `npm test` 107/107,
+  `verify:e2e` 516/516; staged key verified as production.
+  `installer/Output/vms-setup.exe`, 222,154,108 bytes, SHA-256
+  `667A6E7D8163B09136C2C5CF3ABB2DA80B2B060C19335861956DE11CBA2639EB`.
+
+## 0.5.1 — F1: exit code decided by the visitor type (**do not deploy**: dev licence key — use 0.5.2)
 
 - **Built:** 12 October 2026 from commit `d4e7955` (F1; working tree otherwise
   differs only in line endings). `npm test` 107/107, `verify:e2e`
@@ -104,7 +123,7 @@ patch version for every changed installer.
 - **Upgrade from 0.4.19 or 0.5.0:** in place (same `AppId`); back up first.
 - **Release gate:** as 0.5.0, plus `VERIFICATION.md` § F1.
 
-## 0.5.0 — Two-zone product (release candidate)
+## 0.5.0 — Two-zone product (**do not deploy**: dev licence key — use 0.5.2)
 
 `AppVersion` is **0.5.0** in `installer/vms-installer.iss` (Phase 9).
 

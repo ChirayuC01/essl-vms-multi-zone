@@ -30,7 +30,10 @@ const repoRoot = path.resolve(installerRoot, "..");
 const backendRoot = path.join(repoRoot, "backend");
 const webRoot = path.join(repoRoot, "web");
 const releaseRoot = path.join(installerRoot, "release");
-const licensePublicKeyFile = process.env.VMS_LICENSE_PUBLIC_KEY_FILE;
+// The production licence PUBLIC key, committed so every release embeds the
+// same one. An env-var path once let a dev key pair slip into 0.5.0/0.5.1,
+// which then rejected every real client key. The private key never lives here.
+const licensePublicKeyFile = path.join(installerRoot, "license-public.pem");
 
 function requirePath(p, hint) {
   if (!existsSync(p)) {
@@ -47,14 +50,10 @@ requirePath(path.join(webRoot, ".next", "standalone", "server.js"), "Run 'npm ru
 requirePath(path.join(webRoot, ".next", "static"), "web\\.next\\static is missing; rerun 'npm run build'.");
 requirePath(path.join(webRoot, ".env.example"), "web/.env.example not found — is this really the repo root?");
 requirePath(path.join(backendRoot, "scripts", "license", "create-license-request.mjs"), "Installed license-request helper is missing.");
-if (!licensePublicKeyFile) {
-  console.error("Missing VMS_LICENSE_PUBLIC_KEY_FILE. Point it at the issuer's Ed25519 PUBLIC key PEM; the private key must never be used here.");
-  process.exit(1);
-}
-requirePath(path.resolve(licensePublicKeyFile), "The configured license public-key file does not exist.");
-const licensePublicKey = readFileSync(path.resolve(licensePublicKeyFile), "utf8").trim();
+requirePath(licensePublicKeyFile, "installer/license-public.pem (the production licence public key) is missing.");
+const licensePublicKey = readFileSync(licensePublicKeyFile, "utf8").replace(/\r/g, "").trim();
 if (!licensePublicKey.includes("-----BEGIN PUBLIC KEY-----") || !licensePublicKey.includes("-----END PUBLIC KEY-----")) {
-  console.error("VMS_LICENSE_PUBLIC_KEY_FILE is not a PEM public key.");
+  console.error("installer/license-public.pem is not a PEM public key.");
   process.exit(1);
 }
 

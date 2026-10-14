@@ -1077,3 +1077,37 @@ Plan: `PLAN.md` § F2 (items 5, 6, 8, 9, 10, B, C).
   zone, try deleting a used one, try deactivating one in use. Tick Yard in
   any zone picker → Premise shows "with Yard". Register person: employee by
   zone. Type in Company: filter, "+ Add" (also as a host on a request).
+
+### 2026-10-14 — F3 step 2: remove someone still inside, discard a hand enrolment, field-named errors
+
+Plan: `PLAN.md` § F3 (F-a, F-j, F-m), ported from 0.4.21 / 0.4.24.
+
+- **F-a** (`services/entries.ts` `deprovisionEntry`, `api/entries.ts`):
+  `POST /api/entries/:id/deprovision` with `{ force: true, reason }` ends the
+  pass of someone marked INSIDE: location cleared, every gate (exits
+  included) unloaded through the normal path, audit
+  `ENTRY_DEPROVISION_REQUESTED` with `forcedWhileInside` and the reason. New
+  cell `passes_force_end:update` (Administrator only by default); no reason
+  → 400; without `force` INSIDE is still 409. Person page: "Remove although
+  inside" (confirm + reason prompt) for those holding the cell.
+- **F-j** (`api/enrollments.ts`): `DELETE /api/enrollments/unclaimed/:pin`,
+  new cell `unclaimed:delete` (Administrator only). Refused for a registered
+  person's ID. Deletes the stored photo; queues best-effort DEPROVISIONs in
+  one insert, only on terminals whose Employee/Visitor patterns cover the ID
+  (rule #7); audit `UNCLAIMED_DELETED`. Unregistered panel: Delete button.
+- **F-m** (`web/src/lib/api.ts`, `lib/swr.ts`): validation refusals show
+  "Field: message" per issue instead of "validation"; `refresh()` revalidates
+  without clearing the cache, so a page no longer collapses and jumps to the
+  top after an action.
+- Tests: e2e section 38 (inside: refused without force, 403 for Security,
+  400 without reason, forced by Admin → location cleared, audited, every
+  gate cleared and pass closed; enrolment: 403 for Security, covered
+  terminals only, best-effort, photo deleted, audited, ID outside patterns
+  sent nowhere, registered ID refused).
+- **Verified:** typecheck PASS; `npm test` 111/111; `verify:e2e` **584
+  passed, 0 failed**; web lint + build PASS. No migration in this step.
+- Owner verification: as Admin, a visitor marked inside → "Remove although
+  inside" (reason) → pass ends, terminals cleared; the same button is absent
+  for Security. Enrol an ID by hand on a terminal → it appears under
+  Unregistered people → Delete → removed from the terminal, photo gone. Any
+  form with a missing field now names it.

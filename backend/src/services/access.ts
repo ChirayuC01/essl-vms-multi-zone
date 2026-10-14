@@ -84,6 +84,18 @@ export const RESOURCES = {
 
   devices: { label: "Terminals", group: "Terminals", actions: ["view", "create", "update"], notes: { create: "register", update: "role, zone, patterns, timezone" } },
   device_refresh: { label: "Refresh from terminal", group: "Terminals", actions: ["update"] },
+  unclaimed: {
+    label: "Unregistered enrolments",
+    group: "Terminals",
+    actions: ["delete"],
+    notes: { delete: "discard a hand enrolment: photo and terminal entry" },
+  },
+  passes_force_end: {
+    label: "Remove someone still inside",
+    group: "Gate",
+    actions: ["update"],
+    notes: { update: "end the pass of a visitor marked inside who left without punching out" },
+  },
   zones: {
     label: "Zones",
     group: "Terminals",

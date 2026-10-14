@@ -1,10 +1,14 @@
-import { readFile, readdir, stat } from "node:fs/promises";
+import { readFile, readdir, rm, stat } from "node:fs/promises";
 import path from "node:path";
+import { CommandType } from "@prisma/client";
 import type { FastifyInstance } from "fastify";
+import { publishCommand } from "../adms/queue.js";
+import { AuditAction, auditRow } from "../db/audit.js";
+import { actorId } from "./auth.js";
 import { config } from "../config/index.js";
 import { prisma } from "../db/index.js";
 import { requirePermission } from "./permissions.js";
-import { parseUserId, photoPathFor, userIdFromPhotoFile, userIdKey } from "../user-id.js";
+import { classifyDeviceId, parseUserId, photoPathFor, userIdFromPhotoFile, userIdKey } from "../user-id.js";
 
 // Unclaimed enrollments (Phase 1 Milestone 5).
 //
@@ -117,5 +121,43 @@ export async function enrollmentRoutes(app: FastifyInstance): Promise<void> {
     } catch {
       return reply.code(404).send({ error: "no enrollment photo for that PIN" });
     }
+  });
+
+  // Discard a hand enrolment (F3 F-j): someone enrolled on a terminal by hand
+  // and never registered. Two-zone sites register only through the console,
+  // so this is cleanup. The stored photo is deleted, and the ID is removed
+  // from every terminal whose Employee or Visitor patterns cover it, best
+  // effort (VMS never recorded which terminal holds it). An ID outside a
+  // terminal's patterns is never touched there (CLAUDE.md #7), e.g. the admin
+  // card holder. Leaving it on the terminals is not offered: the next scan or
+  // USER push would bring the photo straight back.
+  app.delete("/enrollments/unclaimed/:pin", { preHandler: requirePermission("unclaimed:delete") }, async (request, reply) => {
+    const pin = parseUserId((request.params as { pin: string }).pin);
+    if (pin === null) return reply.code(400).send({ error: "invalid ID" });
+    // A registered person's photo is their durable artifact, never discarded here.
+    if (await prisma.person.findFirst({ where: { esslUserId: { equals: pin, mode: "insensitive" } }, select: { id: true } })) {
+      return reply.code(409).send({ error: "that ID belongs to a registered person" });
+    }
+    const actor = actorId(request);
+    const devices = (await prisma.device.findMany({ select: { id: true, employeeIdPatterns: true, visitorIdPatterns: true } }))
+      .filter((d) => classifyDeviceId(pin, d.employeeIdPatterns, d.visitorIdPatterns) !== null);
+    const now = Date.now();
+    const commands = devices.length
+      ? await prisma.syncCommand.createManyAndReturn({
+          data: devices.map((d) => ({
+            type: CommandType.DEPROVISION,
+            targetDeviceId: d.id,
+            initiatedById: actor ?? null,
+            payload: { pin, countedOnDevice: false, bestEffort: true },
+            idempotencyKey: `unclaimed-delete:${userIdKey(pin)}:${d.id}:${now}`,
+          })),
+        })
+      : [];
+    for (const command of commands) publishCommand(command);
+    await rm(photoPathFor(pin), { force: true });
+    await prisma.auditLog.create({
+      data: auditRow({ action: AuditAction.UNCLAIMED_DELETED, entityType: "enrollment", entityId: pin, detail: { pin, deviceIds: devices.map((d) => d.id) }, actorId: actor }),
+    });
+    return reply.send({ deleted: pin, devicesQueued: devices.length });
   });
 }

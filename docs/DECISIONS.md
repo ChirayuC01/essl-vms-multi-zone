@@ -141,6 +141,8 @@ carried at the top; their full history is in `legacy/`.
 | 2026-10-14 | Widening a live pass uses its pass type's current exit-code zones | Widening is a new action; it follows today's rule like a new pass | F2 #10 |
 | 2026-10-14 | New access cell `zones:delete` (Administrator only by default); delete is refused for a zone with sub-zones, terminals, passes, requests or pass-type exit settings, and audited `ZONE_DELETED` | The one place "delete" removes a row: a typo nothing references | F2 #9 |
 | 2026-10-14 | Searchable dropdowns for every list that comes from data (companies, departments, pass types, hosts, zones, report filters); fixed two- to four-option lists (category, entry mode, kind, yes/no, status, field rule) and the admin-only role pickers stay native | Search only helps where the list grows | F2 #5 |
+| 2026-10-14 | Removing someone still inside is a `force` on the normal de-provision, gated by a new cell `passes_force_end:update` (Administrator only by default), with a mandatory reason; it clears the location and every gate. Without `force`, inside is still refused and the engine never removes anyone inside | 0.4.21 field need (left without punching out); rule #9 holds by default | F3 F-a |
+| 2026-10-14 | Discarding a hand enrolment is a new cell `unclaimed:delete` (Administrator only); terminal removals go only to terminals whose ID patterns cover the ID, best-effort | 0.4.24, plus rule #7 (never touch IDs outside the patterns) | F3 F-j |
 
 ## Open (awaiting client)
 

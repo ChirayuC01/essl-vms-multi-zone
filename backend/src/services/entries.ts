@@ -526,15 +526,21 @@ export async function setEntryBlocked(
 export async function deprovisionEntry(
   entryId: string,
   actorId?: string,
+  /** F3 F-a: an Admin ends the pass of someone still marked inside. */
+  force?: { reason: string },
 ): Promise<{ entry: Entry; devices: Device[]; commands: SyncCommand[] }> {
   const entry = await prisma.entry.findUnique({ where: { id: entryId }, include: { person: true } });
   if (!entry) throw new ServiceError(404, "entry not found");
 
-  // The rule that must never be bypassed: removing a person's credential
-  // while they are inside the site strands them at the exit barrier.
-  if (entry.state === EntryState.INSIDE) {
+  // Removing a person's credential while they are inside strands them at the
+  // exit barrier, so it is refused — unless an Admin forces it, typically for
+  // someone who left without punching out. The console warns that a person
+  // genuinely inside then needs letting out by hand (admin card).
+  const forcedWhileInside = entry.state === EntryState.INSIDE;
+  if (forcedWhileInside && !force) {
     throw new ServiceError(409, "person is INSIDE — de-provisioning is deferred until they punch OUT");
   }
+  if (forcedWhileInside && !force!.reason.trim()) throw new ServiceError(400, "a reason is required to remove someone still inside");
   if (entry.state === EntryState.PENDING_DEPROVISION) throw new ServiceError(409, "entry is already de-provisioning");
   if (entry.state === EntryState.REGISTERED) {
     throw new ServiceError(409, "entry is already closed — the person is not on any device");
@@ -545,7 +551,10 @@ export async function deprovisionEntry(
   const fromState = entry.state;
   const devices = (await prisma.passGate.findMany({ where: { entryId, state: { in: [GateState.LOADING, GateState.LOADED] } }, include: { device: true } })).map((g) => g.device);
   await prisma.$transaction(async (tx) => {
-    const moved = await tx.entry.updateMany({ where: { id: entryId, state: fromState }, data: { state: EntryState.PENDING_DEPROVISION } });
+    const moved = await tx.entry.updateMany({
+      where: { id: entryId, state: fromState },
+      data: { state: EntryState.PENDING_DEPROVISION, ...(forcedWhileInside ? { locationZoneId: null } : {}) },
+    });
     if (moved.count !== 1) throw new ServiceError(409, "entry changed state concurrently — retry");
     await unloadAllGates([entryId], now, tx);
     await tx.auditLog.create({
@@ -553,7 +562,12 @@ export async function deprovisionEntry(
         action: AuditAction.ENTRY_DEPROVISION_REQUESTED,
         entityType: "entry",
         entityId: entryId,
-        detail: { esslUserId: entry.person.esslUserId, deviceIds: devices.map((d) => d.id), fromState },
+        detail: {
+          esslUserId: entry.person.esslUserId,
+          deviceIds: devices.map((d) => d.id),
+          fromState,
+          ...(forcedWhileInside ? { forcedWhileInside: true, reason: force!.reason.trim() } : {}),
+        },
         actorId: actorId ?? null,
       }),
     });

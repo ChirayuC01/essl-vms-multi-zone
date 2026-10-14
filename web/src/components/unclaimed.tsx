@@ -1,10 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { getApiBase, getToken } from "@/lib/api";
-import { useApi } from "@/lib/swr";
+import { useState } from "react";
+import { api, ApiError, getApiBase, getToken } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
+import { refresh, useApi } from "@/lib/swr";
 import { formatBytes, formatRelative } from "@/lib/format";
-import { Badge, Button, Empty } from "@/components/ui";
+import { Alert, Badge, Button, Empty } from "@/components/ui";
 
 // Enrollments waiting to be claimed.
 //
@@ -27,6 +29,20 @@ export function UnclaimedEnrollments({ highlighted = true }: { highlighted?: boo
   });
   const items = data?.items ?? [];
   const token = getToken() ?? "";
+  const { can } = useAuth();
+  const [problem, setProblem] = useState<string | null>(null);
+  // F3 F-j: discard a hand enrolment — the photo here, and the ID on every
+  // terminal whose patterns cover it.
+  const discard = async (pin: string) => {
+    if (!window.confirm(`Delete enrolment ${pin}? Its photo is deleted and the ID is removed from the terminals.`)) return;
+    setProblem(null);
+    try {
+      await api(`/api/enrollments/unclaimed/${encodeURIComponent(pin)}`, { method: "DELETE" });
+      await refresh("/api/enrollments/unclaimed");
+    } catch (err) {
+      setProblem(err instanceof ApiError ? err.message : "delete failed");
+    }
+  };
 
   return (
     <details
@@ -49,6 +65,7 @@ export function UnclaimedEnrollments({ highlighted = true }: { highlighted?: boo
           automatically — no upload needed.
         </p>
 
+        {problem && <Alert>{problem}</Alert>}
         {items.length === 0 ? (
           <Empty>{data ? "No unregistered people." : "Loading unregistered people…"}</Empty>
         ) : (
@@ -85,6 +102,11 @@ export function UnclaimedEnrollments({ highlighted = true }: { highlighted?: boo
                       Register
                     </Button>
                   </Link>
+                  {can("unclaimed:delete") && (
+                    <Button variant="danger" className="mt-2 w-full" onClick={() => void discard(item.esslUserId)}>
+                      Delete
+                    </Button>
+                  )}
                 </div>
               </li>
             ))}

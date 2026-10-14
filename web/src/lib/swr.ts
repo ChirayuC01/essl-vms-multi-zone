@@ -25,9 +25,9 @@ export function useApi<T>(path: string | null, options?: SWRConfiguration<T>) {
  * whole screen consistent instead of one card at a time.
  */
 export function refresh(prefix: string): Promise<unknown> {
-  return globalMutate(
-    (key) => typeof key === "string" && key.startsWith(prefix),
-    undefined,
-    { revalidate: true },
-  );
+  // No data argument on purpose: passing `undefined` cleared the cache first,
+  // so pages briefly rendered "Loading…", collapsed, and the browser scrolled
+  // to the top. Revalidating alone keeps the old data on screen until the new
+  // arrives (F3 F-m, from 0.4.24).
+  return globalMutate((key) => typeof key === "string" && key.startsWith(prefix));
 }

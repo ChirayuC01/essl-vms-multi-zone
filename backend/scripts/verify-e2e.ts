@@ -4812,6 +4812,62 @@ async function main() {
   }
 
   // ======================================================================
+  section("38. Remove someone still inside; discard a hand enrolment (F3 F-a, F-j)");
+  // ======================================================================
+  {
+    const fx = (method: "POST" | "DELETE", url: string, payload?: object, as = token) =>
+      app.inject({ method, url, headers: auth(as), ...(payload ? { payload } : {}) });
+    const zPrem = await prisma.zone.findFirstOrThrow({ where: { name: "E2E Premise" } });
+    const outerInDev = await prisma.device.findUniqueOrThrow({ where: { serialNo: "E2EZONEOUTERIN" } });
+    const zoneSims = (await prisma.device.findMany({ where: { serialNo: { startsWith: "E2EZONE" } } })).map((d) => new SimulatedDevice(app, d.serialNo));
+    const drainZones = async () => { for (const sim of zoneSims) await sim.drain(20); };
+    const securityTok = JSON.parse((await app.inject({ method: "POST", url: "/api/auth/login", payload: { email: "security@vms.local", password: "role-password" } })).body).token as string;
+
+    await testPhoto("91001");
+    const stuck = JSON.parse((await fx("POST", "/api/people", registration("Left Without Punching", "91001"))).body) as { id: string };
+    const pass = await fx("POST", `/api/people/${stuck.id}/provision`, {
+      purposeOfVisit: "E2E forced end", zoneIds: [zPrem.id], entryMode: "MULTI_ENTRY", retentionPolicy: "CUSTOM",
+      expectedInAt: new Date().toISOString(), validUntil: new Date(Date.now() + 2 * 3_600_000).toISOString(),
+    });
+    const passId = JSON.parse(pass.body).entry.id as string;
+    await gateTick(silentLog);
+    await drainZones();
+    const local = new Date(Date.now() + TZ_OFFSET * 60_000 + 5000).toISOString().replace("T", " ").slice(0, 19);
+    await app.inject({ method: "POST", url: `/iclock/cdata.aspx?SN=${outerInDev.serialNo}&table=ATTLOG`, payload: `91001\t${local}\t0\t15\t0\t0` });
+    check("the visitor is marked inside", (await prisma.entry.findUniqueOrThrow({ where: { id: passId } })).state === EntryState.INSIDE);
+
+    check("removing someone inside is still refused without force", (await fx("POST", `/api/entries/${passId}/deprovision`)).statusCode === 409);
+    check("...Security cannot force it (Administrator only by default)", (await fx("POST", `/api/entries/${passId}/deprovision`, { force: true, reason: "left" }, securityTok)).statusCode === 403);
+    check("...a reason is required", (await fx("POST", `/api/entries/${passId}/deprovision`, { force: true })).statusCode === 400);
+    const forced = await fx("POST", `/api/entries/${passId}/deprovision`, { force: true, reason: "Left by the side gate" });
+    check("an Administrator can remove someone still inside", forced.statusCode === 202, forced.body);
+    const afterForce = await prisma.entry.findUniqueOrThrow({ where: { id: passId } });
+    check("...the pass is ending and no longer marks them inside", afterForce.state === EntryState.PENDING_DEPROVISION && afterForce.locationZoneId === null);
+    const forceAudit = await prisma.auditLog.findFirst({ where: { entityId: passId, action: "ENTRY_DEPROVISION_REQUESTED" } });
+    check("...audited with the reason and forcedWhileInside", (forceAudit?.detail as { forcedWhileInside?: boolean; reason?: string } | null)?.forcedWhileInside === true && (forceAudit?.detail as { reason?: string }).reason === "Left by the side gate");
+    await gateTick(silentLog);
+    await drainZones();
+    check("...and every terminal, exits included, is cleared and the pass closed", (await prisma.entry.findUniqueOrThrow({ where: { id: passId } })).state === EntryState.REGISTERED);
+
+    // F-j: a hand enrolment (photo on disk, no person) is discarded.
+    await prisma.device.updateMany({ where: { serialNo: { startsWith: "E2EZONE" } }, data: { visitorIdPatterns: ["9*"] } });
+    await testPhoto("97777");
+    const covered = await prisma.device.count({ where: { visitorIdPatterns: { has: "9*" } } });
+    check("Security cannot discard an enrolment", (await fx("DELETE", "/api/enrollments/unclaimed/97777", undefined, securityTok)).statusCode === 403);
+    const discard = await fx("DELETE", "/api/enrollments/unclaimed/97777");
+    check("an Administrator can discard a hand enrolment", discard.statusCode === 200, discard.body);
+    check("...removal is queued only on terminals whose patterns cover the ID", JSON.parse(discard.body).devicesQueued === covered && covered > 0, discard.body);
+    check("...as best-effort removals", (await prisma.syncCommand.count({ where: { idempotencyKey: { startsWith: "unclaimed-delete:97777:" }, payload: { path: ["bestEffort"], equals: true } } })) === covered);
+    check("...the photo is deleted", !(await readFile(photoPathFor("97777")).then(() => true, () => false)));
+    check("...and it is audited", (await prisma.auditLog.count({ where: { action: "UNCLAIMED_DELETED", entityId: "97777" } })) === 1);
+    await testPhoto("ADMINCARD1");
+    const outside = await fx("DELETE", "/api/enrollments/unclaimed/ADMINCARD1");
+    check("an ID outside every terminal's patterns is never sent to a terminal (rule #7)", outside.statusCode === 200 && JSON.parse(outside.body).devicesQueued === 0, outside.body);
+    check("a registered person's ID cannot be discarded here", (await fx("DELETE", "/api/enrollments/unclaimed/91001")).statusCode === 409);
+    await drainZones();
+  }
+
+  // ======================================================================
   section("34. Audit coverage — every successful state change left an audit row");
   // ======================================================================
   {

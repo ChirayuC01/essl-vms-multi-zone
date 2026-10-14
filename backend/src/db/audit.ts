@@ -63,6 +63,9 @@ export const AuditAction = {
   ZONE_CREATED: "ZONE_CREATED",
   ZONE_UPDATED: "ZONE_UPDATED",
   ZONE_DELETED: "ZONE_DELETED",
+  // A hand enrolment discarded by an Admin: the stored photo, and the ID on
+  // every terminal whose patterns cover it (F3 F-j).
+  UNCLAIMED_DELETED: "UNCLAIMED_DELETED",
   DEVICE_ZONE_CHANGED: "DEVICE_ZONE_CHANGED",
   // Site settings: detail carries each changed key with its old and new value.
   SETTINGS_CHANGED: "SETTINGS_CHANGED",

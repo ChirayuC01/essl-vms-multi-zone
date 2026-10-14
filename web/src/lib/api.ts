@@ -122,11 +122,43 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
   if (!response.ok) {
     const message =
       typeof payload === "object" && payload !== null && "error" in payload
-        ? String((payload as { error: unknown }).error)
+        ? issuesMessage(payload) ?? String((payload as { error: unknown }).error)
         : `request failed (${response.status})`;
     throw new ApiError(response.status, message);
   }
   return payload as T;
+}
+
+const FIELD_LABELS: Record<string, string> = {
+  esslUserId: "ID",
+  aadharNumber: "Aadhaar",
+  panNumber: "PAN",
+  companyId: "Company",
+  departmentId: "Department",
+  deviceIds: "Terminals",
+  zoneIds: "Zones",
+  passTypeId: "Pass type",
+  purposeOfVisit: "Purpose of visit",
+  personToMeetId: "Person to meet",
+  govtIdNumber: "Govt ID number",
+};
+
+/**
+ * A validation refusal (`{ error: "validation", issues }`) says which field
+ * failed and why; "validation" alone tells the operator nothing. Each issue
+ * becomes "Field: message", so even zod's generic "Required" is actionable
+ * (F3 F-m, from 0.4.24).
+ */
+function issuesMessage(payload: object): string | null {
+  const issues = (payload as { issues?: unknown }).issues;
+  if (!Array.isArray(issues) || issues.length === 0) return null;
+  return issues
+    .map((issue: { path?: unknown[]; message?: string }) => {
+      const field = String(issue.path?.[0] ?? "");
+      const label = FIELD_LABELS[field] ?? field.replace(/([A-Z])/g, " $1").replace(/^./, (c) => c.toUpperCase());
+      return label ? `${label}: ${issue.message ?? "invalid"}` : issue.message ?? "invalid";
+    })
+    .join("; ");
 }
 
 // ---------------------------------------------------------------------------

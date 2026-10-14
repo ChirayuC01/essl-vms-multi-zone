@@ -418,7 +418,14 @@ export async function entryRoutes(app: FastifyInstance): Promise<void> {
   // ---- de-provision --------------------------------------------------------
   app.post("/entries/:id/deprovision", { preHandler: requirePermission("passes:delete") }, async (request, reply) => {
     const { id } = request.params as { id: string };
-    const { entry, devices, commands } = await deprovisionEntry(id, actorId(request));
+    // `force` ends the pass of someone still marked inside (left without
+    // punching out). Its own cell, Administrator only by default (F3 F-a).
+    const body = (request.body ?? {}) as { force?: unknown; reason?: unknown };
+    const force = body.force === true;
+    if (force && !(await hasPermission(request, "passes_force_end:update"))) {
+      return reply.code(403).send({ error: "only an administrator can remove someone still inside" });
+    }
+    const { entry, devices, commands } = await deprovisionEntry(id, actorId(request), force ? { reason: typeof body.reason === "string" ? body.reason : "" } : undefined);
     request.log.info(
       { entryId: id, devices: devices.map((d) => d.serialNo) },
       "de-provision queued — device removal only, record retained",

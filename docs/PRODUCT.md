@@ -226,6 +226,15 @@ Further rules:
   Implemented, Phase 4. Report: **Exit overrides** (Phase 8).
 - **Security photo retake** — replace a poor selfie at the gate; re-pushed to
   the loaded terminals. Implemented, Phase 6 (person page → pass panel).
+- **Remove someone still inside** (Administrator by default, F3) — for a
+  visitor marked inside who left without punching out: the pass ends and
+  every terminal, exits included, is cleared. The console warns that someone
+  genuinely still on site must then be let out by hand (admin card). Reason
+  mandatory; audited with `forcedWhileInside`.
+- **Discard a hand enrolment** (Administrator by default, F3) — someone
+  enrolled on a terminal by hand and never registered: the stored photo is
+  deleted and the ID removed from every terminal whose ID patterns cover it;
+  an ID outside them (the admin card holder) is never touched. Audited.
 - **Outage procedure** — while the system is down, site staff release people
   physically with the terminal's admin card and note them in a manual
   register. When the system comes back, passes affected by the outage are

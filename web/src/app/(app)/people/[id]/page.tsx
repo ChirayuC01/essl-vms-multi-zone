@@ -429,6 +429,27 @@ export default function PersonDetailPage() {
                   De-provision
                 </Button>
 
+                {/* F3 F-a: someone marked inside who left without punching out. */}
+                {activeEntry.state === "INSIDE" && can("passes_force_end:update") && (
+                  <Button
+                    variant="danger"
+                    loading={busy === "force"}
+                    onClick={() => {
+                      const reason = window.prompt(
+                        "Remove this person while they are marked INSIDE?\n\nThe terminals stop recognising them at once. If they are actually still on site, they must be let out by hand (admin card).\n\nReason (required):",
+                      );
+                      if (!reason?.trim()) return;
+                      void run(
+                        "force",
+                        () => api(`/api/entries/${activeEntry.id}/deprovision`, { method: "POST", body: { force: true, reason: reason.trim() } }),
+                        "Removed while inside — the pass is ending and the terminals are being cleared.",
+                      );
+                    }}
+                  >
+                    Remove although inside
+                  </Button>
+                )}
+
                 <Button
                   loading={busy === "query"}
                   onClick={() =>

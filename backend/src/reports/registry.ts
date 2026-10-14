@@ -254,7 +254,7 @@ export const REPORTS: ReportDef[] = [
     key: "punch-log",
     title: "Punch log",
     description:
-      "Every individual punch: the time, IN or OUT, which terminal and its zone at the time. Raw punches only — once retention has summarised a day, its individual times are gone and only the counts in Attendance remain.",
+      "Every individual punch: the time, IN or OUT, which device and its zone at the time. Raw punches only — once retention has summarised a day, its individual times are gone and only the counts in Attendance remain.",
     group: "Movement",
     permission: "punches:view",
     filters: ["dateRange", "person", "device", "search"],
@@ -262,7 +262,7 @@ export const REPORTS: ReportDef[] = [
       { key: "day", label: "Date" },
       { key: "punched_at", label: "Time" },
       { key: "direction", label: "Direction" },
-      { key: "device", label: "Terminal" },
+      { key: "device", label: "Device" },
       { key: "zone", label: "Zone" },
       { key: "person", label: "Person" },
       { key: "pin", label: "ID" },
@@ -340,12 +340,12 @@ export const REPORTS: ReportDef[] = [
     key: "device-roster",
     title: "Device roster",
     description:
-      "Who VMS has loaded, or is loading, on each terminal: Employees with permanent access, and visitors whose pass gate is loading or loaded. This is what VMS believes, not a read of the terminal — reconciliation and the drift alerts cover a terminal that disagrees.",
+      "Who VMS has loaded, or is loading, on each device: Employees with permanent access, and visitors whose pass gate is loading or loaded. This is what VMS believes, not a read of the devicl — reconciliation and the drift alerts cover a terminal that disagrees.",
     group: "People",
     permission: "reports:view",
     filters: ["device", "person", "company", "category", "search"],
     columns: [
-      { key: "device", label: "Terminal" },
+      { key: "device", label: "Device" },
       { key: "zone", label: "Zone" },
       { key: "person", label: "Person" },
       { key: "pin", label: "ID" },
@@ -412,33 +412,10 @@ export const REPORTS: ReportDef[] = [
        ORDER BY m.day DESC, v."name" ASC NULLS LAST`,
   },
   {
-    key: "on-site-now",
-    title: "On site now",
-    description: "Everyone currently inside, and since when.",
-    group: "Movement",
-    permission: "reports:view",
-    filters: ["person"],
-    columns: [
-      ...PERSON_COLS,
-      { key: "in_at", label: "Entered" },
-      { key: "purpose_of_visit", label: "Purpose" },
-      { key: "entry_mode", label: "Mode" },
-      { key: "retention_expires_at", label: "Window closes" },
-    ],
-    base: (f) => Prisma.sql`
-      SELECT v."id" AS person_id, v."name" AS person, (SELECT c."name" FROM "company" c WHERE c."id" = v."company_id"), v."essl_user_id" AS pin,
-             e."in_at", e."purpose_of_visit", e."entry_mode", e."retention_expires_at"
-        FROM "entry" e
-        JOIN "person" v ON v."id" = e."person_id"
-       WHERE e."state" = 'INSIDE'::"EntryState"
-         ${eqPerson(Prisma.sql`v."id"`, f.personId)}
-       ORDER BY e."in_at" ASC NULLS LAST`,
-  },
-  {
     key: "time-on-site",
     title: "Time on site",
     description:
-      "How long each visit lasted, from first crossing to last on that day. A day with no OUT shows no duration rather than a guess — the terminal can suppress a repeat punch, so an absent exit is not evidence of a long stay.",
+      "How long each visit lasted, from first crossing to last on that day. A day with no OUT shows no duration rather than a guess — the device can suppress a repeat punch, so an absent exit is not evidence of a long stay.",
     group: "Movement",
     permission: "reports:view",
     filters: ["dateRange", "person", "device"],
@@ -537,20 +514,19 @@ export const REPORTS: ReportDef[] = [
   },
   {
     key: "authorizations",
-    title: "Authorizations issued",
+    title: "Provisions issued",
     description:
-      "Who authorized whom, when, for how long, in which entry mode, and why. Provisioning IS the authorization decision, so this is the record of who let each person through — filter by person, by date range, or both. Entries are never pruned, so it answers for any date the system has been running.",
+      "Who provisioned whom, when, until when, in which entry mode, and why: the record of who let each person through. Filter by person, by date range, or both. Never pruned, so it answers for any date the system has been running.",
     group: "People",
     permission: "reports:view",
     filters: ["dateRange", "person"],
     columns: [
-      { key: "created_at", label: "Authorized" },
+      { key: "created_at", label: "Provisioned" },
       ...PERSON_COLS,
       { key: "authorized_by", label: "By" },
       { key: "purpose_of_visit", label: "Purpose" },
-      { key: "retention_policy", label: "Window" },
-      { key: "retention_expires_at", label: "Closes" },
-      { key: "entry_mode", label: "Mode" },
+      { key: "retention_expires_at", label: "Valid until" },
+      { key: "entry_mode", label: "Entry" },
       { key: "state", label: "State" },
     ],
     base: (f) => Prisma.sql`
@@ -569,8 +545,8 @@ export const REPORTS: ReportDef[] = [
   },
   {
     key: "active-authorizations",
-    title: "Currently authorized",
-    description: "People loaded on a device right now, and when their window closes.",
+    title: "Currently provisioned",
+    description: "People provisioned on a device right now, and until when.",
     group: "People",
     permission: "reports:view",
     filters: ["person"],
@@ -579,7 +555,7 @@ export const REPORTS: ReportDef[] = [
       { key: "state", label: "State" },
       { key: "purpose_of_visit", label: "Purpose" },
       { key: "day_blocked", label: "Blocked today" },
-      { key: "retention_expires_at", label: "Window closes" },
+      { key: "retention_expires_at", label: "Valid until" },
     ],
     base: (f) => Prisma.sql`
       SELECT v."id" AS person_id, v."name" AS person, (SELECT c."name" FROM "company" c WHERE c."id" = v."company_id"), v."essl_user_id" AS pin,
@@ -615,14 +591,14 @@ export const REPORTS: ReportDef[] = [
   },
   {
     key: "never-visited",
-    title: "Authorized but never arrived",
+    title: "Provisioned but never arrived",
     description:
-      "People provisioned onto a device who never punched. Each one occupies a face slot on hardware that holds 3,000.",
+      "People provisioned onto a device who never punched. Each one occupies a face slot on a device that holds 3,000.",
     group: "People",
     permission: "reports:view",
     filters: ["dateRange"],
     columns: [
-      { key: "created_at", label: "Authorized" },
+      { key: "created_at", label: "Provisioned" },
       ...PERSON_COLS,
       { key: "state", label: "State" },
     ],
@@ -662,9 +638,9 @@ export const REPORTS: ReportDef[] = [
   // ---------------------------------------------------------------- exceptions
   {
     key: "overdue-inside",
-    title: "Inside past their window",
+    title: "Overstayed",
     description:
-      "Windows that closed while the person was still on site. They are deliberately not removed — taking a credential away mid-visit would strand someone at the exit — so removal waits for their OUT punch.",
+      "People still inside after their pass ended. They are deliberately not de-provisioned while inside — that would strand them at the exit — so it waits for their OUT punch.",
     group: "Exceptions",
     permission: "reports:view",
     filters: ["person"],
@@ -672,7 +648,7 @@ export const REPORTS: ReportDef[] = [
       ...PERSON_COLS,
       { key: "in_at", label: "Entered" },
       { key: "purpose_of_visit", label: "Purpose" },
-      { key: "retention_expires_at", label: "Window closed" },
+      { key: "retention_expires_at", label: "Pass ended" },
       { key: "overdue_minutes", label: "Overdue (min)" },
     ],
     base: (f) => Prisma.sql`
@@ -692,7 +668,7 @@ export const REPORTS: ReportDef[] = [
     key: "no-exit",
     title: "Arrived without leaving",
     description:
-      "Days with an entry and no exit. Often a genuinely missed punch-out — but the terminal also drops a repeat punch by the same person inside its duplicate window, so an absent exit is not proof anyone is still there.",
+      "Days with an entry and no exit. Often a genuinely missed punch-out — but the device also drops a repeat punch by the same person inside its duplicate window, so an absent exit is not proof anyone is still there.",
     group: "Exceptions",
     permission: "reports:view",
     filters: ["dateRange", "person", "device"],
@@ -713,33 +689,10 @@ export const REPORTS: ReportDef[] = [
        ORDER BY m.day DESC`,
   },
   {
-    key: "day-blocked",
-    title: "Single-entry blocks",
-    description:
-      "People currently blocked for the day after using their single entry. The daily reset releases them; they remain loaded on the device and recognised by it, then denied.",
-    group: "Exceptions",
-    permission: "reports:view",
-    filters: ["person"],
-    columns: [
-      ...PERSON_COLS,
-      { key: "out_at", label: "Left at" },
-      { key: "state", label: "State" },
-      { key: "retention_expires_at", label: "Window closes" },
-    ],
-    base: (f) => Prisma.sql`
-      SELECT v."id" AS person_id, v."name" AS person, (SELECT c."name" FROM "company" c WHERE c."id" = v."company_id"), v."essl_user_id" AS pin,
-             e."out_at", e."state", e."retention_expires_at"
-        FROM "entry" e
-        JOIN "person" v ON v."id" = e."person_id"
-       WHERE e."day_blocked" = TRUE
-         ${eqPerson(Prisma.sql`v."id"`, f.personId)}
-       ORDER BY e."out_at" DESC NULLS LAST`,
-  },
-  {
     key: "reconciliation",
     title: "Reconciliation events",
     description:
-      "Drift between the database and a terminal — what was found, and what was corrected automatically. A person still loaded after their authorization ended is the case this exists to catch.",
+      "Drift between the database and a device — what was found, and what was corrected automatically. A person still loaded after their authorization ended is the case this exists to catch.",
     group: "Exceptions",
     permission: "reports:view",
     filters: ["dateRange"],
@@ -760,7 +713,7 @@ export const REPORTS: ReportDef[] = [
     key: "direction-conflicts",
     title: "Direction conflicts",
     description:
-      "Punches whose status code contradicted the gate they arrived at. The gate's role wins, but a run of these means a terminal is configured as the wrong direction.",
+      "Punches whose status code contradicted the gate they arrived at. The gate's role wins, but a run of these means a device is configured as the wrong direction.",
     group: "Exceptions",
     permission: "reports:view",
     filters: ["dateRange"],
@@ -781,7 +734,7 @@ export const REPORTS: ReportDef[] = [
     key: "command-history",
     title: "Device command history",
     description:
-      "Every write sent to a terminal, with its outcome and how long it took to be collected.",
+      "Every change sent to a device, with its outcome and how long it took to be collected.",
     group: "Operations",
     permission: "reports:view",
     filters: ["dateRange", "person", "device"],
@@ -818,7 +771,7 @@ export const REPORTS: ReportDef[] = [
     key: "failed-commands",
     title: "Failed commands",
     description:
-      "Changes that never reached a terminal. Each one means the device and the database disagree about somebody's access until it is dealt with.",
+      "Changes that never reached a device. Each one means the device and the database disagree about somebody's access until it is dealt with.",
     group: "Operations",
     permission: "reports:view",
     filters: ["device"],
@@ -1002,7 +955,7 @@ export const REPORTS: ReportDef[] = [
       ...PERSON_COLS,
       { key: "location", label: "Where" },
       { key: "in_at", label: "Came in" },
-      { key: "entry_mode", label: "Mode" },
+      { key: "entry_mode", label: "Entry" },
       { key: "pass_ends", label: "Pass ends" },
       { key: "overstayed", label: "Overstayed" },
     ],

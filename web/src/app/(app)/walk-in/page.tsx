@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { getApiBase, getToken } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { formatDateTime, requestTone } from "@/lib/format";
+import { formatDateTime, requestStatusLabel, requestTone } from "@/lib/format";
 import { refresh, useApi } from "@/lib/swr";
 import { Accordion, Alert, Badge, Button, Card, Empty, Table } from "@/components/ui";
 import { VisitorFlow } from "@/components/visitor-flow";
@@ -62,10 +62,10 @@ export default function WalkInPage() {
                 <td className="px-2 py-2">{w.visitorName}<div className="text-xs text-[var(--text-muted)]">{w.visitorMobile}</div></td>
                 <td className="px-2 py-2">{w.host.name ?? w.host.email}</td>
                 <td className="px-2 py-2">{formatDateTime(w.createdAt)}</td>
-                <td className="px-2 py-2"><Badge tone={requestTone(w.status)}>{w.status === "SENT" ? "in progress" : w.status.toLowerCase()}</Badge></td>
+                <td className="px-2 py-2"><Badge tone={requestTone(w.status)}>{requestStatusLabel(w.status)}</Badge></td>
                 <td className="px-2 py-2 text-right">
                   {w.status === "SENT" && <Button onClick={() => setActiveId(w.id)}>Continue</Button>}
-                  {w.passId && can("passes:view") && <Link className="text-sm hover:underline" href={`/pass/${w.passId}`}>Pass</Link>}
+                  {w.passId && can("passes:view") && <Link className="text-sm hover:underline" href={`/pass/${w.passId}`}>Print visitor pass</Link>}
                 </td>
               </tr>
             ))}

@@ -30,14 +30,14 @@ export default function PersonCardPage({ params }: { params: Promise<{ id: strin
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3 print:hidden">
         <p className="text-sm text-[var(--text-muted)]">
-          Give this to a person who visits often. Next time they only need to read out the PIN.
+          Give this to a person who visits often. Next time they only need to read out their ID.
         </p>
-        <Button onClick={() => window.print()}>Print card</Button>
+        <Button onClick={() => window.print()}>Print ID card</Button>
       </div>
 
       <Card title="">
         <div className="mx-auto max-w-md border border-[var(--border)] p-6 print:border-black">
-          <p className="text-xs uppercase tracking-widest text-[var(--text-muted)]">Person card</p>
+          <p className="text-xs uppercase tracking-widest text-[var(--text-muted)]">ID card</p>
 
           <div className="mt-4 flex items-start gap-4">
             {person.biometric ? (

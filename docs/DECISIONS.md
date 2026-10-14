@@ -154,6 +154,10 @@ carried at the top; their full history is in `legacy/`.
 | 2026-10-14 | Erasure stays alongside Deactivate: Deactivate is the everyday removal (data kept), Erase the Administrator-only answer to a formal DPDP erasure request | Deactivating keeps the personal data; only erasure satisfies a request | Owner |
 | 2026-10-14 | Zones move to their own page out of Devices; to be done with the UI redesign | Zones are site layout, not terminal settings | Owner |
 | 2026-10-14 | Console navigation is a left sidebar in five groups (Overview, Visitors, People, Site setup, Administration), collapsible to an icon rail (remembered per browser), a drawer on phones; entries and empty groups hidden by the access grid as before. Zones get their own page | Owner-approved design (Claude Design canvas "Sidebar Navigation") | Owner |
+| 2026-10-14 | Console vocabulary: **"Device"** for the hardware everywhere (not "terminal"); **"Provision / De-provision"** for giving and removing access (the client's existing words); "pass" only for Pass types (client's name) and the printed Visitor pass; "ID" for a person's number | One name per thing before the client's go-live (pre-demo sweep) | Owner |
+| 2026-10-14 | Block / Unblock stays; the "Unregistered people" panel stays on both Dashboard and People; the "Aadhaar verified" / "PAN verified" badges stay, by the client's request | Owner (client requests) | Owner |
+| 2026-10-14 | Reports "On site now" (duplicate of "Inside now, by zone") and "Single-entry blocks" (retired mechanism) removed; report values show the console's wording, never database codes | Pre-demo sweep | Owner |
+| 2026-10-14 | Uploading a photo on the person page re-sends it to devices already holding the face (visitor gates, employee access); the pass panel's separate Retake is removed | The upload used to save only the file, leaving the gate on the old face | Pre-demo sweep |
 
 ## Open (awaiting client)
 

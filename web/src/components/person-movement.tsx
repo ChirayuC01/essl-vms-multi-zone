@@ -55,7 +55,7 @@ export function PersonMovement({ personId }: { personId: string }) {
               </tr>
             ))}
           </Table>
-          <Table head={["Time", "Direction", "Terminal", "Zone"]}>
+          <Table head={["Time", "Direction", "Device", "Zone"]}>
             {punches.rows.map((row, i) => (
               <tr key={i} className="border-b border-[var(--border)] last:border-0">
                 <td className="px-2 py-2 text-xs">{when(row.punched_at)}</td>

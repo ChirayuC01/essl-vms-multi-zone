@@ -207,7 +207,7 @@ export default function DevicesPage() {
     setSavingRole(id);
     try {
       await api(`/api/devices/${id}`, { method: "PATCH", body: { role } });
-      setNotice("Gate role saved. Direction resolution for this terminal's punches applies immediately.");
+      setNotice("Gate role saved. Direction resolution for this device's punches applies immediately.");
       await refresh("/api/devices");
     } catch (e) {
       setActionError(e instanceof Error ? e.message : "save failed");
@@ -224,7 +224,7 @@ export default function DevicesPage() {
     setSavingZone(id);
     try {
       await api(`/api/devices/${id}`, { method: "PATCH", body: { zoneId: zoneId || null } });
-      setNotice("Zone saved. Zone-based access granted from now on includes this terminal.");
+      setNotice("Zone saved. Zone-based access granted from now on includes this device.");
       await Promise.all([refresh("/api/devices"), refresh("/api/zones")]);
     } catch (e) {
       setActionError(e instanceof Error ? e.message : "save failed");
@@ -295,8 +295,8 @@ export default function DevicesPage() {
     try {
       await api(`/api/devices/${id}/scan`, { method: "POST", body });
       setNotice(
-        "Scan started. It runs in the background at about 50 PINs a minute and never delays a provision. " +
-          "Anyone it finds with a face appears under unclaimed enrollments, ready to register.",
+        "Scan started. It runs in the background at about 50 IDs a minute and never delays provisioning. " +
+          "Anyone it finds with a face appears under Unregistered people.",
       );
       await refresh("/api/devices/scans");
     } catch (e) {
@@ -451,7 +451,7 @@ export default function DevicesPage() {
                         emptyLabel="Not placed"
                       />
                     }
-                    sub="the zone whose gate this terminal is"
+                    sub="the zone whose gate this device is"
                   />
                 ) : (
                   <Stat label="Zone" value={zones?.items.find((z) => z.id === device.zoneId)?.name ?? "Not placed"} />
@@ -528,7 +528,7 @@ export default function DevicesPage() {
                     <>
                       <Field
                         label="Duplicate punch period (minutes)"
-                        hint="What Menu > System > Attendance > Duplicate Punch Period(m) is actually set to on the terminal"
+                        hint="What Menu > System > Attendance > Duplicate Punch Period(m) is actually set to on the device"
                       >
                         <Input
                           type="number"
@@ -614,10 +614,10 @@ export default function DevicesPage() {
                   return (
                     <div className="mt-4 border-t border-[var(--border)] pt-4">
                       <p className="mb-3 text-sm text-[var(--text-muted)]">
-                        Was this terminal already in use before the VMS was installed? People
+                        Was this device already in use before the VMS was installed? People
                         enrolled on it are invisible until they are found — the device cannot list
                         its own users, so each ID has to be asked about individually. Anyone found
-                        with a face photo appears under unclaimed enrollments, ready to register.
+                        with a face photo appears under Unregistered people.
                         Runs in the background at about 50 IDs a minute and never delays live work.
                       </p>
 
@@ -643,7 +643,7 @@ export default function DevicesPage() {
                             for plain numbers. <strong>Padding</strong> is how many digits the
                             number is written with — <code>WCTPL070</code> is prefix{" "}
                             <code>WCTPL</code>, padding <code>3</code>. Getting it wrong asks the
-                            terminal about IDs that do not exist and finds nobody.
+                            device about IDs that do not exist and finds nobody.
                           </p>
                           <div className="flex flex-wrap items-end gap-3">
                             <Field label="Prefix">
@@ -710,7 +710,7 @@ export default function DevicesPage() {
                         <>
                           <p className="mb-3 text-xs text-[var(--text-muted)]">
                             Paste the IDs, or upload the list the site already has — the export
-                            from whatever software ran this terminal before. CSV, TXT or XLSX;
+                            from whatever software ran this device before. CSV, TXT or XLSX;
                             first column, one ID per row. That export is the most reliable source
                             there is: it is complete, and it needs no guessing about numbering.
                           </p>

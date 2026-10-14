@@ -1224,3 +1224,44 @@ Owner-approved design (Claude Design canvas "Sidebar Navigation").
   light and dark mode, as Admin, Security and Host (groups trim); a phone
   width (browser dev tools) opens and closes the drawer; Zones page works
   and is gone from Devices.
+
+### 2026-10-14 — Pre-demo console sweep
+
+Every page reviewed for each role against: one name per thing, dead buttons,
+buttons of no use, repeated steps, anything else a client would trip on.
+Owner chose the vocabulary (Devices; provision-focused) and kept Block, both
+Unregistered panels and the "verified" badges.
+
+- **One wording** (`web/src/lib/format.ts`): request statuses (Details
+  pending, Awaiting decision, Queried, Cleared, …), provisioning states
+  (Provisioning, Provisioned, Inside, De-provisioning, Ended), category,
+  entry mode, device command types and statuses; used on every page and, in
+  `api/reports.ts`, in every report's table and CSV.
+- **Names:** ID (not PIN / Device ID / Terminal ID / Reference); Device (not
+  terminal); "Provisioning" / "Device access" cards, Provision button,
+  "De-provision (still inside)", "Provisioning history"; Overstayed; Pass
+  type; Valid until; Entry; "Issue new exit code"; "Add zone"; ID card and
+  "Print visitor pass"; report titles Provisions issued / Currently
+  provisioned / Provisioned but never arrived / Overstayed; person history
+  actions in plain words.
+- **Fixed:** a photo uploaded on the person page now re-sends to devices
+  already holding the face (`api/people.ts`); the printed visitor pass shows
+  the visit start (not the provision time) and "Printed" (not "Issued"); the
+  out-pass page names "your host (or Security)"; the add-operator form keeps
+  its input on failure; operator phone hint says hosts need it; the Blocked
+  stat describes manual blocks; the device-scan text no longer offers
+  registration from the device; Directory bulk assignment is searchable.
+- **Removed:** "Query device" (asked one device, showed nothing), the
+  Retention field, the portal's "Save details" (Submit saves), the duplicate
+  Retake and history "Visitor pass" link; reports "On site now" and
+  "Single-entry blocks". The request page offers New link / Cancel while
+  waiting on the visitor and Clear / Query / Reject once submitted, never both.
+- **Plain wording:** developer text on the photo card, provisioning
+  messages, hand-enrolled warning, unregistered-device warning, Host
+  dashboard (links to Requests), walk-in desk cards (Visitor's details /
+  photo / mobile), portal end messages ("was not approved"), about a dozen
+  server errors (no "entry", "PIN", "INSIDE", raw states).
+- Tests: e2e check that a person-page photo upload re-sends to the loaded
+  device; report value checks use the labels.
+- **Verified:** typecheck PASS; `npm test` 118/118; `verify:e2e` **613
+  passed, 0 failed**; web lint + build PASS. No migration.

@@ -110,7 +110,7 @@ export async function reissueExitCode(entryId: string, actorId: string, now = ne
   const entry = await prisma.entry.findUnique({ where: { id: entryId }, include: { ...include, gates: { where: { reason: { in: EXIT_REASONS } }, select: { id: true } } } });
   if (!entry) throw new ServiceError(404, "pass not found");
   if (entry.entryMode !== EntryMode.SINGLE_ENTRY || entry.exitCodeZoneIds.length === 0) throw new ServiceError(409, "this pass has no exit code — its exits load with the pass");
-  if (entry.state !== EntryState.INSIDE && entry.state !== EntryState.PROVISIONED) throw new ServiceError(409, `pass is ${entry.state} — no exit code needed`);
+  if (entry.state !== EntryState.INSIDE && entry.state !== EntryState.PROVISIONED) throw new ServiceError(409, "this person is not currently provisioned; no exit code is needed");
   if (entry.gates.length) throw new ServiceError(409, "the exit terminals are already loaded for this pass");
   const code = await freshCode(entry, now);
   const live = await prisma.linkToken.count({ where: { entryId, purpose: OUT_PASS, revokedAt: null, expiresAt: { gt: now } } });

@@ -29,8 +29,13 @@ export default function DashboardPage() {
     return (
       <Card title="Welcome">
         <p className="text-sm text-[var(--text-muted)]">
-          Your access does not include the site dashboard. Your own screens appear here as they are released,
-          or an administrator can grant more from the Access page.
+          Your work is in the menu on the left
+          {can("visit_requests:view") && (
+            <>
+              {" "}— start with <Link href="/requests" className="text-[var(--brand)] hover:underline">Requests</Link>
+            </>
+          )}
+          . An administrator can grant more from the Access page.
         </p>
       </Card>
     );
@@ -109,7 +114,7 @@ function SiteDashboard() {
         summary={
           <span className="flex items-center gap-1">
             <Badge tone="info">{board ? `${board.inside.length} inside` : "…"}</Badge>
-            {overdueCount > 0 && <Badge tone="warn">{overdueCount} overdue</Badge>}
+            {overdueCount > 0 && <Badge tone="warn">{overdueCount} overstayed</Badge>}
             {(board?.dayBlocked.length ?? 0) > 0 && <Badge>{board?.dayBlocked.length} blocked</Badge>}
           </span>
         }
@@ -121,14 +126,14 @@ function SiteDashboard() {
             sub="punched in, not yet out"
           />
           <Stat
-            label="Past their window"
+            label="Overstayed"
             value={board ? overdueCount : "—"}
-            sub={overdueCount > 0 ? "de-provision deferred" : "none"}
+            sub="inside after their pass ended"
           />
           <Stat
-            label="Blocked for today"
+            label="Blocked"
             value={board ? board.dayBlocked.length : "—"}
-            sub="single entry, used"
+            sub="by an operator"
           />
         </div>
         <Link href="/inside" className="mt-4 inline-block text-xs text-[var(--brand)] hover:underline">
@@ -200,8 +205,8 @@ function SiteDashboard() {
           <div className="mt-4">
             <Alert tone="warn">
               <strong>Unregistered device checking in:</strong>{" "}
-              {devices.unregistered.map((u) => u.serialNo).join(", ")} — never adopted
-              automatically, because two owners of one roster cause mystery deletions.
+              {devices.unregistered.map((u) => u.serialNo).join(", ")}. If it is one of yours,
+              register it on the Devices page; until then the system leaves it alone.
             </Alert>
           </div>
         )}
@@ -227,7 +232,7 @@ function SiteDashboard() {
         {punches.length === 0 ? (
           <Empty>No punches recorded yet. Walk up to the barrier — they appear here live.</Empty>
         ) : (
-          <Table head={["Time", "Person", "PIN", "Device", "Verify"]}>
+          <Table head={["Time", "Person", "ID", "Device", "Verify"]}>
             {punches.map((punch) => (
               <tr
                 key={punch.id}
@@ -254,7 +259,7 @@ function SiteDashboard() {
                     ) : (
                       // Punches ingest even for a PIN no person claims — that is
                       // deliberate, and worth showing rather than hiding.
-                      <span className="text-[var(--text-muted)]">unknown PIN</span>
+                      <span className="text-[var(--text-muted)]">not registered</span>
                     )}
                   </div>
                 </td>

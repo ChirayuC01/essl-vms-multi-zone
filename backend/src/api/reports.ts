@@ -62,9 +62,40 @@ function reportValue(value: unknown, key?: string): unknown {
   return value;
 }
 
-function reportRows(rows: Record<string, unknown>[]): Record<string, unknown>[] {
+// Database words never reach a report (pre-demo sweep, 14 Oct 2026): the same
+// wording the console uses (web/src/lib/format.ts). "Status" means different
+// things per report, so it is resolved with the report's key.
+const PASS_STATE: Record<string, string> = { PENDING_PROVISION: "Provisioning", PROVISIONED: "Provisioned", INSIDE: "Inside", PENDING_DEPROVISION: "De-provisioning", REGISTERED: "Ended" };
+const ENTRY_MODE: Record<string, string> = { SINGLE_ENTRY: "Single entry", MULTI_ENTRY: "Multi entry" };
+const CATEGORY: Record<string, string> = { EMPLOYEE: "Employee", VISITOR: "Visitor" };
+const REQUEST_STATUS: Record<string, string> = { SENT: "Details pending", SUBMITTED: "Awaiting decision", QUERIED: "Queried", CLEARED: "Cleared", REJECTED: "Rejected", CANCELLED: "Cancelled", EXPIRED: "Expired" };
+const COMMAND_STATUS: Record<string, string> = { PENDING: "Queued", SENT: "Sent", SUCCESS: "Done", FAILED: "Failed", RETRY: "Retrying" };
+const COMMAND_TYPE: Record<string, string> = { PROVISION: "Load person", PUSH_PHOTO: "Load photo", DEPROVISION: "Remove from device", BLOCK: "Block", UNBLOCK: "Unblock", QUERY_USER: "Check device", DEVICE_INFO: "Read device info", CLEAR_LOGS: "Clear device logs" };
+const ORIGIN: Record<string, string> = { PLANNED: "Planned", WALK_IN: "Walk-in" };
+const GATE_STATE: Record<string, string> = { LOADING: "Loading", LOADED: "Loaded" };
+
+function labelsFor(reportKey: string, column: string): Record<string, string> | null {
+  if (column === "state") return PASS_STATE;
+  if (column === "entry_mode") return ENTRY_MODE;
+  if (column === "category") return CATEGORY;
+  if (column === "origin") return ORIGIN;
+  if (column === "type" && reportKey === "command-history") return COMMAND_TYPE;
+  if (column === "status") {
+    if (reportKey === "visit-requests") return REQUEST_STATUS;
+    if (reportKey === "command-history" || reportKey === "failed-commands") return COMMAND_STATUS;
+    if (reportKey === "device-roster") return GATE_STATE;
+  }
+  return null;
+}
+
+function reportRows(rows: Record<string, unknown>[], reportKey = ""): Record<string, unknown>[] {
   return rows.map((row) =>
-    Object.fromEntries(Object.entries(row).map(([key, value]) => [key, reportValue(value, key)])),
+    Object.fromEntries(
+      Object.entries(row).map(([key, value]) => {
+        const labels = typeof value === "string" ? labelsFor(reportKey, key) : null;
+        return [key, labels ? labels[value as string] ?? value : reportValue(value, key)];
+      }),
+    ),
   );
 }
 
@@ -248,7 +279,7 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
         runReportAll(def, filters, config.reportExportMaxRows),
         getBranding(),
       ]);
-      const rows = reportRows(rawRows);
+      const rows = reportRows(rawRows, def.key);
       const header = def.columns.map((c) => csvField(c.label)).join(",");
       const body = rows
         .map((row) => def.columns.map((c) => csvField(row[c.key])).join(","))
@@ -276,7 +307,7 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
       description: def.description,
       columns: def.columns,
       ...result,
-      rows: reportRows(result.rows),
+      rows: reportRows(result.rows, def.key),
     });
   });
 }

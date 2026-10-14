@@ -63,7 +63,7 @@ export default function OutPassPage({ params }: { params: Promise<{ token: strin
           ) : (
             <Card title="Leaving?">
               <div className="space-y-3">
-                <p className="text-sm">Hi {state.firstName}. Enter the exit code your host gives you to open the exit gate.</p>
+                <p className="text-sm">Hi {state.firstName}. Enter the exit code your host (or Security) gives you to open the exit gate.</p>
                 <div className="flex items-end gap-2">
                   <Field label="Exit code">
                     <Input inputMode="numeric" autoComplete="one-time-code" maxLength={8} value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))} />

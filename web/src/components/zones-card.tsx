@@ -74,7 +74,7 @@ export function ZonesCard() {
       {zones.length === 0 ? (
         <p className="text-sm text-[var(--text-muted)]">No zones yet. Add the outermost zone first, then any zone inside it.</p>
       ) : (
-        <Table head={["Zone", "Inside", "Terminals", "Status", ...(editable || deletable ? ["Action"] : [])]}>
+        <Table head={["Zone", "Inside", "Devices", "Status", ...(editable || deletable ? ["Action"] : [])]}>
           {zones.map((zone) =>
             editing?.id === zone.id ? (
               <tr key={zone.id} className="border-b border-[var(--border)] align-top">
@@ -86,7 +86,7 @@ export function ZonesCard() {
                     options={zones.filter((z) => z.isActive && !insideOf(zone.id).has(z.id)).map((z) => ({ value: z.id, label: `Inside ${z.name}` }))}
                     emptyLabel="Top level (no parent)"
                   />
-                  <p className="mt-1 text-xs text-[var(--text-muted)]">Applies to new passes and grants; live ones keep their terminals.</p>
+                  <p className="mt-1 text-xs text-[var(--text-muted)]">Applies to new passes and grants; live ones keep their devices.</p>
                 </td>
                 <td className="px-2 py-2" colSpan={2} />
                 <td className="px-2 py-2">

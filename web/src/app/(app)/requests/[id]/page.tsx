@@ -4,7 +4,7 @@ import Link from "next/link";
 import { use, useState } from "react";
 import { api, ApiError, getApiBase, getToken, type VisitRequestDetail, type VisitRequestOptions } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { formatBytes, formatDateTime, requestTone } from "@/lib/format";
+import { entryModeLabel, formatBytes, formatDateTime, passStateLabel, requestStatusLabel, requestTone } from "@/lib/format";
 import { refresh, useApi } from "@/lib/swr";
 import { Alert, Badge, Button, Card, Field, Input, SearchSelect, Table } from "@/components/ui";
 import { addToDirectory } from "@/components/profile-fields";
@@ -46,10 +46,10 @@ export default function RequestDetailPage({ params }: { params: Promise<{ id: st
   const DONE: Record<string, string> = {
     resend: "A new link was sent. The previous link no longer works.",
     cancel: "Request cancelled.",
-    clear: "Cleared. The pass is issued; the face loads on the gates shortly before the visit time.",
+    clear: "Cleared. The visitor is provisioned; their face loads on the devices shortly before the visit time.",
     query: "Query sent. The visitor has a new link showing your question.",
     reject: "Rejected. The visitor has been told.",
-    widen: "Zone added: its terminals are loading.",
+    widen: "Zone added: its devices are loading.",
   };
   async function act(action: keyof typeof DONE, path = `${url}/${action}`, body: object = {}) {
     setBusy(action);
@@ -68,15 +68,16 @@ export default function RequestDetailPage({ params }: { params: Promise<{ id: st
 
   if (error) return <Alert>{error.message}</Alert>;
   if (!r) return <p className="text-sm text-[var(--text-muted)]">Loading…</p>;
+  // Waiting on the visitor: a new link or Cancel. Waiting on the host:
+  // Clear, Query or Reject. Never both sets at once (pre-demo sweep).
   const open = r.status === "SENT" || r.status === "QUERIED";
-  const cancellable = open || r.status === "SUBMITTED";
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
         <Link href="/requests" className="text-sm hover:underline">← Requests</Link>
         <h1 className="text-xl font-semibold">{r.visitorName}</h1>
-        <Badge tone={requestTone(r.status)}>{r.status.toLowerCase()}</Badge>
+        <Badge tone={requestTone(r.status)}>{requestStatusLabel(r.status)}</Badge>
         {r.personId && <Badge tone="info">returning visitor</Badge>}
       </div>
       {notice && <Alert tone="ok">{notice}</Alert>}
@@ -88,7 +89,7 @@ export default function RequestDetailPage({ params }: { params: Promise<{ id: st
             <dt className="text-[var(--text-muted)]">Mobile</dt><dd>{r.visitorMobile}{r.mobileVerifiedAt ? " · verified" : ""}</dd>
             <dt className="text-[var(--text-muted)]">Email</dt><dd>{show(r.visitorEmail)}</dd>
             <dt className="text-[var(--text-muted)]">Company</dt><dd>{show(r.companyName)}</dd>
-            <dt className="text-[var(--text-muted)]">Type</dt><dd>{r.passType?.name ?? "—"} · {r.entryMode === "SINGLE_ENTRY" ? "single entry" : "multi entry"}</dd>
+            <dt className="text-[var(--text-muted)]">Pass type</dt><dd>{r.passType?.name ?? "—"} · {entryModeLabel(r.entryMode)}</dd>
             <dt className="text-[var(--text-muted)]">Zones</dt><dd>{r.zones.map((z) => z.name).join(", ")}</dd>
             <dt className="text-[var(--text-muted)]">Visit</dt><dd>{formatDateTime(r.expectedAt)} – {formatDateTime(r.validUntil)}</dd>
             <dt className="text-[var(--text-muted)]">Purpose</dt><dd>{r.purpose}</dd>
@@ -144,7 +145,7 @@ export default function RequestDetailPage({ params }: { params: Promise<{ id: st
         <ol className="space-y-1 text-sm">
           {r.events.map((e) => (
             <li key={e.id}>
-              <span className="text-[var(--text-muted)]">{formatDateTime(e.createdAt)}</span> · {e.fromStatus ? `${e.fromStatus.toLowerCase()} → ` : ""}<strong>{e.toStatus.toLowerCase()}</strong>
+              <span className="text-[var(--text-muted)]">{formatDateTime(e.createdAt)}</span> · {e.fromStatus ? `${requestStatusLabel(e.fromStatus)} → ` : ""}<strong>{requestStatusLabel(e.toStatus)}</strong>
               {" "}by {e.actorKind === "VISITOR" ? "the visitor" : e.actorName ?? e.actorKind.toLowerCase()}
               {e.note ? ` — ${e.note}` : ""}
             </li>
@@ -153,9 +154,9 @@ export default function RequestDetailPage({ params }: { params: Promise<{ id: st
       </Card>
 
       {r.pass && (
-        <Card title="Pass">
+        <Card title="Provisioning">
           <div className="space-y-3 text-sm">
-            <p>Terminal ID <span className="font-mono">{r.pass.person.esslUserId}</span> · <Badge tone={r.pass.state === "PROVISIONED" || r.pass.state === "INSIDE" ? "ok" : "neutral"}>{r.pass.state.toLowerCase().replace("_", " ")}</Badge></p>
+            <p>Visitor ID <span className="font-mono">{r.pass.person.esslUserId}</span> · <Badge tone={r.pass.state === "PROVISIONED" || r.pass.state === "INSIDE" ? "ok" : "neutral"}>{passStateLabel(r.pass.state)}</Badge></p>
             {r.canReview && r.entryMode === "SINGLE_ENTRY" && (r.pass.state === "PROVISIONED" || r.pass.state === "INSIDE") && (
               <div className="flex flex-wrap items-center gap-2">
                 <Button
@@ -168,7 +169,7 @@ export default function RequestDetailPage({ params }: { params: Promise<{ id: st
                     }
                   })()}
                 >
-                  New exit code
+                  Issue new exit code
                 </Button>
                 {exitCode ? (
                   <span>Give your visitor this code when they leave: <span className="font-mono text-lg font-semibold">{exitCode}</span> (earlier codes no longer work)</span>
@@ -182,17 +183,16 @@ export default function RequestDetailPage({ params }: { params: Promise<{ id: st
                 <div className="w-full max-w-xs">
                   <SearchSelect value={widenTo} onChange={setWidenTo} options={(options?.zones ?? []).filter((z) => !r.pass!.zoneIds.includes(z.id)).map((z) => ({ value: z.id, label: z.name }))} placeholder="Add a zone…" />
                 </div>
-                <Button disabled={!widenTo} loading={busy === "widen"} onClick={() => void act("widen", `/api/entries/${r.pass!.id}/widen`, { zoneId: widenTo })}>Widen pass</Button>
+                <Button disabled={!widenTo} loading={busy === "widen"} onClick={() => void act("widen", `/api/entries/${r.pass!.id}/widen`, { zoneId: widenTo })}>Add zone</Button>
               </div>
             )}
           </div>
         </Card>
       )}
 
-      {r.canReview && (r.status === "SUBMITTED" || open) && (
+      {r.canReview && r.status === "SUBMITTED" && (
         <Card title="Decision">
           <div className="space-y-4">
-            {r.status === "SUBMITTED" && (
               <>
                 <div className="flex flex-wrap items-end gap-2">
                   <Field label="Company" hint="From the Directory">
@@ -215,14 +215,13 @@ export default function RequestDetailPage({ params }: { params: Promise<{ id: st
                       />
                     </Field>
                   )}
-                  <Button variant="primary" loading={busy === "clear"} onClick={() => void act("clear", undefined, { ...(companyPick ? { companyId: companyPick } : {}), ...(departmentId ? { departmentId } : {}) })}>Clear — issue the pass</Button>
+                  <Button variant="primary" loading={busy === "clear"} onClick={() => void act("clear", undefined, { ...(companyPick ? { companyId: companyPick } : {}), ...(departmentId ? { departmentId } : {}) })}>Clear — provision</Button>
                 </div>
                 <div className="flex flex-wrap items-end gap-2">
                   <Field label="Query: what should the visitor change?"><Input value={queryText} onChange={(e) => setQueryText(e.target.value)} maxLength={500} /></Field>
                   <Button disabled={queryText.trim().length < 3} loading={busy === "query"} onClick={() => void act("query", undefined, { text: queryText.trim() })}>Send query</Button>
                 </div>
               </>
-            )}
             <div className="flex flex-wrap items-end gap-2">
               <Field label="Reason for rejecting" hint="Kept internal; the visitor is only told it was not approved"><Input value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} maxLength={300} /></Field>
               <Button variant="danger" disabled={rejectReason.trim().length < 3} loading={busy === "reject"} onClick={() => void act("reject", undefined, { reason: rejectReason.trim() })}>Reject</Button>
@@ -231,7 +230,7 @@ export default function RequestDetailPage({ params }: { params: Promise<{ id: st
         </Card>
       )}
 
-      {can("visit_requests:create") && cancellable && (
+      {can("visit_requests:create") && open && (
         <Card title="Actions">
           <div className="space-y-3">
             {open && <Button loading={busy === "resend"} onClick={() => void act("resend")}>Send a new link</Button>}

@@ -60,8 +60,8 @@ export function PersonReports({ personId, employee }: { personId: string; employ
           </>
         )}
         {usesDevice && (
-          <Field label="Terminal">
-            <SearchSelect value={deviceId} onChange={setDeviceId} options={(deviceList?.items ?? []).map((d) => ({ value: d.id, label: d.name ?? d.serialNo }))} emptyLabel="All terminals" />
+          <Field label="Device">
+            <SearchSelect value={deviceId} onChange={setDeviceId} options={(deviceList?.items ?? []).map((d) => ({ value: d.id, label: d.name ?? d.serialNo }))} emptyLabel="All devices" />
           </Field>
         )}
       </div>

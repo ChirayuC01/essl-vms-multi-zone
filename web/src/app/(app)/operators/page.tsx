@@ -61,7 +61,7 @@ export default function OperatorsPage() {
   const create = async (form: HTMLFormElement) => {
     const fd = new FormData(form);
     const temporaryPassword = String(fd.get("temporaryPassword"));
-    await run(
+    const created = await run(
       `Created. Give them this password now — they must change it at first sign-in: ${temporaryPassword}`,
       () =>
         api("/api/operators", {
@@ -75,7 +75,8 @@ export default function OperatorsPage() {
           },
         }),
     );
-    form.reset();
+    // Kept on failure, so a typo does not mean retyping everything.
+    if (created) form.reset();
   };
 
   return (
@@ -97,7 +98,7 @@ export default function OperatorsPage() {
           <Field label="Name" hint="Optional">
             <Input name="name" maxLength={100} placeholder="Operator name" />
           </Field>
-          <Field label="Phone number" hint="Optional">
+          <Field label="Phone number" hint="Hosts need this: exit codes and visitor arrivals are sent here">
             <Input name="phone" type="tel" maxLength={30} placeholder="Phone number" />
           </Field>
           <Field label="Role">
@@ -247,7 +248,7 @@ export default function OperatorsPage() {
             {problem && <Alert>{problem}</Alert>}
             <Field label="Email"><Input value={editing.email} disabled /></Field>
             <Field label="Name" hint="Optional"><Input name="name" maxLength={100} defaultValue={editing.name ?? ""} /></Field>
-            <Field label="Phone number" hint="Optional"><Input name="phone" type="tel" maxLength={30} defaultValue={editing.phone ?? ""} /></Field>
+            <Field label="Phone number" hint="Hosts need this: exit codes and visitor arrivals are sent here"><Input name="phone" type="tel" maxLength={30} defaultValue={editing.phone ?? ""} /></Field>
             <Button type="submit" variant="primary" loading={busy}>Save details</Button>
           </form>
         </Modal>

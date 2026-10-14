@@ -6,7 +6,6 @@ import { useAuth } from "@/lib/auth";
 import { formatDateTime } from "@/lib/format";
 import { refresh, useApi } from "@/lib/swr";
 import { Alert, Badge, Button, Input, SearchSelect } from "@/components/ui";
-import { WebcamCapture } from "@/components/webcam-capture";
 
 // Where one pass stands on each terminal, plus the Security actions on it.
 // "PROVISIONED" is one word for any number of terminals; this is the answer
@@ -58,14 +57,14 @@ export function PassGates({ entryId }: { entryId: string }) {
         {entry.state === "INSIDE" && entry.retentionExpiresAt && new Date(entry.retentionExpiresAt) < new Date() && <Badge tone="danger">overstayed</Badge>}
       </p>
       {entry.gates.length === 0 ? (
-        <p className="text-xs text-[var(--text-muted)]">No terminals scheduled for this pass.</p>
+        <p className="text-xs text-[var(--text-muted)]">No devices scheduled.</p>
       ) : (
         <ul className="space-y-1 text-xs">
           {entry.gates.map((g) => (
             <li key={g.id} className="flex flex-wrap items-center gap-2">
               <span>{g.device.name ?? g.device.serialNo}{g.device.role !== "BOTH" ? ` (${g.device.role})` : ""}</span>
               <Badge tone={LABEL[g.state].tone}>{LABEL[g.state].text}</Badge>
-              {g.reason !== "SCHEDULE" && <span className="text-[var(--text-muted)]">{g.reason.toLowerCase().replace("_", " ")}</span>}
+              {g.reason !== "SCHEDULE" && <span className="text-[var(--text-muted)]">{g.reason === "WIDEN" ? "zone added" : g.reason === "OVERRIDE" ? "exit override" : g.reason.toLowerCase().replace("_", " ")}</span>}
               {g.state === "PENDING" && <span className="text-[var(--text-muted)]">from {formatDateTime(g.loadAt)}</span>}
               {g.unloadAt && g.state !== "DONE" && <span className="text-[var(--text-muted)]">leaves {formatDateTime(g.unloadAt)}</span>}
             </li>
@@ -79,11 +78,11 @@ export function PassGates({ entryId }: { entryId: string }) {
           <span className="text-[var(--text-muted)]"> — as issued</span>
         </p>
       )}
-      {codeExitsMissing && <p className="text-xs text-[var(--text-muted)]">Exit terminals load after the exit code is verified, or a Security override.</p>}
+      {codeExitsMissing && <p className="text-xs text-[var(--text-muted)]">Exit devices load after the exit code is verified, or an exit override.</p>}
       {live && codeExitsMissing && can("exit_override:update") && (
         <div className="flex flex-wrap items-center gap-2">
           <Button onClick={() => void run("A new exit code was issued; earlier codes no longer work.", async () => setExitCode((await api<{ code: string }>(`${url}/exit-code`, { method: "POST" })).code))}>
-            Issue exit code
+            Issue new exit code
           </Button>
           {exitCode && <span className="text-sm">Give the visitor this code: <span className="font-mono text-lg font-semibold">{exitCode}</span> (shown once)</span>}
         </div>
@@ -91,17 +90,9 @@ export function PassGates({ entryId }: { entryId: string }) {
       {live && codeExitsMissing && can("exit_override:update") && (
         <div className="flex flex-wrap items-end gap-2">
           <Input className="max-w-xs" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Reason (required), e.g. host unreachable" />
-          <Button variant="danger" disabled={reason.trim().length < 3} onClick={() => void run("Exit released: the exit terminals are loading.", () => api(`${url}/exit-override`, { method: "POST", body: { reason: reason.trim() } }))}>
+          <Button variant="danger" disabled={reason.trim().length < 3} onClick={() => void run("Exit released: the exit devices are loading.", () => api(`${url}/exit-override`, { method: "POST", body: { reason: reason.trim() } }))}>
             Release at exit (override)
           </Button>
-        </div>
-      )}
-      {live && can("passes:update") && (
-        <div className="space-y-1">
-          <p className="text-xs text-[var(--text-muted)]">Face not recognised at the gate? Retake the photo; terminals already holding the face get the new one.</p>
-          <WebcamCapture
-            onCapture={(file) => void run("Photo replaced: it is being sent to the terminals.", () => api(`${url}/photo`, { method: "POST", blob: { data: file, contentType: "image/jpeg" } }))}
-          />
         </div>
       )}
       {live && can("zone_widen:update") && widenable.length > 0 && (
@@ -109,8 +100,8 @@ export function PassGates({ entryId }: { entryId: string }) {
           <div className="w-full max-w-xs">
             <SearchSelect value={widenTo} onChange={setWidenTo} options={widenable.map((z) => ({ value: z.id, label: z.name }))} placeholder="Add a zone…" />
           </div>
-          <Button disabled={!widenTo} onClick={() => void run("Zone added: its terminals are loading.", () => api(`${url}/widen`, { method: "POST", body: { zoneId: widenTo } }))}>
-            Widen pass
+          <Button disabled={!widenTo} onClick={() => void run("Zone added: its devices are loading.", () => api(`${url}/widen`, { method: "POST", body: { zoneId: widenTo } }))}>
+            Add zone
           </Button>
         </div>
       )}

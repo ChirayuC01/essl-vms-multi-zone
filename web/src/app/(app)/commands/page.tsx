@@ -5,7 +5,7 @@ import Link from "next/link";
 import { api, type Command, type DeviceList, type Paged } from "@/lib/api";
 import { useEventStream } from "@/lib/events";
 import { useApi, refresh } from "@/lib/swr";
-import { formatDateTime } from "@/lib/format";
+import { commandStatusLabel, commandTypeLabel, formatDateTime } from "@/lib/format";
 import { Alert, Badge, Button, Card, Empty, Select, Table, commandTone } from "@/components/ui";
 import { StreamStatus } from "@/components/stream-status";
 import { PersonAvatar } from "@/components/person-avatar";
@@ -69,7 +69,7 @@ export default function CommandsPage() {
             {offline.length === 1 ? "is" : "are"} offline.
           </strong>{" "}
           {waiting} command{waiting === 1 ? "" : "s"} will stay queued until the device checks in
-          again — the server never pushes to a terminal, it waits to be polled. Nothing is lost.
+          again — the server never pushes to a device, it waits to be polled. Nothing is lost.
         </Alert>
       )}
 
@@ -91,7 +91,7 @@ export default function CommandsPage() {
             >
               {STATUSES.map((s) => (
                 <option key={s} value={s}>
-                  {s || "Any"}
+                  {s ? commandStatusLabel(s) : "Any"}
                 </option>
               ))}
             </Select>
@@ -115,13 +115,13 @@ export default function CommandsPage() {
           </Empty>
         ) : (
           <Table
-            head={["Type", "Status", "Person", "Device", "Wire ID", "Attempts", "Created", ""]}
+            head={["Action", "Status", "Person", "Device", "Wire ID", "Attempts", "Created", ""]}
           >
             {data.items.map((c) => (
               <tr key={c.id} className="border-b border-[var(--border)] align-top last:border-0">
-                <td className="px-2 py-2 font-medium whitespace-nowrap">{c.type}</td>
+                <td className="px-2 py-2 font-medium whitespace-nowrap" title={c.type}>{commandTypeLabel(c.type)}</td>
                 <td className="px-2 py-2">
-                  <Badge tone={commandTone(c.status)}>{c.status}</Badge>
+                  <Badge tone={commandTone(c.status)}>{commandStatusLabel(c.status)}</Badge>
                   {c.lastError && (
                     <div className="mt-1 max-w-xs text-xs text-[var(--danger)]">{c.lastError}</div>
                   )}
@@ -165,9 +165,9 @@ export default function CommandsPage() {
         )}
 
         <p className="mt-4 text-xs text-[var(--text-muted)]">
-          <strong>SUCCESS</strong> means the device processed the command, not that the result is
-          correct — <code>Return=0</code> is delivery-level truth only. Verifying the roster really
-          matches is reconciliation&rsquo;s job in Phase&nbsp;3.
+          <strong>Done</strong> means the device accepted the command. The hourly check that each
+          device holds exactly the right people is separate, and shows under Alerts if it finds a
+          difference.
         </p>
       </Card>
     </div>

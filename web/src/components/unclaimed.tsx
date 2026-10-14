@@ -31,7 +31,7 @@ export function UnclaimedEnrollments({ highlighted = true }: { highlighted?: boo
   // F3 F-j: discard a hand enrolment — the photo here, and the ID on every
   // terminal whose patterns cover it.
   const discard = async (pin: string) => {
-    if (!window.confirm(`Delete enrolment ${pin}? Its photo is deleted and the ID is removed from the terminals.`)) return;
+    if (!window.confirm(`Delete enrolment ${pin}? Its photo is deleted and the ID is removed from the devices.`)) return;
     setProblem(null);
     try {
       await api(`/api/enrollments/unclaimed/${encodeURIComponent(pin)}`, { method: "DELETE" });
@@ -58,7 +58,7 @@ export function UnclaimedEnrollments({ highlighted = true }: { highlighted?: boo
       </summary>
       <div className="border-t border-[var(--border)] p-4">
         <p className="mb-4 text-sm text-[var(--text-muted)]">
-          Enrolled directly on a terminal and not registered here. People are registered in the
+          Enrolled directly on a device and not registered here. People are registered in the
           console (Register person or a visit request), so delete these; register the person
           properly if they need access.
         </p>
@@ -78,16 +78,16 @@ export function UnclaimedEnrollments({ highlighted = true }: { highlighted?: boo
                     carry the credential. */}
                 <img
                   src={`${getApiBase()}${item.photoUrl}?token=${encodeURIComponent(token)}`}
-                  alt={`Enrollment photo for PIN ${item.esslUserId}`}
+                  alt={`Photo for ID ${item.esslUserId}`}
                   className="h-16 w-16 shrink-0 rounded-[var(--radius)] border border-[var(--border)] object-cover"
                 />
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-medium">
-                    {item.name ?? <span className="font-mono">PIN {item.esslUserId}</span>}
+                    {item.name ?? <span className="font-mono">ID {item.esslUserId}</span>}
                   </div>
                   {item.name && (
                     <div className="font-mono text-xs text-[var(--text-muted)]">
-                      PIN {item.esslUserId}
+                      ID {item.esslUserId}
                     </div>
                   )}
                   <div className="text-xs text-[var(--text-muted)]">

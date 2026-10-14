@@ -33,7 +33,7 @@ export default function OutagesPage() {
           {o.released.length === 0 ? (
             <p className="text-sm text-[var(--text-muted)]">Nobody needed releasing.</p>
           ) : (
-            <Table head={["Visitor", "Terminal ID", "Mobile", "Came in"]}>
+            <Table head={["Visitor", "ID", "Mobile", "Came in"]}>
               {o.released.map((r) => (
                 <tr key={r.id} className="border-b border-[var(--border)] last:border-0">
                   <td className="px-2 py-2"><Link className="hover:underline" href={`/people/${r.person.id}`}>{r.person.name}</Link></td>

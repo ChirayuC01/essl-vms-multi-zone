@@ -107,6 +107,7 @@ export function VisitorFlow({ endpoint, headers, desk = false }: { endpoint: str
         {header}
         {problem && <Alert>{problem}</Alert>}
         <VerifyMobile
+          desk={desk}
           hint={state.mobileHint}
           busy={busy}
           onSend={() => step("send", () => call("/otp", json("POST")))}
@@ -121,8 +122,8 @@ export function VisitorFlow({ endpoint, headers, desk = false }: { endpoint: str
       state.status === "SUBMITTED"
         ? desk ? `Submitted. Waiting for ${state.hostName} to clear the visit.` : `Thank you, ${state.visitorName}. Your details are with ${state.hostName}, who will confirm your visit.`
         : state.status === "CLEARED"
-          ? desk ? "Cleared — the pass is issued. The face loads on the gates shortly before the visit time." : "Your visit is confirmed. At the entry gate, simply look at the camera."
-          : `This visit is ${state.status.toLowerCase()}. Please contact ${state.hostName} if you have questions.`;
+          ? desk ? "Cleared — the visitor is provisioned. Their face loads on the devices shortly before the visit time." : "Your visit is confirmed. At the entry gate, simply look at the camera."
+          : `This visit ${state.status === "REJECTED" ? "was not approved" : state.status === "CANCELLED" ? "was cancelled" : state.status === "EXPIRED" ? "has expired" : "can no longer be changed"}. Please contact ${state.hostName} if you have questions.`;
     return (
       <Shell>
         {header}
@@ -150,13 +151,9 @@ export function VisitorFlow({ endpoint, headers, desk = false }: { endpoint: str
       {header}
       {state.queryText && <Alert tone="warn">{state.hostName} asked: “{state.queryText}”</Alert>}
       {state.returning && <Alert tone="info">Welcome back. We have filled in what you gave us last time — please check it is still correct.</Alert>}
-      <DetailsForm
-        state={state}
-        formRef={formRef}
-        busy={busy === "details"}
-        onSave={(details) => step("details", async () => setState(await call<State>("/details", json("PUT", details))))}
-      />
+      <DetailsForm state={state} formRef={formRef} desk={desk} />
       <Selfie
+        desk={desk}
         has={Boolean(state.hasSelfie)}
         busy={busy === "selfie"}
         onPhoto={(file) => step("selfie", async () => { await call("/selfie", { method: "POST", headers: { "content-type": "image/jpeg" }, body: file }); await load(); })}
@@ -181,13 +178,13 @@ function Shell({ children }: { children: React.ReactNode }) {
   return <div className="space-y-4">{children}</div>;
 }
 
-function VerifyMobile({ hint, busy, onSend, onVerify }: { hint: string; busy: string | null; onSend: () => Promise<boolean>; onVerify: (code: string) => Promise<boolean> }) {
+function VerifyMobile({ hint, busy, onSend, onVerify, desk }: { hint: string; busy: string | null; onSend: () => Promise<boolean>; onVerify: (code: string) => Promise<boolean>; desk: boolean }) {
   const [sent, setSent] = useState(false);
   const [code, setCode] = useState("");
   return (
-    <Card title="Confirm your mobile number">
+    <Card title={desk ? "Confirm the visitor's mobile number" : "Confirm your mobile number"}>
       <div className="space-y-3">
-        <p className="text-sm">We will send a code by SMS to your number ending {hint.slice(-4)}.</p>
+        <p className="text-sm">{desk ? `A code goes by SMS to the visitor's number ending ${hint.slice(-4)}; type the code they read out.` : `We will send a code by SMS to your number ending ${hint.slice(-4)}.`}</p>
         <Button loading={busy === "send"} onClick={() => void onSend().then((ok) => ok && setSent(true))}>{sent ? "Send a new code" : "Send code"}</Button>
         {sent && (
           <div className="flex items-end gap-2">
@@ -222,7 +219,9 @@ function Consent({ notice, busy, onAccept }: { notice: { text: string; version: 
   );
 }
 
-function DetailsForm({ state, busy, formRef, onSave }: { state: State; busy: boolean; formRef: RefObject<() => Record<string, unknown>>; onSave: (details: Record<string, unknown>) => Promise<boolean> }) {
+// Saved by Submit (it sends the form first), so there is no separate Save
+// button: one button, one job (pre-demo sweep).
+function DetailsForm({ state, formRef, desk }: { state: State; formRef: RefObject<() => Record<string, unknown>>; desk: boolean }) {
   const fields = Object.entries(state.fields ?? {}).filter(([, f]) => f.rule !== "hidden");
   const initial = () => {
     const d = state.details ?? {};
@@ -234,7 +233,6 @@ function DetailsForm({ state, busy, formRef, onSave }: { state: State; busy: boo
     return out;
   };
   const [values, setValues] = useState<Record<string, string>>(initial);
-  const [saved, setSaved] = useState(false);
 
   function payload() {
     const out: Record<string, unknown> = { name: values.name };
@@ -248,7 +246,7 @@ function DetailsForm({ state, busy, formRef, onSave }: { state: State; busy: boo
     formRef.current = payload;
   });
   const control = (key: string) => {
-    const set = (v: string) => { setSaved(false); setValues((all) => ({ ...all, [key]: v })); };
+    const set = (v: string) => setValues((all) => ({ ...all, [key]: v }));
     if (key === "policeClearance") {
       return (
         <Select value={values[key]} onChange={(e) => set(e.target.value)}>
@@ -263,21 +261,20 @@ function DetailsForm({ state, busy, formRef, onSave }: { state: State; busy: boo
   };
 
   return (
-    <Card title="Your details">
+    <Card title={desk ? "Visitor's details" : "Your details"}>
       <div className="space-y-3">
-        <Field label="Full name"><Input value={values.name} onChange={(e) => { setSaved(false); setValues((all) => ({ ...all, name: e.target.value })); }} maxLength={100} /></Field>
+        <Field label="Full name"><Input value={values.name} onChange={(e) => setValues((all) => ({ ...all, name: e.target.value }))} maxLength={100} /></Field>
         {fields.map(([key, f]) => (
           <Field key={key} label={`${f.label}${f.rule === "required" ? "" : " (optional)"}`} hint={["govtIdNumber", "aadharNumber", "panNumber", "credentialNumber"].includes(key) && String(values[key]).includes("*") ? "Saved number shown hidden. Leave it to keep it, or type a new one." : undefined}>
             {control(key)}
           </Field>
         ))}
-        <Button loading={busy} onClick={() => void onSave(payload()).then(setSaved)}>{saved ? "Saved" : "Save details"}</Button>
       </div>
     </Card>
   );
 }
 
-function Selfie({ has, busy, onPhoto }: { has: boolean; busy: boolean; onPhoto: (file: File) => Promise<boolean> }) {
+function Selfie({ has, busy, onPhoto, desk }: { has: boolean; busy: boolean; onPhoto: (file: File) => Promise<boolean>; desk: boolean }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const [live, setLive] = useState(false);
@@ -320,9 +317,9 @@ function Selfie({ has, busy, onPhoto }: { has: boolean; busy: boolean; onPhoto: 
   }
 
   return (
-    <Card title="Your photo">
+    <Card title={desk ? "Visitor's photo" : "Your photo"}>
       <div className="space-y-3">
-        <p className="text-sm">This photo opens the gate for you. Face the camera in good light, without a cap or sunglasses, and fit your face inside the oval.</p>
+        <p className="text-sm">{desk ? "This photo opens the gate for the visitor. Have them face the camera in good light, without a cap or sunglasses, with their face inside the oval." : "This photo opens the gate for you. Face the camera in good light, without a cap or sunglasses, and fit your face inside the oval."}</p>
         {has && !live && <Alert tone="ok">Photo saved.</Alert>}
         {live ? (
           <div className="space-y-2">

@@ -36,7 +36,7 @@ export default function VisitorPassPage({ params }: { params: Promise<{ entryId:
         <p className="text-sm text-[var(--text-muted)]">
           Print this and hand it over. It identifies the visitor — it does not open anything.
         </p>
-        <Button onClick={() => window.print()}>Print pass</Button>
+        <Button onClick={() => window.print()}>Print visitor pass</Button>
       </div>
 
       <Card title="">
@@ -63,7 +63,7 @@ export default function VisitorPassPage({ params }: { params: Promise<{ entryId:
 
           <dl className="mt-6 grid grid-cols-2 gap-3 text-sm">
             <div>
-              <dt className="text-xs text-[var(--text-muted)]">Reference</dt>
+              <dt className="text-xs text-[var(--text-muted)]">Visitor ID</dt>
               <dd className="font-mono">{person.esslUserId}</dd>
             </div>
             <div>
@@ -72,7 +72,9 @@ export default function VisitorPassPage({ params }: { params: Promise<{ entryId:
             </div>
             <div>
               <dt className="text-xs text-[var(--text-muted)]">Valid from</dt>
-              <dd>{formatDateTime(entry.createdAt)}</dd>
+              {/* The visit start, not when it was provisioned: a visit booked
+                  for tomorrow must not print today's date. */}
+              <dd>{formatDateTime(entry.expectedInAt ?? entry.createdAt)}</dd>
             </div>
             <div>
               <dt className="text-xs text-[var(--text-muted)]">Valid until</dt>
@@ -105,10 +107,10 @@ export default function VisitorPassPage({ params }: { params: Promise<{ entryId:
           <p className="mt-6 border-t border-[var(--border)] pt-3 text-xs text-[var(--text-muted)] print:border-black">
             <strong>Entry is by face recognition.</strong> This pass identifies the holder and
             records the period they are authorized for. It does not open the barrier and it is not
-            proof of access — if the terminal does not recognise the face, entry is refused.
+            proof of access — if the device does not recognise the face, entry is refused.
           </p>
           <p className="mt-1 text-xs text-[var(--text-muted)]">
-            Issued {formatDateTime(new Date().toISOString())}
+            Printed {formatDateTime(new Date().toISOString())}
           </p>
         </div>
       </Card>

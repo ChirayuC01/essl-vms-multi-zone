@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { type Entry, type Paged, type Person } from "@/lib/api";
 import { useApi } from "@/lib/swr";
-import { formatDateTime } from "@/lib/format";
+import { categoryLabel, formatDateTime, passStateLabel } from "@/lib/format";
 import { Alert, Badge, Button, Card, Empty, Input, Select, Table, entryTone } from "@/components/ui";
 import { UnclaimedEnrollments } from "@/components/unclaimed";
 
@@ -78,12 +78,12 @@ export default function PeoplePage() {
                         {person.name}
                       </Link>
                       {!person.isActive && (
-                        <span className="ml-2 text-xs text-[var(--text-muted)]">(inactive)</span>
+                        <span className="ml-2 text-xs text-[var(--text-muted)]">(deactivated)</span>
                       )}
                       {person.aadharNumber && <span className="ml-2"><Badge tone="ok">Aadhaar verified</Badge></span>}
                       {person.panNumber && <span className="ml-2"><Badge tone="ok">PAN verified</Badge></span>}
                     </td>
-                    <td className="px-2 py-2"><Badge tone={person.category === "EMPLOYEE" ? "info" : undefined}>{person.category}</Badge>{person.needsDetails && <Badge tone="warn">needs details</Badge>}</td>
+                    <td className="px-2 py-2"><Badge tone={person.category === "EMPLOYEE" ? "info" : undefined}>{categoryLabel(person.category)}</Badge>{person.needsDetails && <Badge tone="warn">needs details</Badge>}</td>
                     <td className="px-2 py-2 text-[var(--text-muted)]">{person.company?.name ?? "—"}<div className="text-xs">{person.department?.name ?? "—"}</div></td>
                     <td className="px-2 py-2 font-mono text-xs">{person.esslUserId}</td>
                     <td className="px-2 py-2">
@@ -98,16 +98,16 @@ export default function PeoplePage() {
                     </td>
                     <td className="px-2 py-2">
                       {person.resignedAt ? (
-                        <Badge tone="warn">resigned</Badge>
+                        <Badge tone="warn">Resigned</Badge>
                       ) : person.category === "EMPLOYEE" ? (
-                        <Badge tone="ok">permanent employee access</Badge>
+                        <Badge tone="ok">Device access</Badge>
                       ) : entry ? (
                         <span className="flex flex-wrap items-center gap-1">
-                          <Badge tone={entryTone(entry.state)}>{entry.state}</Badge>
+                          <Badge tone={entryTone(entry.state)}>{passStateLabel(entry.state)}</Badge>
                           {entry.dayBlocked && <Badge tone="danger">blocked</Badge>}
                         </span>
                       ) : (
-                        <Badge>not provisioned</Badge>
+                        <Badge>Not provisioned</Badge>
                       )}
                     </td>
                     <td className="px-2 py-2 text-xs text-[var(--text-muted)]">

@@ -306,14 +306,14 @@ export async function provisionPerson(input: ProvisionInput): Promise<ProvisionR
 
   const person = await prisma.person.findUnique({ where: { id: input.personId }, include: { biometric: true } });
   if (!person) throw new ServiceError(404, "person not found");
-  if (!person.isActive) throw new ServiceError(409, "person is deactivated — reactivate before provisioning");
+  if (!person.isActive) throw new ServiceError(409, "this person is deactivated; reactivate them before provisioning");
   if (person.category !== PersonCategory.VISITOR) {
-    throw new ServiceError(409, "employees use permanent device access, not visitor entries");
+    throw new ServiceError(409, "employees get device access on their page, not a visitor provision");
   }
   if (person.blacklistedAt) throw new ServiceError(409, "this person is blacklisted — no pass can be issued until it is lifted");
-  if (!person.detailsComplete) throw new ServiceError(409, "complete the visitor profile before provisioning");
+  if (!person.detailsComplete) throw new ServiceError(409, "complete this visitor's required details before provisioning");
   if (!person.biometric) {
-    throw new ServiceError(409, "person has no enrollment photo — upload one or enroll them on the device first");
+    throw new ServiceError(409, "this person has no photo yet; add one on their page before provisioning");
   }
   await assertPhotoUsable(person.biometric.photoPath);
   if (input.personToMeetId && !(await prisma.appUser.findFirst({ where: { id: input.personToMeetId, isActive: true } }))) {
@@ -323,7 +323,7 @@ export async function provisionPerson(input: ProvisionInput): Promise<ProvisionR
     where: { personId: person.id, state: { in: [...ACTIVE_ENTRY_STATES] } },
     orderBy: { createdAt: "desc" },
   });
-  if (active) throw new ServiceError(409, `person already has an active entry (${active.state}) — de-provision it first`);
+  if (active) throw new ServiceError(409, "this person is already provisioned; de-provision them first to provision again");
 
   // A pass always takes its holder's pass type. Their details were checked
   // against that type; a different one would skip its required fields.
@@ -473,7 +473,7 @@ export async function setEntryBlocked(
     },
   });
   if (inFlight > 0) {
-    throw new ServiceError(409, "a block/unblock is already in flight for this entry");
+    throw new ServiceError(409, "a block or unblock is already on its way to the device");
   }
 
   const devices = await devicesForEntry(entryId);
@@ -538,12 +538,12 @@ export async function deprovisionEntry(
   // genuinely inside then needs letting out by hand (admin card).
   const forcedWhileInside = entry.state === EntryState.INSIDE;
   if (forcedWhileInside && !force) {
-    throw new ServiceError(409, "person is INSIDE — de-provisioning is deferred until they punch OUT");
+    throw new ServiceError(409, "this person is inside; de-provision them once they go out");
   }
   if (forcedWhileInside && !force!.reason.trim()) throw new ServiceError(400, "a reason is required to remove someone still inside");
-  if (entry.state === EntryState.PENDING_DEPROVISION) throw new ServiceError(409, "entry is already de-provisioning");
+  if (entry.state === EntryState.PENDING_DEPROVISION) throw new ServiceError(409, "this person is already being de-provisioned");
   if (entry.state === EntryState.REGISTERED) {
-    throw new ServiceError(409, "entry is already closed — the person is not on any device");
+    throw new ServiceError(409, "this person is not provisioned");
   }
   validateWire(() => buildDeleteUser({ pin: entry.person.esslUserId }), "de-provision this person");
 
@@ -555,7 +555,7 @@ export async function deprovisionEntry(
       where: { id: entryId, state: fromState },
       data: { state: EntryState.PENDING_DEPROVISION, ...(forcedWhileInside ? { locationZoneId: null } : {}) },
     });
-    if (moved.count !== 1) throw new ServiceError(409, "entry changed state concurrently — retry");
+    if (moved.count !== 1) throw new ServiceError(409, "this changed a moment ago; please try again");
     await unloadAllGates([entryId], now, tx);
     await tx.auditLog.create({
       data: auditRow({

@@ -49,7 +49,7 @@ export default function ProfilePage() {
           <Field label="Name" hint="Optional">
             <Input value={name} maxLength={100} onChange={(event) => setName(event.target.value)} />
           </Field>
-          <Field label="Phone number" hint="Optional">
+          <Field label="Phone number" hint="Hosts need this: exit codes and visitor arrivals are sent here">
             <Input type="tel" value={phone} maxLength={30} onChange={(event) => setPhone(event.target.value)} />
           </Field>
           <div className="flex items-end">

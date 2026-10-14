@@ -130,6 +130,47 @@ export function titleCase(value: string): string {
 }
 
 
+// One wording per state, used by every page (pre-demo sweep, 14 Oct 2026):
+// raw database words never reach an operator.
+
+const REQUEST_STATUS: Record<string, string> = {
+  SENT: "Details pending",
+  SUBMITTED: "Awaiting decision",
+  QUERIED: "Queried",
+  CLEARED: "Cleared",
+  REJECTED: "Rejected",
+  CANCELLED: "Cancelled",
+  EXPIRED: "Expired",
+};
+export const requestStatusLabel = (status: string) => REQUEST_STATUS[status] ?? titleCase(status);
+
+const PASS_STATE: Record<string, string> = {
+  PENDING_PROVISION: "Provisioning",
+  PROVISIONED: "Provisioned",
+  INSIDE: "Inside",
+  PENDING_DEPROVISION: "De-provisioning",
+  REGISTERED: "Ended",
+};
+export const passStateLabel = (state: string) => PASS_STATE[state] ?? titleCase(state);
+
+export const categoryLabel = (category: string) => (category === "EMPLOYEE" ? "Employee" : category === "VISITOR" ? "Visitor" : titleCase(category));
+export const entryModeLabel = (mode: string) => (mode === "SINGLE_ENTRY" ? "Single entry" : mode === "MULTI_ENTRY" ? "Multi entry" : titleCase(mode));
+
+const COMMAND_TYPE: Record<string, string> = {
+  PROVISION: "Load person",
+  PUSH_PHOTO: "Load photo",
+  DEPROVISION: "Remove from device",
+  BLOCK: "Block",
+  UNBLOCK: "Unblock",
+  QUERY_USER: "Check device",
+  DEVICE_INFO: "Read device info",
+  CLEAR_LOGS: "Clear device logs",
+};
+export const commandTypeLabel = (type: string) => COMMAND_TYPE[type] ?? titleCase(type);
+
+const COMMAND_STATUS: Record<string, string> = { PENDING: "Queued", SENT: "Sent", SUCCESS: "Done", FAILED: "Failed", RETRY: "Retrying" };
+export const commandStatusLabel = (status: string) => COMMAND_STATUS[status] ?? titleCase(status);
+
 /** Visit request status → badge tone. SUBMITTED is the one waiting on the host. */
 export function requestTone(status: string): "info" | "ok" | "warn" | "danger" | "neutral" {
   if (status === "SUBMITTED") return "info";

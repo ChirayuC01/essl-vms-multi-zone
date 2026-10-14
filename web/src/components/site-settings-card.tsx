@@ -8,7 +8,7 @@ import { Alert, Button, Card, Field, Input } from "@/components/ui";
 
 const NUMBERS: { key: keyof SiteSettings; label: string; hint: string }[] = [
   { key: "entryLoadLeadMinutes", label: "Load face before visit (minutes)", hint: "how early a visitor's face reaches the entry gates" },
-  { key: "unloadAfterPunchMinutes", label: "Remove after punch (minutes)", hint: "single entry: removal from a terminal after its punch" },
+  { key: "unloadAfterPunchMinutes", label: "Remove after punch (minutes)", hint: "single entry: removal from a device after its punch" },
   { key: "outageGapMinutes", label: "Outage after (minutes)", hint: "a server silence longer than this counts as an outage" },
   { key: "linkExpiryHours", label: "Visitor link valid (hours)", hint: "pre-registration link lifetime" },
   { key: "otpTtlMinutes", label: "One-time code valid (minutes)", hint: "mobile and exit codes" },
@@ -53,7 +53,7 @@ export function SiteSettingsCard({ editable }: { editable: boolean }) {
             <Input type="number" value={String(draft[key])} onChange={(e) => set(key, Number(e.target.value) as never)} />
           </Field>
         ))}
-        <Field label="Visitor ID prefix" hint="letters/digits; must fit the terminals' visitor ID patterns">
+        <Field label="Visitor ID prefix" hint="letters/digits; must fit the devices' visitor ID patterns">
           <Input value={draft.visitorIdPrefix} maxLength={8} onChange={(e) => set("visitorIdPrefix", e.target.value)} />
         </Field>
         <Field label="Walk-ins" hint="whether the host must Clear a walk-in first">

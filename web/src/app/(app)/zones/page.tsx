@@ -14,7 +14,7 @@ export default function ZonesPage() {
   return (
     <div className="space-y-4">
       <p className="text-sm text-[var(--text-muted)]">
-        A zone inside another also opens its parent&apos;s gates. Place each terminal into its zone on the{" "}
+        A zone inside another also opens its parent&apos;s gates. Place each device into its zone on the{" "}
         <Link href="/devices" className="text-[var(--brand)] hover:underline">Devices</Link> page.
       </p>
       <ZonesCard />

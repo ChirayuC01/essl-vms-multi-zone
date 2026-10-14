@@ -86,7 +86,7 @@ export default function RegisterPersonPage() {
           <Field label="Category"><Select value={category} onChange={(e) => setCategory(e.target.value as "EMPLOYEE" | "VISITOR")} autoFocus><option value="VISITOR">Visitor</option><option value="EMPLOYEE">Employee</option></Select></Field>
 
           {category === "EMPLOYEE" ? (
-            <Field label="Employee ID" hint="Their own employee code; letters and digits, matching the terminals' employee ID pattern.">
+            <Field label="Employee ID" hint="Their own employee code; letters and digits, matching the devices' employee ID pattern.">
               <Input
                 required
                 pattern="[A-Za-z0-9]+"
@@ -124,12 +124,12 @@ export default function RegisterPersonPage() {
           <ProfileFields draft={profile} onChange={setProfile} category={category} passType={passType} companies={companies} departments={departments} />
 
           {category === "EMPLOYEE" && zones.length > 0 && (
-            <Field label="Zones" hint="Permanent access to every terminal of the zone and of the zones around it">
+            <Field label="Zones" hint="Permanent access to every device of the zone and of the zones around it">
               <ZonePicker zones={zones} value={zoneIds} onChange={setZoneIds} />
             </Field>
           )}
 
-          {category === "EMPLOYEE" && <Field label={zones.length > 0 ? "Or individual terminals" : "Permanent device access"} hint="Employees remain on every selected device until an admin removes access."><div className="space-y-2">{devices?.items.map((device) => <label key={device.id} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={deviceIds.includes(device.id)} onChange={() => setDeviceIds((ids) => ids.includes(device.id) ? ids.filter((id) => id !== device.id) : [...ids, device.id])} />{device.name ?? device.serialNo}</label>)}</div></Field>}
+          {category === "EMPLOYEE" && <Field label={zones.length > 0 ? "Or individual devices" : "Permanent device access"} hint="Employees remain on every selected device until an admin removes access."><div className="space-y-2">{devices?.items.map((device) => <label key={device.id} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={deviceIds.includes(device.id)} onChange={() => setDeviceIds((ids) => ids.includes(device.id) ? ids.filter((id) => id !== device.id) : [...ids, device.id])} />{device.name ?? device.serialNo}</label>)}</div></Field>}
 
           <fieldset>
               <legend className="mb-1 text-sm font-medium">Enrollment photo</legend>
@@ -160,7 +160,7 @@ export default function RegisterPersonPage() {
               </div>
               {photo && <span className="mt-1 block text-xs text-[var(--text-muted)]">Selected: {photo.name}</span>}
               <p className="mt-1 text-xs text-[var(--text-muted)]">
-                Needed before any terminal can recognise them; it can also be added later on their
+                Needed before any device can recognise them; it can also be added later on their
                 page. Upload a JPEG or take one with the webcam. It is cropped to a 480×640 portrait
                 before upload — keep the face centred and well lit; photo quality determines
                 recognition quality.

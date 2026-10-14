@@ -5,7 +5,7 @@ import Link from "next/link";
 import { type Board, type BoardEntry, type ZoneList } from "@/lib/api";
 import { useEventStream } from "@/lib/events";
 import { useApi, refresh } from "@/lib/swr";
-import { formatDuration, formatTime, formatWindow, titleCase } from "@/lib/format";
+import { entryModeLabel, formatDuration, formatTime, formatWindow } from "@/lib/format";
 import { Alert, Badge, Card, Empty, Stat, Table } from "@/components/ui";
 import { StreamStatus } from "@/components/stream-status";
 import { PersonAvatar } from "@/components/person-avatar";
@@ -55,16 +55,8 @@ export default function InsidePage() {
       <Card title="On site now" action={<StreamStatus connected={connected} />}>
         <div className="grid gap-4 sm:grid-cols-3">
           <Stat label="Inside" value={inside.length} sub="punched in, not yet out" />
-          <Stat
-            label="Past their window"
-            value={overdue.length}
-            sub={overdue.length > 0 ? "overstayed" : "none"}
-          />
-          <Stat
-            label="Blocked for today"
-            value={dayBlocked.length}
-            sub="single entry, used"
-          />
+          <Stat label="Overstayed" value={overdue.length} sub="inside after their pass ended" />
+          <Stat label="Blocked" value={dayBlocked.length} sub="by an operator" />
         </div>
       </Card>
 
@@ -74,9 +66,9 @@ export default function InsidePage() {
             {overdue.length} {overdue.length === 1 ? "person is" : "people are"} inside after
             their pass ended (overstayed).
           </strong>{" "}
-          Their entry terminals were cleared, but any exit terminal already loaded is kept so they
-          can leave; the pass closes when they punch out. A single-entry visitor still waiting for
-          an exit code can be released from their page (Security override). Worth chasing in person.
+          Their entry devices were cleared, but any exit device already loaded is kept so they can
+          leave; they are de-provisioned when they punch out. A single-entry visitor still waiting
+          for an exit code can be released from their page (exit override). Worth chasing in person.
         </Alert>
       )}
 
@@ -84,7 +76,7 @@ export default function InsidePage() {
         {inside.length === 0 ? (
           <Empty>Nobody is on site. Entries appear here the moment someone punches in.</Empty>
         ) : (
-          <Table head={["Person", "PIN", "Location", "Purpose", "In at", "Here for", "Window", "Mode"]}>
+          <Table head={["Person", "ID", "Location", "Purpose", "In at", "Here for", "Valid until", "Entry"]}>
             {inside.map((entry) => (
               <BoardRow key={entry.id} entry={entry} now={now} location={zoneName(entry.locationZoneId) ?? "on site"} showDuration />
             ))}
@@ -92,7 +84,7 @@ export default function InsidePage() {
         )}
         <p className="mt-3 text-xs text-[var(--text-muted)]">
           Longest-present first. Someone who left very shortly after arriving may still be listed:
-          the terminal drops a repeat punch by the same person inside its duplicate-punch window,
+          the device drops a repeat punch by the same person inside its duplicate-punch period,
           so that exit never reached the server.
         </p>
       </Card>
@@ -101,17 +93,15 @@ export default function InsidePage() {
         {dayBlocked.length === 0 ? (
           <Empty>Nobody is blocked.</Empty>
         ) : (
-          <Table head={["Person", "PIN", "Location", "Purpose", "Out at", "Blocked for", "Window", "Mode"]}>
+          <Table head={["Person", "ID", "Location", "Purpose", "Out at", "Blocked for", "Valid until", "Entry"]}>
             {dayBlocked.map((entry) => (
               <BoardRow key={entry.id} entry={entry} now={now} />
             ))}
           </Table>
         )}
         <p className="mt-3 text-xs text-[var(--text-muted)]">
-          These people are still loaded on the terminal and still recognised by it — it identifies
-          them and then denies entry. Blocking never disturbs the stored face; Unblock on their page
-          restores access instantly. (Single entry no longer blocks: the face simply leaves each
-          terminal shortly after use.)
+          Blocked people stay loaded on the device: it recognises them and refuses entry. Unblock on
+          their page restores access at once, with no new photo needed.
         </p>
       </Card>
     </div>
@@ -167,7 +157,7 @@ function BoardRow({
       </td>
       <td className="px-2 py-2 whitespace-nowrap">
         <Badge tone={entry.entryMode === "SINGLE_ENTRY" ? "info" : "neutral"}>
-          {titleCase(entry.entryMode)}
+          {entryModeLabel(entry.entryMode)}
         </Badge>
       </td>
     </tr>

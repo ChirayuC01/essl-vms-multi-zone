@@ -62,9 +62,9 @@ export function IssuePassForm({ person, onIssued }: { person: PersonDetail; onIs
         },
       });
       setPurpose("");
-      onIssued(`Pass issued for ${person.name}. Faces load on the terminals shortly before the visit time.`);
+      onIssued(`${person.name} is provisioned. Their face loads on the devices shortly before the visit time.`);
     } catch (err) {
-      setProblem(err instanceof ApiError ? err.message : "could not issue the pass");
+      setProblem(err instanceof ApiError ? err.message : "could not provision this person");
     } finally {
       setBusy(false);
     }
@@ -80,7 +80,7 @@ export function IssuePassForm({ person, onIssued }: { person: PersonDetail; onIs
           <ZonePicker zones={zones} value={zoneIds} onChange={setZoneIds} />
         </Field>
       ) : (
-        <p className="text-xs text-[var(--text-muted)]">No zones are set up, so the pass loads onto every registered terminal.</p>
+        <p className="text-xs text-[var(--text-muted)]">No zones are set up, so they are provisioned on every registered device.</p>
       )}
       <div className="grid gap-3 sm:grid-cols-2">
         {(passTypes?.items.length ?? 0) > 0 && (
@@ -91,7 +91,7 @@ export function IssuePassForm({ person, onIssued }: { person: PersonDetail; onIs
             </p>
           </Field>
         )}
-        <Field label="Entry mode" hint={entryMode === "SINGLE_ENTRY" ? "One visit today; faces leave each terminal 10 min after use" : "Come and go freely until the pass ends"}>
+        <Field label="Entry mode" hint={entryMode === "SINGLE_ENTRY" ? "One visit today; the face leaves each device 10 min after use" : "Come and go freely until the pass ends"}>
           <Select value={entryMode} onChange={(e) => setMode(e.target.value as typeof mode)}>
             {modes.includes("MULTI_ENTRY") && <option value="MULTI_ENTRY">Multi entry</option>}
             {modes.includes("SINGLE_ENTRY") && <option value="SINGLE_ENTRY">Single entry</option>}
@@ -113,7 +113,7 @@ export function IssuePassForm({ person, onIssued }: { person: PersonDetail; onIs
       <Field label="Purpose of visit" hint="Recorded permanently against this pass">
         <Input required maxLength={200} value={purpose} onChange={(e) => setPurpose(e.target.value)} placeholder="e.g. Lift maintenance, Block C" />
       </Field>
-      <Button variant="primary" loading={busy} disabled={!ready} onClick={() => void issue()}>Issue pass</Button>
+      <Button variant="primary" loading={busy} disabled={!ready} onClick={() => void issue()}>Provision</Button>
     </div>
   );
 }

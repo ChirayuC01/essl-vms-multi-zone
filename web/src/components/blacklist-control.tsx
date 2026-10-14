@@ -29,7 +29,7 @@ export function BlacklistControl({ person, onChanged }: { person: Person; onChan
     <Card title="Blacklist">
       {problem && <Alert>{problem}</Alert>}
       {person.blacklistedAt ? (
-        <Alert tone="warn">Blacklisted since {formatDateTime(person.blacklistedAt)}{person.blacklistReason ? ` — ${person.blacklistReason}` : ""}. Removed from every terminal; no pass can be issued.</Alert>
+        <Alert tone="warn">Blacklisted since {formatDateTime(person.blacklistedAt)}{person.blacklistReason ? ` — ${person.blacklistReason}` : ""}. Removed from every device; no pass can be issued.</Alert>
       ) : (
         <p className="text-sm text-[var(--text-muted)]">Not blacklisted.</p>
       )}

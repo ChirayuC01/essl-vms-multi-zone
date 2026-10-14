@@ -3949,6 +3949,16 @@ async function main() {
     check("...the operator can retry the refused photo", (await ge("POST", `/api/commands/${refused.id}/retry`)).statusCode === 200);
     await drainAll();
     check("...after which it is counted exactly once", (await gatesOf(halfId)).oIn?.state === "LOADED" && (await facesOn(oIn.id)) === halfFacesBefore + 1);
+    // Sweep item 14: a photo uploaded on the person page reaches the devices
+    // that already hold the face, not just the file on disk.
+    const newPhoto = Buffer.concat([
+      Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01]), Buffer.alloc(8, 0),
+      Buffer.from([0xff, 0xc0, 0x00, 0x11, 0x08, 0x02, 0x80, 0x01, 0xe0, 0x03]), Buffer.alloc(200, 0x20), Buffer.from([0xff, 0xd9]),
+    ]);
+    const upload = await app.inject({ method: "POST", url: `/api/people/${gv.id}/photo`, headers: { ...auth(token), "content-type": "image/jpeg" }, payload: newPhoto });
+    const repushed = await prisma.syncCommand.count({ where: { personId: gv.id, targetDeviceId: oIn.id, type: CommandType.PUSH_PHOTO, idempotencyKey: { startsWith: "photo-update:gate:" } } });
+    check("a photo uploaded on the person page is re-sent to the device holding the face", upload.statusCode === 201 && repushed === 1, upload.body);
+    await drainAll();
     await close(halfId);
     check("...and ending the pass gives exactly that face back", (await facesOn(oIn.id)) === halfFacesBefore, `${await facesOn(oIn.id)} vs ${halfFacesBefore}`);
 
@@ -4559,8 +4569,8 @@ async function main() {
     const vr = await rep("visit-requests");
     const looped = vr.rows.find((r) => r.queries === 2);
     check("visit requests: the twice-queried request shows both questions", typeof looped?.query_history === "string" && /Round 1/.test(looped.query_history as string) && /Round 2/.test(looped.query_history as string), JSON.stringify(looped ?? {}).slice(0, 300));
-    check("...a rejected request carries its decision note", vr.rows.some((r) => r.status === "REJECTED" && r.decision_note === "not expected today"));
-    check("...walk-ins are marked as such", vr.rows.some((r) => r.origin === "WALK_IN"));
+    check("...a rejected request carries its decision note", vr.rows.some((r) => r.status === "Rejected" && r.decision_note === "not expected today"));
+    check("...walk-ins are marked as such", vr.rows.some((r) => r.origin === "Walk-in"));
     const hostOnly = await rep("visit-requests", `&actorId=${(await prisma.appUser.findUniqueOrThrow({ where: { email: "host@vms.local" } })).id}`);
     check("...and filter by host", hostOnly.rows.length > 0 && hostOnly.rows.length < vr.rows.length);
 

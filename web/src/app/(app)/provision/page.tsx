@@ -5,7 +5,7 @@ import Link from "next/link";
 import { api, ApiError, getApiBase, getToken, type PersonDetail } from "@/lib/api";
 import { refresh } from "@/lib/swr";
 import { IssuePassForm } from "@/components/issue-pass-form";
-import { formatDateTime, titleCase } from "@/lib/format";
+import { formatDateTime, passStateLabel } from "@/lib/format";
 import { Alert, Button, Card, Field, Input, Stat } from "@/components/ui";
 
 // Quick provision by PIN (returning visitors).
@@ -50,7 +50,7 @@ export default function QuickProvisionPage() {
 
   return (
     <div className="mx-auto max-w-2xl space-y-4">
-      <p className="text-sm text-[var(--text-muted)]">For a visitor already registered: find them by their ID, check the photo against the person in front of you, and issue today&apos;s pass.</p>
+      <p className="text-sm text-[var(--text-muted)]">For a visitor already registered: find them by their ID, check the photo against the person in front of you, and provision them.</p>
       <Card title="Provision a returning visitor">
         <form
           className="flex flex-wrap items-end gap-3"
@@ -68,7 +68,7 @@ export default function QuickProvisionPage() {
               onChange={(e) => setPin(e.target.value.replace(/[^A-Za-z0-9]/g, ""))}
               maxLength={20}
               autoFocus
-              placeholder="1001 or WCTPL070"
+              placeholder="e.g. V00012"
               className="text-lg"
             />
           </Field>
@@ -77,8 +77,8 @@ export default function QuickProvisionPage() {
           </Button>
         </form>
         <p className="mt-3 text-xs text-[var(--text-muted)]">
-          The PIN only finds the record. Check the photo against the person in front of you before
-          provisioning — that check is the authorization.
+          The ID only finds the record. Check the photo against the person in front of you before
+          provisioning them — that check is what authorizes the visit.
         </p>
       </Card>
 
@@ -111,7 +111,7 @@ export default function QuickProvisionPage() {
                 )}
               </div>
               <div className="grid grid-cols-2 gap-3">
-                <Stat label="Device ID" value={person.esslUserId} />
+                <Stat label="ID" value={person.esslUserId} />
                 <Stat label="Mobile" value={person.mobile ?? "—"} />
                 <Stat label="Registered" value={formatDateTime(person.createdAt)} />
                 <Stat label="Visits on record" value={person.entries.length} />
@@ -127,14 +127,14 @@ export default function QuickProvisionPage() {
 
           {!person.isActive && (
             <div className="mt-4">
-              <Alert>This person is deactivated and cannot be provisioned.</Alert>
+              <Alert>This person is deactivated and can&apos;t be provisioned until reactivated.</Alert>
             </div>
           )}
 
           {active ? (
             <div className="mt-4">
               <Alert tone="info">
-                Already authorized — currently <strong>{titleCase(active.state)}</strong>
+                Already provisioned — currently <strong>{passStateLabel(active.state)}</strong>
                 {active.retentionExpiresAt
                   ? `, until ${formatDateTime(active.retentionExpiresAt)}`
                   : ""}
@@ -142,10 +142,10 @@ export default function QuickProvisionPage() {
               </Alert>
               <div className="mt-3 flex flex-wrap gap-2">
                 <Link href={`/pass/${active.id}`}>
-                  <Button>Visitor pass</Button>
+                  <Button>Print visitor pass</Button>
                 </Link>
                 <Link href={`/people/${person.id}/card`}>
-                  <Button>Reprint their card</Button>
+                  <Button>Print ID card</Button>
                 </Link>
               </div>
             </div>
@@ -172,8 +172,8 @@ export default function QuickProvisionPage() {
       {!person && !problem && (
         <Card title="Never visited before?">
           <p className="text-sm text-[var(--text-muted)]">
-            First-time visitors have to be registered once — after that they keep the same PIN
-            forever and can be provisioned from this screen on every return.
+            First-time visitors are registered once — after that they keep the same ID and can be
+            provisioned from this screen on every return.
           </p>
           <div className="mt-3 flex gap-2">
             <Link href="/people/new">

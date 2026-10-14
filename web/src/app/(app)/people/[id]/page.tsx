@@ -28,7 +28,7 @@ import { EMPTY_PROFILE, ProfileFields, draftFromPerson, profilePayload } from "@
 import { useEventStream } from "@/lib/events";
 import { useApi, refresh } from "@/lib/swr";
 import { useAuth } from "@/lib/auth";
-import { formatBytes, formatDateTime, titleCase } from "@/lib/format";
+import { categoryLabel, commandStatusLabel, commandTypeLabel, entryModeLabel, formatBytes, formatDateTime, passStateLabel } from "@/lib/format";
 import { PersonHistory } from "@/components/person-history";
 import { WebcamCapture } from "@/components/webcam-capture";
 import { normalizePhotoFile } from "@/lib/photo";
@@ -89,7 +89,6 @@ export default function PersonDetailPage() {
   // no picker is shown at all -- identical to how a single-device site has
   // always worked.
   const deviceIds = chosenDeviceIds ?? devices.map((d) => d.id);
-  const queryDeviceId = deviceIds[0] ?? devices[0]?.id ?? "";
 
   function toggleDevice(id: string) {
     setChosenDeviceIds((prev) => {
@@ -200,7 +199,7 @@ export default function PersonDetailPage() {
             {person.erasedAt && <Badge tone="danger">Erased</Badge>}
           </div>
           <p className="text-sm text-[var(--text-muted)]">
-            {person.company?.name ?? "no company"} · {person.department?.name ?? "no department"} · {person.category} · ID{" "}
+            {person.company?.name ?? "no company"} · {person.department?.name ?? "no department"} · {categoryLabel(person.category)} · ID{" "}
             <span className="font-mono">{person.esslUserId}</span>
             {/* Absent only on people registered before it was mandatory —
                 said plainly, because it is the field somebody is checking. */}
@@ -313,7 +312,7 @@ export default function PersonDetailPage() {
       <BlacklistControl person={person} onChanged={() => void refresh(`/api/people/${id}`)} />
 
       <div className="grid gap-4 lg:grid-cols-3">
-        <Card title="Enrollment photo">
+        <Card title="Photo">
           {person.biometric ? (
             <div className="space-y-3">
               {/* eslint-disable-next-line @next/next/no-img-element -- the API
@@ -332,16 +331,11 @@ export default function PersonDetailPage() {
                 href={`/people/${person.id}/card`}
                 className="block text-xs text-[var(--brand)] hover:underline"
               >
-                Print person card (permanent — carries their PIN)
+                Print ID card
               </Link>
               <p className="text-xs text-[var(--text-muted)]">
-                The photo is the durable artifact. The face template is
-                {person.biometric.hasCachedTemplate ? " cached" : " not cached"} and is bound to one
-                algorithm — never treated as portable.
-              </p>
-              <p className="text-xs text-[var(--text-muted)]">
-                Replace the photo if the terminal rejects it (command queue shows{" "}
-                <code>Return=-1001</code>), then retry the failed PUSH_PHOTO commands.
+                Face not recognised at the gate, or a device refused the photo? Take a clearer one
+                here; devices that already hold this person get the new photo automatically.
               </p>
               {photoControls}
             </div>
@@ -355,8 +349,8 @@ export default function PersonDetailPage() {
           )}
         </Card>
 
-        <Card title="Device authorization" className="lg:col-span-2">
-          {person.category !== "EMPLOYEE" && <p className="mb-3 text-sm text-[var(--text-muted)]">Issue a pass to this registered visitor directly — e.g. a long-term pass. Planned visits normally go through Requests.</p>}
+        <Card title={person.category === "EMPLOYEE" ? "Device access" : "Provisioning"} className="lg:col-span-2">
+          {person.category !== "EMPLOYEE" && <p className="mb-3 text-sm text-[var(--text-muted)]">Provision this registered visitor directly, for example for a stay of several days. Planned visits normally go through Requests.</p>}
           {person.category === "EMPLOYEE" ? (
             <div className="space-y-4">
               {person.resignedAt ? (
@@ -377,11 +371,11 @@ export default function PersonDetailPage() {
                   }}>Resign</Button>}
                 </div>
               )}
-              <Table head={["Device", "Desired", "Provisioned", "Reason", "Action"]}>
+              <Table head={["Device", "Access", "On device", "Removal reason", ""]}>
                 {employeeAccess.map((access) => <tr key={access.id} className="border-b border-[var(--border)]">
                   <td className="px-2 py-2">{access.device.name ?? access.device.serialNo}</td>
-                  <td className="px-2 py-2"><Badge tone={access.desiredAccess ? "ok" : "warn"}>{access.desiredAccess ? "yes" : "removed"}</Badge></td>
-                  <td className="px-2 py-2">{access.provisioned ? "yes" : "pending/no"}</td>
+                  <td className="px-2 py-2"><Badge tone={access.desiredAccess ? "ok" : "warn"}>{access.desiredAccess ? "Granted" : "Removed"}</Badge></td>
+                  <td className="px-2 py-2">{access.provisioned ? "Loaded" : "Not yet"}</td>
                   <td className="px-2 py-2 text-xs">{access.removalReason ?? "—"}</td>
                   <td className="px-2 py-2">{!person.resignedAt && (access.desiredAccess ? can("employee_access:delete") && <Button variant="danger" onClick={() => { const reason = window.prompt("Optional removal reason") ?? undefined; void run("access", () => api(`/api/people/${id}/device-access/${access.device.id}`, { method: "DELETE", body: { reason } }), "Employee access removal queued."); }}>Remove</Button> : can("employee_access:create") && <Button onClick={() => run("access", () => api(`/api/people/${id}/device-access/${access.device.id}/restore`, { method: "POST" }), "Employee access restore queued.")}>Restore</Button>)}</td>
                 </tr>)}
@@ -391,17 +385,16 @@ export default function PersonDetailPage() {
           ) : activeEntry ? (
             <div className="space-y-4">
               <div className="flex flex-wrap items-center gap-2">
-                <Badge tone={entryTone(activeEntry.state)}>{activeEntry.state}</Badge>
-                {activeEntry.dayBlocked && <Badge tone="danger">blocked at barrier</Badge>}
+                <Badge tone={entryTone(activeEntry.state)}>{passStateLabel(activeEntry.state)}</Badge>
+                {activeEntry.dayBlocked && <Badge tone="danger">Blocked</Badge>}
                 <span className="text-xs text-[var(--text-muted)]">
-                  authorized {formatDateTime(activeEntry.createdAt)}
+                  provisioned {formatDateTime(activeEntry.createdAt)}
                 </span>
               </div>
 
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                <Stat label="Retention" value={titleCase(activeEntry.retentionPolicy)} />
-                <Stat label="Entry mode" value={titleCase(activeEntry.entryMode)} />
-                <Stat label="Window ends" value={formatDateTime(activeEntry.retentionExpiresAt)} />
+                <Stat label="Entry mode" value={entryModeLabel(activeEntry.entryMode)} />
+                <Stat label="Valid until" value={formatDateTime(activeEntry.retentionExpiresAt)} />
                 <Stat label="Purpose" value={activeEntry.purposeOfVisit ?? "not recorded"} />
                 <Stat label="Person to meet" value={activeEntry.personToMeet?.name ?? activeEntry.personToMeet?.email ?? "not specified"} />
               </div>
@@ -417,7 +410,7 @@ export default function PersonDetailPage() {
                       run(
                         "unblock",
                         () => api(`/api/entries/${activeEntry.id}/unblock`, { method: "POST" }),
-                        "Unblock queued — the device restores access on its next poll.",
+                        "Unblocked: access returns within a few seconds.",
                       )
                     }
                   >
@@ -431,7 +424,7 @@ export default function PersonDetailPage() {
                       run(
                         "block",
                         () => api(`/api/entries/${activeEntry.id}/block`, { method: "POST" }),
-                        "Block queued — the device will deny with “Invalid time period”.",
+                        "Blocked: the device still recognises them but refuses entry until unblocked.",
                       )
                     }
                   >
@@ -445,7 +438,7 @@ export default function PersonDetailPage() {
                     simply not findable. */}
                 {(activeEntry.state === "PROVISIONED" || activeEntry.state === "INSIDE") && (
                   <Link href={`/pass/${activeEntry.id}`}>
-                    <Button>Visitor pass</Button>
+                    <Button>Print visitor pass</Button>
                   </Link>
                 )}
 
@@ -455,14 +448,14 @@ export default function PersonDetailPage() {
                   disabled={activeEntry.state === "INSIDE"}
                   title={
                     activeEntry.state === "INSIDE"
-                      ? "This person is inside. De-provisioning is deferred until they punch OUT."
+                      ? "They are inside: de-provision once they go out."
                       : undefined
                   }
                   onClick={() =>
                     run(
                       "deprovision",
                       () => api(`/api/entries/${activeEntry.id}/deprovision`, { method: "POST" }),
-                      "De-provision queued — removed from the device only; the record and photo are kept.",
+                      "De-provisioning: their face is being removed from the devices. The record and photo are kept.",
                     )
                   }
                 >
@@ -476,42 +469,26 @@ export default function PersonDetailPage() {
                     loading={busy === "force"}
                     onClick={() => {
                       const reason = window.prompt(
-                        "Remove this person while they are marked INSIDE?\n\nThe terminals stop recognising them at once. If they are actually still on site, they must be let out by hand (admin card).\n\nReason (required):",
+                        "De-provision this person although they are marked inside?\n\nThe devices stop recognising them at once. If they are actually still on site, they must be let out by hand (admin card).\n\nReason (required):",
                       );
                       if (!reason?.trim()) return;
                       void run(
                         "force",
                         () => api(`/api/entries/${activeEntry.id}/deprovision`, { method: "POST", body: { force: true, reason: reason.trim() } }),
-                        "Removed while inside — the pass is ending and the terminals are being cleared.",
+                        "De-provisioning although inside: the devices are being cleared.",
                       );
                     }}
                   >
-                    Remove although inside
+                    De-provision (still inside)
                   </Button>
                 )}
 
-                <Button
-                  loading={busy === "query"}
-                  onClick={() =>
-                    run(
-                      "query",
-                      () =>
-                        api(`/api/people/${id}/query-device`, {
-                          method: "POST",
-                          body: queryDeviceId ? { deviceId: queryDeviceId } : {},
-                        }),
-                      "Query queued — the device will push back its own view of this PIN.",
-                    )
-                  }
-                >
-                  Query device
-                </Button>
               </div>
 
               {activeEntry.state === "INSIDE" && (
                 <Alert tone="warn">
-                  This person is currently inside. De-provisioning is refused until they punch OUT —
-                  removing their credential now would strand them at the exit barrier.
+                  They are inside. De-provision becomes available once they punch out, so nobody is
+                  stranded at the exit.
                 </Alert>
               )}
             </div>
@@ -519,16 +496,14 @@ export default function PersonDetailPage() {
             <div className="space-y-4">
               {person.adoptedFromDevice ? (
                 <Alert tone="warn">
-                  Enrolled on the terminal, but not under management. This person&apos;s face is
-                  already on the device — someone enrolled them there directly — so they can enter
-                  right now, with no retention window and no expiry. Provision them to bring them
-                  under one. Until then nothing will remove them, and nothing will time them out.
+                  Enrolled directly on a device, outside this system: their face is already on it, so
+                  they can enter now with no end date. Provision them to give their access an end
+                  date; until then nothing removes them.
                 </Alert>
               ) : (
                 <p className="text-sm text-[var(--text-muted)]">
-                  Not currently loaded on any device. Provisioning creates the user and pushes the
-                  stored photo — the device rebuilds the face template from it, so a returning
-                  person never re-enrolls.
+                  Not provisioned. Provisioning loads their stored photo onto the devices — no new
+                  enrolment needed.
                 </p>
               )}
 
@@ -538,19 +513,18 @@ export default function PersonDetailPage() {
         </Card>
       </div>
 
-      <Card title="Recent commands">
+      {can("commands:view") && <Card title="Recent device commands">
         {commands.length === 0 ? (
           <Empty>No device commands for this person yet.</Empty>
         ) : (
-          <Table head={["Type", "Status", "Wire ID", "Attempts", "Created", "Error"]}>
+          <Table head={["Action", "Device", "Status", "Created", "Error"]}>
             {commands.map((c) => (
               <tr key={c.id} className="border-b border-[var(--border)] last:border-0">
-                <td className="px-2 py-2 font-medium">{c.type}</td>
+                <td className="px-2 py-2 font-medium" title={c.type}>{commandTypeLabel(c.type)}</td>
+                <td className="px-2 py-2 text-xs">{c.device?.name ?? c.device?.serialNo ?? "—"}</td>
                 <td className="px-2 py-2">
-                  <Badge tone={commandTone(c.status)}>{c.status}</Badge>
+                  <Badge tone={commandTone(c.status)}>{commandStatusLabel(c.status)}</Badge>
                 </td>
-                <td className="px-2 py-2 font-mono text-xs">{c.deviceCmdId ?? "—"}</td>
-                <td className="px-2 py-2 text-xs">{c.attempts}</td>
                 <td className="px-2 py-2 text-xs text-[var(--text-muted)]">
                   {formatDateTime(c.createdAt)}
                 </td>
@@ -559,35 +533,25 @@ export default function PersonDetailPage() {
             ))}
           </Table>
         )}
-      </Card>
+      </Card>}
 
-      <Card title="Authorization history">
+      <Card title="Provisioning history">
         {person.entries.length === 0 ? (
           <Empty>Never provisioned.</Empty>
         ) : (
-          <Table head={["State", "Retention", "Mode", "Blocked", "Created", "Pass"]}>
+          <Table head={["State", "Entry", "Blocked", "Provisioned", "Valid until"]}>
             {person.entries.map((entry: Entry) => (
               <tr key={entry.id} className="border-b border-[var(--border)] last:border-0">
                 <td className="px-2 py-2">
-                  <Badge tone={entryTone(entry.state)}>{entry.state}</Badge>
+                  <Badge tone={entryTone(entry.state)}>{passStateLabel(entry.state)}</Badge>
                 </td>
-                <td className="px-2 py-2 text-xs">{titleCase(entry.retentionPolicy)}</td>
-                <td className="px-2 py-2 text-xs">{titleCase(entry.entryMode)}</td>
-                <td className="px-2 py-2 text-xs">{entry.dayBlocked ? "yes" : "no"}</td>
+                <td className="px-2 py-2 text-xs">{entryModeLabel(entry.entryMode)}</td>
+                <td className="px-2 py-2 text-xs">{entry.dayBlocked ? "Yes" : "No"}</td>
                 <td className="px-2 py-2 text-xs text-[var(--text-muted)]">
                   {formatDateTime(entry.createdAt)}
                 </td>
-                <td className="px-2 py-2 text-right">
-                  {/* Only for a live authorization: a pass for a closed entry
-                      would state a validity window that has already ended. */}
-                  {(entry.state === "PROVISIONED" || entry.state === "INSIDE") && (
-                    <Link
-                      href={`/pass/${entry.id}`}
-                      className="text-xs text-[var(--brand)] hover:underline"
-                    >
-                      Visitor pass
-                    </Link>
-                  )}
+                <td className="px-2 py-2 text-xs text-[var(--text-muted)]">
+                  {formatDateTime(entry.retentionExpiresAt)}
                 </td>
               </tr>
             ))}

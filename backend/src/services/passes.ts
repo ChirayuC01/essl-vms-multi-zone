@@ -17,7 +17,7 @@ async function openEntry(entryId: string) {
   const entry = await prisma.entry.findUnique({ where: { id: entryId }, include: { person: true, gates: true, passType: true } });
   if (!entry) throw new ServiceError(404, "pass not found");
   if (!(OPEN as readonly EntryState[]).includes(entry.state)) {
-    throw new ServiceError(409, `pass is ${entry.state} — only a loaded pass can be changed`);
+    throw new ServiceError(409, "this person is not currently provisioned, so this can't be changed");
   }
   return entry;
 }

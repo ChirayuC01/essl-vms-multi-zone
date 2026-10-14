@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useDeferredValue, useState } from "react";
+import { categoryLabel } from "@/lib/format";
 import { api, type DirectoryItem, type DirectoryList, type Paged, type Person } from "@/lib/api";
 import { refresh, useApi } from "@/lib/swr";
 import { Alert, Badge, Button, Card, Field, Input, SearchSelect, Table } from "@/components/ui";
@@ -10,7 +11,11 @@ export default function DirectoryPage() {
   const { can } = useAuth();
   const { data: companies } = useApi<DirectoryList>("/api/companies");
   const { data: departments } = useApi<DirectoryList>("/api/departments");
-  const { data: people } = useApi<Paged<Person>>("/api/people?pageSize=100&active=true");
+  // Searchable, so everyone is reachable rather than only the first 100.
+  // Picks survive a new search (pre-demo sweep).
+  const [search, setSearch] = useState("");
+  const deferredSearch = useDeferredValue(search.trim());
+  const { data: people } = useApi<Paged<Person>>(`/api/people?pageSize=100&active=true${deferredSearch ? `&q=${encodeURIComponent(deferredSearch)}` : ""}`);
   const [companyName, setCompanyName] = useState("");
   const [departmentName, setDepartmentName] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
@@ -65,7 +70,8 @@ export default function DirectoryPage() {
         <Field label="Department"><SearchSelect value={departmentId} onChange={setDepartmentId} options={(departments?.items ?? []).filter((x) => x.isActive).map((x) => ({ value: x.id, label: x.name }))} emptyLabel="No change" /></Field>
         <div className="flex items-end"><Button variant="primary" disabled={!selected.length || (!companyId && !departmentId)} onClick={assign}>Assign {selected.length} selected</Button></div>
       </div>
-      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{people?.items.map((person) => <label key={person.id} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={selected.includes(person.id)} onChange={() => setSelected((ids) => ids.includes(person.id) ? ids.filter((id) => id !== person.id) : [...ids, person.id])} />{person.name} <span className="text-xs text-[var(--text-muted)]">{person.category}</span></label>)}</div>
+      <div className="mb-3 max-w-sm"><Field label="Find people" hint={people && people.total > people.items.length ? `Showing ${people.items.length} of ${people.total} — search to narrow` : undefined}><Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Name, company, mobile or ID…" /></Field></div>
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{people?.items.map((person) => <label key={person.id} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={selected.includes(person.id)} onChange={() => setSelected((ids) => ids.includes(person.id) ? ids.filter((id) => id !== person.id) : [...ids, person.id])} />{person.name} <span className="text-xs text-[var(--text-muted)]">{categoryLabel(person.category)}</span></label>)}</div>
     </Card>
   </div>;
 }

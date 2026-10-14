@@ -1,7 +1,8 @@
 import { readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { FastifyInstance } from "fastify";
-import { EntryState, PersonCategory, Prisma, type Person } from "@prisma/client";
+import { CommandType, EntryState, GateState, PersonCategory, Prisma, type Person } from "@prisma/client";
+import { ACTIVE_ENTRY_STATES } from "../services/entries.js";
 import { z } from "zod";
 import { config } from "../config/index.js";
 import { prisma } from "../db/index.js";
@@ -510,7 +511,7 @@ export async function personRoutes(app: FastifyInstance): Promise<void> {
       const pin = parseUserId((request.params as { pin: string }).pin);
       if (pin === null) {
         return reply.code(400).send({
-          error: `PIN must be letters and digits only, 1-${MAX_USER_ID_LENGTH} characters`,
+          error: `an ID is letters and digits only, 1-${MAX_USER_ID_LENGTH} characters`,
         });
       }
 
@@ -527,7 +528,7 @@ export async function personRoutes(app: FastifyInstance): Promise<void> {
           entries: { orderBy: { createdAt: "desc" }, take: 5 },
         },
       });
-      if (!person) return reply.code(404).send({ error: `no person holds PIN ${pin}` });
+      if (!person) return reply.code(404).send({ error: `no one is registered with ID ${pin}` });
 
       return reply.send({
         ...personSummary(person),
@@ -666,7 +667,7 @@ export async function personRoutes(app: FastifyInstance): Promise<void> {
     });
     if (activeEntry) {
       return reply.code(409).send({
-        error: `person has an active entry (${activeEntry.state}) — de-provision before deactivating`,
+        error: "this person is provisioned; de-provision them before deactivating",
       });
     }
     const employeeAccess = await prisma.employeeDeviceAccess.findFirst({
@@ -779,7 +780,35 @@ export async function personRoutes(app: FastifyInstance): Promise<void> {
     const photoPath = photoPathFor(person.esslUserId);
     await writeFile(photoPath, body);
 
+    // Devices that already hold this face get the new photo too: a visitor's
+    // loaded gates, an employee's loaded access. Before (pre-demo sweep) only
+    // the pass panel's Retake did this, so a photo fixed here left the gate
+    // on the old face. Loads still queued read the file and need nothing.
+    const [loadedGates, loadedAccess] = await Promise.all([
+      prisma.passGate.findMany({
+        where: { state: GateState.LOADED, entry: { personId: person.id, state: { in: [...ACTIVE_ENTRY_STATES] } } },
+        select: { id: true, deviceId: true, entryId: true },
+      }),
+      prisma.employeeDeviceAccess.findMany({ where: { personId: person.id, desiredAccess: true, provisioned: true }, select: { id: true, deviceId: true } }),
+    ]);
+    const stamp = Date.now();
+    const repush = [
+      ...loadedGates.map((g) => ({ deviceId: g.deviceId, entryId: g.entryId as string | null, key: `photo-update:gate:${g.id}:${stamp}` })),
+      ...loadedAccess.map((a) => ({ deviceId: a.deviceId, entryId: null, key: `photo-update:access:${a.id}:${stamp}` })),
+    ];
+
     await prisma.$transaction([
+      prisma.syncCommand.createMany({
+        data: repush.map((r) => ({
+          type: CommandType.PUSH_PHOTO,
+          targetDeviceId: r.deviceId,
+          payload: { pin: person.esslUserId, photoPath },
+          idempotencyKey: r.key,
+          entryId: r.entryId,
+          personId: person.id,
+          initiatedById: actorId(request) ?? null,
+        })),
+      }),
       prisma.personBiometric.upsert({
         where: { personId: person.id },
         create: {
@@ -804,6 +833,7 @@ export async function personRoutes(app: FastifyInstance): Promise<void> {
           entityId: person.id,
           detail: {
             source: "UI_UPLOAD",
+            repushedTo: repush.map((r) => r.deviceId),
             photoSizeBytes: body.length,
             width: dims.width,
             height: dims.height,

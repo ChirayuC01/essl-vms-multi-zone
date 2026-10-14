@@ -186,8 +186,8 @@ export default function ReportsPage() {
                 </Field>
               )}
               {selected.filters.includes("device") && (
-                <Field label="Terminal">
-                  <SearchSelect value={deviceId} onChange={(v) => { setDeviceId(v); setPage(1); }} options={(deviceList?.items ?? []).map((d) => ({ value: d.id, label: d.name ?? d.serialNo }))} emptyLabel="All terminals" />
+                <Field label="Device">
+                  <SearchSelect value={deviceId} onChange={(v) => { setDeviceId(v); setPage(1); }} options={(deviceList?.items ?? []).map((d) => ({ value: d.id, label: d.name ?? d.serialNo }))} emptyLabel="All devices" />
                 </Field>
               )}
             </div>
@@ -310,7 +310,7 @@ export default function ReportsPage() {
             working after the detail behind it has been rotated away.
           </p>
           <p className="mt-2 text-sm text-[var(--text-muted)]">
-            One thing no report can show: <strong>denied entries</strong>. The terminal does not
+            One thing no report can show: <strong>denied entries</strong>. The device does not
             send them, so a blocked person&rsquo;s attempt leaves no trace anywhere.
           </p>
           <div className="mt-3 flex flex-wrap gap-2">

@@ -197,6 +197,7 @@ export default function PersonDetailPage() {
             {person.aadharNumber && <Badge tone="ok">Aadhaar verified</Badge>}
             {person.panNumber && <Badge tone="ok">PAN verified</Badge>}
             {person.resignedAt && <Badge tone="warn">Resigned</Badge>}
+            {person.erasedAt && <Badge tone="danger">Erased</Badge>}
           </div>
           <p className="text-sm text-[var(--text-muted)]">
             {person.company?.name ?? "no company"} · {person.department?.name ?? "no department"} · {person.category} · ID{" "}
@@ -208,10 +209,47 @@ export default function PersonDetailPage() {
             {!person.isActive && " · deactivated"}
           </p>
         </div>
-        <Link href="/people">
-          <Button>Back to people</Button>
-        </Link>
+        <div className="flex flex-wrap gap-2">
+          {/* F2 #1a: visitors are deactivated here; employees through Resign. */}
+          {!person.erasedAt && person.category === "VISITOR" && can("people:delete") && (
+            person.isActive ? (
+              <Button
+                loading={busy === "deactivate"}
+                onClick={() => {
+                  if (!window.confirm(`Deactivate ${person.name}? They are hidden from lists and can't be given a pass until reactivated. Their record and history are kept.`)) return;
+                  void run("deactivate", () => api(`/api/people/${id}`, { method: "DELETE" }), "Deactivated. Their record and history are kept.");
+                }}
+              >
+                Deactivate
+              </Button>
+            ) : (
+              <Button loading={busy === "reactivate"} onClick={() => void run("reactivate", () => api(`/api/people/${id}/reactivate`, { method: "POST" }), "Reactivated.")}>
+                Reactivate
+              </Button>
+            )
+          )}
+          {/* F2 #1b: erasure on request, Administrator only by default. */}
+          {!person.erasedAt && can("people_erasure:delete") && (
+            <Button
+              variant="danger"
+              loading={busy === "erase"}
+              onClick={() => {
+                const reason = window.prompt(
+                  `ERASE ${person.name}?\n\nTheir name, contact details, ID numbers, photo and documents are permanently deleted. Visit history stays, anonymised. This cannot be undone.\n\nReason (required, e.g. the erasure request reference):`,
+                );
+                if (!reason?.trim()) return;
+                void run("erase", () => api(`/api/people/${id}/erase`, { method: "POST", body: { reason: reason.trim() } }), "Erased. Identity, photo and documents are gone; the visit history remains.");
+              }}
+            >
+              Erase data
+            </Button>
+          )}
+          <Link href="/people">
+            <Button>Back to people</Button>
+          </Link>
+        </div>
       </div>
+      {person.erasedAt && <Alert tone="warn">This person&apos;s data was erased on request on {formatDateTime(person.erasedAt)}. Only the anonymised history remains; register them again if they return.</Alert>}
 
       {error && <Alert>{error}</Alert>}
       {notice && <Alert tone="info">{notice}</Alert>}

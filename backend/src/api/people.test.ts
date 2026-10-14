@@ -19,11 +19,17 @@ const valid = {
 // route with profileGaps.
 test("registration requires every identifying field", () => {
   assert.equal(createPersonSchema.safeParse(valid).success, true);
-  for (const field of ["name", "category", "esslUserId"]) {
+  for (const field of ["name", "category"]) {
     const partial: Record<string, unknown> = { ...valid };
     delete partial[field];
     assert.equal(createPersonSchema.safeParse(partial).success, false, `${field} was optional`);
   }
+  // F2 #2: a visitor's ID is issued by the system when omitted; an
+  // employee's own code is still required.
+  const { esslUserId: _id, ...withoutId } = valid as Record<string, unknown>;
+  void _id;
+  assert.equal(createPersonSchema.safeParse({ ...withoutId, category: "VISITOR" }).success, true, "a visitor needed an ID");
+  assert.equal(createPersonSchema.safeParse({ ...withoutId, category: "EMPLOYEE", deviceIds: ["d1"] }).success, false, "an employee's ID was optional");
   for (const field of ["mobile", "companyId", "departmentId"]) {
     const partial: Record<string, unknown> = { ...valid };
     delete partial[field];

@@ -22,6 +22,7 @@ These are non-negotiable and cheap now, expensive to retrofit.
 1. **No client names anywhere.** Not in code, config keys, comments, table names, UI strings, or commit messages. This is a multi-client product from day one.
 2. **No client-specific conditionals.** `if (client === '...')` is banned. Any client difference must be expressible as configuration: zones, pass types, field rules, timings and toggles are data or settings, never code. The moment a conditional appears, the product forks and dies slowly.
 3. **The database is the source of truth; the device is a working set.** People are never deleted from Postgres. Removing a face from a terminal removes access only; history, photo and documents remain.
+   - **Amended (owner, 14 Oct 2026):** on an explicit erasure request an Administrator may **erase** a person (`services/erasure.ts`): identity, photo and documents are wiped; the row, terminal ID and history stay.
 4. **The database must be swappable by connection string alone.** The default is bundled local PostgreSQL, but a client may supply their own, including a managed cloud provider.
    - Never assume sub-millisecond latency.
    - No N+1 queries. No per-row loops in ingestion, reconciliation or jobs.
@@ -189,7 +190,7 @@ A **Person** is an `EMPLOYEE` or a `VISITOR`.
   - **MULTI_ENTRY:** IN and OUT load together, there is no exit code, and faces stay for the whole pass.
 - Planned visits start as a **visit request** raised by a host. The visitor completes it through the portal, and the host Clears, Queries or Rejects it, with full history.
 
-**The device user ID is text, not a number.** It is validated as `[A-Za-z0-9]{1,20}`, unique case-insensitively, and stored with its original casing. Visitor IDs are issued by the system with a configured prefix. A returning visitor is matched by their OTP-verified mobile number and keeps the same ID and photo.
+**The device user ID is text, not a number.** It is validated as `[A-Za-z0-9]{1,20}`, unique case-insensitively, and stored with its original casing. Visitor IDs are issued by the system with a configured prefix, at Clear and on Register person alike; employees keep their own codes. Two-zone sites never register from the terminal. A returning visitor is matched by their OTP-verified mobile number and keeps the same ID and photo.
 
 ---
 

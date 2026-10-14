@@ -51,16 +51,19 @@ async function messageVisitor(request: VisitRequest, template: string, body: str
 /**
  * The next free system visitor ID. The number comes from a database sequence
  * (atomic, never reused); an ID someone already holds — imported or typed on a
- * terminal — is skipped.
+ * terminal — is skipped, and so is one enrolled on a terminal by hand and not
+ * registered yet (its photo is waiting under that ID, F2 #2). Used by Clear,
+ * walk-ins and Register person alike.
  */
-async function issueVisitorId(prefix: string): Promise<string> {
+export async function issueVisitorId(prefix: string): Promise<string> {
   for (let attempt = 0; attempt < 20; attempt++) {
     const [row] = await prisma.$queryRaw<{ n: bigint }[]>`SELECT nextval('visitor_id_seq') AS n`;
     const n = row!.n;
     const id = parseUserId(`${prefix}${String(n).padStart(5, "0")}`);
     if (!id) throw new ServiceError(500, "the visitor ID prefix produces an invalid terminal ID");
     const taken = await prisma.person.count({ where: { esslUserId: { equals: id, mode: "insensitive" } } });
-    if (!taken) return id;
+    const handEnrolled = await stat(photoPathFor(id)).then(() => true, () => false);
+    if (!taken && !handEnrolled) return id;
   }
   throw new ServiceError(500, "could not find a free visitor ID");
 }
@@ -69,7 +72,7 @@ async function issueVisitorId(prefix: string): Promise<string> {
  * Every terminal the pass uses must see this ID as a VISITOR, or reconciliation
  * would never remove it (CLAUDE.md #7: IDs outside the patterns are untouched).
  */
-function assertVisitorIdFits(id: string, prefix: string, devices: Awaited<ReturnType<typeof zoneDevices>>) {
+export function assertVisitorIdFits(id: string, prefix: string, devices: Awaited<ReturnType<typeof zoneDevices>>) {
   const misfit = devices.filter((d) => classifyDeviceId(id, d.employeeIdPatterns, d.visitorIdPatterns) !== PersonCategory.VISITOR);
   if (misfit.length) {
     throw new ServiceError(

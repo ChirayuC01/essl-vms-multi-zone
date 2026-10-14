@@ -9,6 +9,10 @@ export const AuditAction = {
   PERSON_CREATED: "PERSON_CREATED",
   PERSON_UPDATED: "PERSON_UPDATED",
   PERSON_DEACTIVATED: "PERSON_DEACTIVATED",
+  PERSON_REACTIVATED: "PERSON_REACTIVATED",
+  // Identity, photo and documents wiped on request (F2 #1b). Detail holds the
+  // reason and counts, never the erased values.
+  PERSON_ERASED: "PERSON_ERASED",
   EMPLOYEE_RESIGNED: "EMPLOYEE_RESIGNED",
   EMPLOYEE_REHIRED: "EMPLOYEE_REHIRED",
   PHOTO_UPDATED: "PHOTO_UPDATED",

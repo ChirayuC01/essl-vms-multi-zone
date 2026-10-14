@@ -215,6 +215,9 @@ model Person {
   // retention prunes completed commands for closed entries, so that question
   // silently changes its answer over time and would switch the self-heal off
   // for real people months after the fact.
+  // Set when the person's data was erased on request (F2 #1b): identity,
+  // photo and documents are gone; the row, ID and history remain.
+  erasedAt          DateTime?      @map("erased_at")
   adoptedFromDevice Boolean        @default(false) @map("adopted_from_device")
   createdAt         DateTime       @default(now()) @map("created_at")
   updatedAt         DateTime       @updatedAt @map("updated_at")

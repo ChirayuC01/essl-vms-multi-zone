@@ -1156,3 +1156,45 @@ Plan: `PLAN.md` § F3 (F-z, F-h, F-g, F-f), ported from 0.4.24.
   roster with a search; a person's page → Ins and outs (zone column) and
   Reports downloads. An employee who visits the yard should still show one
   working day from the outer gate.
+
+### 2026-10-14 — F2 step 3: deactivate / reactivate, erasure on request, automatic visitor IDs
+
+Plan: `PLAN.md` § F2 (items 1 and 2). Hard rule #3 amended in `CLAUDE.md`.
+
+- **#1a:** person page "Deactivate" (existing `DELETE /api/people/:id`,
+  refused while a pass is live) and "Reactivate" (new
+  `POST /api/people/:id/reactivate`, `people:delete`, audit
+  `PERSON_REACTIVATED`; refused for resigned or erased people). Visitors
+  only; employees keep Resign / Rehire.
+- **#1b Erasure** (`services/erasure.ts`, `POST /api/people/:id/erase`, new
+  cell `people_erasure:delete`, Administrator only by default, reason
+  mandatory): wipes identity fields (name → "Erased person"), the biometric
+  row and photo file, document files (rows kept as "erased"), the person's
+  visit requests' name / mobile / email / submission / selfie, and messages
+  addressed to their mobile or email; best-effort removal on terminals whose
+  patterns cover the ID. Row, ID, passes, punches, consents and audit kept.
+  Migration `20261014170000_person_erasure` (`person.erased_at`). Erased
+  people can't be edited, given a photo, reactivated or erased again.
+- **#2 Automatic visitor IDs:** `POST /api/people` issues `<prefix>` + the
+  next number when a visitor has no ID (`issueVisitorId`, shared with Clear
+  and now exported; checked with `assertVisitorIdFits` against every
+  terminal that takes visitors). `issueVisitorId` now also skips a number
+  whose photo is waiting as a hand enrolment. Register person: no visitor ID
+  field, no terminal-claim route (`?pin=`); employees type their own code.
+  The Unregistered panel loses "Register" (Delete remains, F3 F-j).
+- Tests: e2e section 40 (ID issued; next number skips a hand enrolment;
+  employee still needs an ID; deactivate / reactivate audited; erase: 403
+  for Security, reason required, identity wiped with ID kept, photo gone,
+  audit without the name, no edit / reactivate / second erase, employee
+  must be resigned). Unit `people.test.ts` updated for the optional visitor ID.
+- **Verified:** typecheck PASS; `npm test` 118/118; `verify:e2e` **612
+  passed, 0 failed**; web lint + build PASS. Migration applied to the dev
+  database.
+- Owner verification: Register person as a visitor (no ID field; the page
+  then shows e.g. `V00012`) and as an employee (own code). A visitor:
+  Deactivate → hidden, Reactivate. As Admin, Erase a test visitor with a
+  photo and a document → name "Erased person", photo and document gone,
+  history still listed; as Security the button is absent.
+- **Follow-up (same day):** pass type "Kind" removed from the Pass types
+  form and table (label only; owner). Erasure kept (owner). Moving Zones to
+  their own page is deferred to the UI redesign.

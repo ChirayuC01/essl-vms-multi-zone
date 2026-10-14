@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useState } from "react";
 import { api, ApiError, getApiBase, getToken } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
@@ -8,12 +7,10 @@ import { refresh, useApi } from "@/lib/swr";
 import { formatBytes, formatRelative } from "@/lib/format";
 import { Alert, Badge, Button, Empty } from "@/components/ui";
 
-// Enrollments waiting to be claimed.
-//
-// Someone enrolled on the terminal, the device pushed their photo, and no
-// person owns it yet. Before this existed the only way to claim one was to
-// remember the PIN typed on the device — the panel makes that state visible
-// so registration never depends on memory.
+// Hand enrolments: someone enrolled on a terminal directly, the device pushed
+// their photo, and no person owns the ID. Two-zone sites register only in the
+// console (F2 #2), so this is a warning to clean up, not a queue to register
+// from: an Administrator deletes them (F3 F-j).
 
 export interface UnclaimedEnrollment {
   esslUserId: string;
@@ -61,8 +58,9 @@ export function UnclaimedEnrollments({ highlighted = true }: { highlighted?: boo
       </summary>
       <div className="border-t border-[var(--border)] p-4">
         <p className="mb-4 text-sm text-[var(--text-muted)]">
-          Enrolled on the terminal, photo already received. Register each one to attach their photo
-          automatically — no upload needed.
+          Enrolled directly on a terminal and not registered here. People are registered in the
+          console (Register person or a visit request), so delete these; register the person
+          properly if they need access.
         </p>
 
         {problem && <Alert>{problem}</Alert>}
@@ -95,13 +93,6 @@ export function UnclaimedEnrollments({ highlighted = true }: { highlighted?: boo
                   <div className="text-xs text-[var(--text-muted)]">
                     {formatRelative(item.arrivedAt)} · {formatBytes(item.photoSizeBytes)}
                   </div>
-                  <Link
-                    href={`/people/new?pin=${item.esslUserId}${item.name ? `&name=${encodeURIComponent(item.name)}` : ""}`}
-                  >
-                    <Button variant="primary" className="mt-2 w-full">
-                      Register
-                    </Button>
-                  </Link>
                   {can("unclaimed:delete") && (
                     <Button variant="danger" className="mt-2 w-full" onClick={() => void discard(item.esslUserId)}>
                       Delete

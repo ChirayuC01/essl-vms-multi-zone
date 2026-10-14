@@ -1,9 +1,9 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
-import { api, getApiBase, getToken, type DeviceList, type DirectoryList, type PassTypeList, type Person, type ZoneList } from "@/lib/api";
+import { useRouter } from "next/navigation";
+import { api, type DeviceList, type DirectoryList, type PassTypeList, type Person, type ZoneList } from "@/lib/api";
 import { EMPTY_PROFILE, ProfileFields, profilePayload } from "@/components/profile-fields";
 import { useApi } from "@/lib/swr";
 import { Alert, Button, Card, Field, Input, SearchSelect, Select } from "@/components/ui";
@@ -11,38 +11,25 @@ import { WebcamCapture } from "@/components/webcam-capture";
 import { ZonePicker } from "@/components/zone-picker";
 import { normalizePhotoFile } from "@/lib/photo";
 
-// Registration covers both acquisition routes:
-//
-//   Device-first — enroll on the terminal, then register here with the PIN
-//                  typed there. The backend has already pulled the photo, so
-//                  it attaches automatically and no upload is needed. Arriving
-//                  from the "waiting to be registered" panel pre-fills the PIN.
-//   Office-first — fill the form and attach a photo from a file. For when no
-//                  terminal is at hand.
+// Register a person in the console: the only way in besides a visit request
+// (two-zone sites never register from the terminal, F2 #2). A visitor's ID is
+// issued by the system; an employee's is their own code. The photo is an
+// upload or a webcam shot, normalised to the terminal's 480×640 portrait.
 
-function RegisterForm() {
+export default function RegisterPersonPage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  // Pre-filled when arriving from an unclaimed enrollment.
-  const claimingPin = searchParams.get("pin") ?? "";
-  // Best-effort, from the device's own USER record — not guaranteed present,
-  // and (unlike the PIN) still just a hint: left editable so a mis-typed or
-  // abbreviated device name can be corrected before saving.
-  const deviceName = searchParams.get("name") ?? "";
-
-  const [name, setName] = useState(deviceName);
+  const [name, setName] = useState("");
   const [category, setCategory] = useState<"EMPLOYEE" | "VISITOR">("VISITOR");
   const [passTypeId, setPassTypeId] = useState("");
   const [profile, setProfile] = useState(EMPTY_PROFILE);
   const [deviceIds, setDeviceIds] = useState<string[]>([]);
   const [zoneIds, setZoneIds] = useState<string[]>([]);
-  const [pin, setPin] = useState(claimingPin);
+  const [pin, setPin] = useState("");
   const [photo, setPhoto] = useState<File | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const claiming = claimingPin !== "" && pin === claimingPin;
   const { data: companies } = useApi<DirectoryList>("/api/companies");
   const { data: departments } = useApi<DirectoryList>("/api/departments");
   const { data: devices } = useApi<DeviceList>("/api/devices");
@@ -68,7 +55,8 @@ function RegisterForm() {
           ...profilePayload(profile, false),
           deviceIds: category === "EMPLOYEE" ? deviceIds : [],
           zoneIds: category === "EMPLOYEE" ? zoneIds : [],
-          esslUserId: pin.trim(),
+          // A visitor's ID is issued by the server (F2 #2).
+          ...(category === "EMPLOYEE" ? { esslUserId: pin.trim() } : {}),
         },
       });
 
@@ -89,43 +77,28 @@ function RegisterForm() {
 
   return (
     <div className="mx-auto max-w-xl space-y-4">
-      <Card title={claiming ? `Register enrollment · PIN ${claimingPin}` : "Register person"}>
+      <Card title="Register person">
         <form onSubmit={onSubmit} className="space-y-4">
           {error && <Alert>{error}</Alert>}
           {notice && <Alert tone="info">{notice}</Alert>}
 
-          {claiming && (
-            <div className="flex items-center gap-3 rounded-[var(--radius)] bg-[var(--surface-muted)] p-3">
-              {/* eslint-disable-next-line @next/next/no-img-element -- token-authenticated cross-origin image */}
-              <img
-                src={`${getApiBase()}/api/enrollments/unclaimed/${claimingPin}/photo?token=${encodeURIComponent(getToken() ?? "")}`}
-                alt={`Enrollment photo for PIN ${claimingPin}`}
-                className="h-20 w-20 rounded-[var(--radius)] border border-[var(--border)] object-cover"
-              />
-              <p className="text-sm text-[var(--text-muted)]">
-                This photo was captured on the terminal and will be attached automatically. Just add
-                their details below.
-              </p>
-            </div>
-          )}
-
           {/* Category first: everything below depends on it. */}
           <Field label="Category"><Select value={category} onChange={(e) => setCategory(e.target.value as "EMPLOYEE" | "VISITOR")} autoFocus><option value="VISITOR">Visitor</option><option value="EMPLOYEE">Employee</option></Select></Field>
 
-          <Field
-            label={category === "VISITOR" ? "Visitor ID" : "Employee ID"}
-            hint={claiming ? "Assigned by the terminal and cannot be changed." : "Use the same ID that will be enrolled on the terminal."}
-          >
-            <Input
-              required
-              pattern="[A-Za-z0-9]+"
-              maxLength={20}
-              value={pin}
-              onChange={(e) => setPin(e.target.value.replace(/[^A-Za-z0-9]/g, ""))}
-              placeholder="e.g. 9001 or VIS001"
-              disabled={claiming}
-            />
-          </Field>
+          {category === "EMPLOYEE" ? (
+            <Field label="Employee ID" hint="Their own employee code; letters and digits, matching the terminals' employee ID pattern.">
+              <Input
+                required
+                pattern="[A-Za-z0-9]+"
+                maxLength={20}
+                value={pin}
+                onChange={(e) => setPin(e.target.value.replace(/[^A-Za-z0-9]/g, ""))}
+                placeholder="e.g. EMP1042"
+              />
+            </Field>
+          ) : (
+            <p className="text-sm text-[var(--text-muted)]">The visitor ID is assigned automatically and shown once they are registered.</p>
+          )}
 
           <Field label="Full name">
             <Input
@@ -158,8 +131,7 @@ function RegisterForm() {
 
           {category === "EMPLOYEE" && <Field label={zones.length > 0 ? "Or individual terminals" : "Permanent device access"} hint="Employees remain on every selected device until an admin removes access."><div className="space-y-2">{devices?.items.map((device) => <label key={device.id} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={deviceIds.includes(device.id)} onChange={() => setDeviceIds((ids) => ids.includes(device.id) ? ids.filter((id) => id !== device.id) : [...ids, device.id])} />{device.name ?? device.serialNo}</label>)}</div></Field>}
 
-          {!claiming && (
-            <fieldset>
+          <fieldset>
               <legend className="mb-1 text-sm font-medium">Enrollment photo</legend>
               <div className="grid items-start gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
                 <Input
@@ -188,12 +160,12 @@ function RegisterForm() {
               </div>
               {photo && <span className="mt-1 block text-xs text-[var(--text-muted)]">Selected: {photo.name}</span>}
               <p className="mt-1 text-xs text-[var(--text-muted)]">
-                Only needed when the person was not enrolled on the terminal. Upload a JPEG or take
-                one with the webcam. It is cropped to a 480×640 portrait before upload — keep the
-                face centred and well lit; photo quality determines recognition quality.
+                Needed before any terminal can recognise them; it can also be added later on their
+                page. Upload a JPEG or take one with the webcam. It is cropped to a 480×640 portrait
+                before upload — keep the face centred and well lit; photo quality determines
+                recognition quality.
               </p>
             </fieldset>
-          )}
 
           <div className="flex gap-2">
             <Button type="submit" variant="primary" loading={submitting}>
@@ -206,15 +178,5 @@ function RegisterForm() {
         </form>
       </Card>
     </div>
-  );
-}
-
-export default function RegisterPersonPage() {
-  // useSearchParams needs a Suspense boundary so the rest of the route can
-  // still be prerendered.
-  return (
-    <Suspense fallback={<p className="text-sm text-[var(--text-muted)]">Loading…</p>}>
-      <RegisterForm />
-    </Suspense>
   );
 }

@@ -4929,6 +4929,62 @@ async function main() {
   }
 
   // ======================================================================
+  section("40. Automatic visitor IDs, deactivate / reactivate, erasure (F2 #1, #2)");
+  // ======================================================================
+  {
+    const pp = (method: "GET" | "POST" | "PATCH" | "DELETE", url: string, payload?: object, as = token) =>
+      app.inject({ method, url, headers: auth(as), ...(payload ? { payload } : {}) });
+    const securityTok4 = JSON.parse((await app.inject({ method: "POST", url: "/api/auth/login", payload: { email: "security@vms.local", password: "role-password" } })).body).token as string;
+    await prisma.device.updateMany({ where: { serialNo: { startsWith: "E2EZONE" } }, data: { visitorIdPatterns: ["V*"] } });
+    await pp("PATCH", "/api/settings", { visitorIdPrefix: "V" });
+    const { esslUserId: _drop, ...noId } = registration("Auto Id Visitor", "IGNORED");
+    void _drop;
+
+    // #2: a visitor registered without an ID gets the next system one.
+    const first = await pp("POST", "/api/people", noId);
+    check("a visitor registered without an ID gets one issued", first.statusCode === 201 && /^V\d{5}$/.test(JSON.parse(first.body).esslUserId), first.body);
+    const firstId = JSON.parse(first.body).esslUserId as string;
+    const nextNumber = Number(firstId.slice(1)) + 1;
+    const handEnrolled = `V${String(nextNumber).padStart(5, "0")}`;
+    await testPhoto(handEnrolled);
+    const second = await pp("POST", "/api/people", { ...noId, name: "Auto Id Visitor Two", aadharNumber: `3${String(Date.now()).slice(-11)}` });
+    const secondId = JSON.parse(second.body).esslUserId as string;
+    check("...the next number skips one held by an unregistered hand enrolment", second.statusCode === 201 && secondId === `V${String(nextNumber + 1).padStart(5, "0")}`, `${firstId} → ${secondId}`);
+    const noEmpId = await pp("POST", "/api/people", { ...noId, name: "No Id Employee", category: "EMPLOYEE", deviceIds: [(await prisma.device.findFirstOrThrow({ where: { serialNo: "E2EZONEOUTERIN" } })).id], aadharNumber: `4${String(Date.now()).slice(-11)}` });
+    check("an employee still needs their own ID", noEmpId.statusCode === 400 && noEmpId.body.includes("ID"), noEmpId.body);
+    await unlink(photoPathFor(handEnrolled)).catch(() => undefined);
+
+    // #1a: deactivate and reactivate a visitor.
+    const vId = JSON.parse(first.body).id as string;
+    check("a visitor can be deactivated", (await pp("DELETE", `/api/people/${vId}`)).statusCode === 200 && !(await prisma.person.findUniqueOrThrow({ where: { id: vId } })).isActive);
+    const re = await pp("POST", `/api/people/${vId}/reactivate`);
+    check("...and reactivated, audited", re.statusCode === 200 && (await prisma.person.findUniqueOrThrow({ where: { id: vId } })).isActive && (await prisma.auditLog.count({ where: { action: "PERSON_REACTIVATED", entityId: vId } })) === 1, re.body);
+
+    // #1b: erasure.
+    const victim = JSON.parse(second.body) as { id: string; esslUserId: string };
+    const photoFile = photoPathFor(victim.esslUserId);
+    await testPhoto(victim.esslUserId);
+    await prisma.personBiometric.create({ data: { personId: victim.id, photoPath: photoFile, biometricType: 9 } });
+    check("Security cannot erase", (await pp("POST", `/api/people/${victim.id}/erase`, { reason: "request" }, securityTok4)).statusCode === 403);
+    check("...a reason is required", (await pp("POST", `/api/people/${victim.id}/erase`, {})).statusCode === 400);
+    const erase = await pp("POST", `/api/people/${victim.id}/erase`, { reason: "DPDP request #12" });
+    check("an Administrator can erase a person's data", erase.statusCode === 200, erase.body);
+    const after = await prisma.person.findUniqueOrThrow({ where: { id: victim.id }, include: { biometric: true } });
+    check("...identity is wiped, the ID and row kept", after.name === "Erased person" && after.mobile === null && after.aadharNumber === null && after.erasedAt !== null && after.esslUserId === victim.esslUserId && !after.isActive);
+    check("...the photo and its record are gone", after.biometric === null && !(await readFile(photoFile).then(() => true, () => false)));
+    const eraseAudit = await prisma.auditLog.findFirst({ where: { action: "PERSON_ERASED", entityId: victim.id } });
+    check("...audited with the reason and without the erased name", eraseAudit !== null && JSON.stringify(eraseAudit.detail).includes("DPDP request #12") && !JSON.stringify(eraseAudit.detail).includes("Auto Id Visitor"));
+    check("...an erased person can't be edited", (await pp("PATCH", `/api/people/${victim.id}`, { name: "Back Again" })).statusCode === 409);
+    check("...or reactivated", (await pp("POST", `/api/people/${victim.id}/reactivate`)).statusCode === 409);
+    check("...or erased twice", (await pp("POST", `/api/people/${victim.id}/erase`, { reason: "again" })).statusCode === 409);
+    check("...and their ID is never issued again", (await prisma.person.count({ where: { esslUserId: victim.esslUserId } })) === 1);
+    const working = await prisma.person.findFirstOrThrow({ where: { category: "EMPLOYEE", resignedAt: null, erasedAt: null, employeeAccess: { some: { desiredAccess: true } } } });
+    check("an employee must be resigned before erasure", (await pp("POST", `/api/people/${working.id}/erase`, { reason: "request" })).statusCode === 409);
+    await prisma.device.updateMany({ where: { serialNo: { startsWith: "E2EZONE" } }, data: { visitorIdPatterns: ["9*"] } });
+    await pp("PATCH", "/api/settings", { visitorIdPrefix: "9" });
+  }
+
+  // ======================================================================
   section("34. Audit coverage — every successful state change left an audit row");
   // ======================================================================
   {

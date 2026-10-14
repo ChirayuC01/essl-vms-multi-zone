@@ -15,6 +15,9 @@ import { assignEmployeeDevices, removeEmployeeDevice } from "../services/employe
 import { describeGaps, profileGaps } from "../services/pass-types.js";
 import { isMasked, maskId } from "../services/redact.js";
 import { blacklistPerson, liftBlacklist } from "../services/passes.js";
+import { erasePerson } from "../services/erasure.js";
+import { getSettings } from "../services/settings.js";
+import { assertVisitorIdFits, issueVisitorId } from "../services/visit-review.js";
 
 // Person registration API (Phase 1 Milestone 3).
 //
@@ -94,9 +97,9 @@ export const createPersonSchema = z.object({
   // Employees: zones grant the terminals of each zone and every zone around
   // it, expanded now and stored per terminal (as on the person page).
   zoneIds: z.array(z.string().min(1)).max(50).default([]),
-  // The ID already typed on the terminal (device-first), or one the operator
-  // chooses. Never auto-allocated — an ID somebody has to read back off a
-  // person card is a decision, not a side effect.
+  // An employee's own code, typed by the operator. A visitor's is issued by
+  // the system when omitted (F2 #2: `<prefix>` + the next number, as at
+  // Clear); an explicit one is still accepted for imports and older clients.
   //
   // Letters and digits, because real rosters use both (`WCTPL070`, `ye01`).
   // Accepted as a string OR a number, so a client sending `{"esslUserId": 1001}`
@@ -106,8 +109,12 @@ export const createPersonSchema = z.object({
     .transform((v) => parseUserId(v))
     .refine((v): v is string => v !== null, {
       message: `user ID must be letters and digits only, 1-${MAX_USER_ID_LENGTH} characters`,
-    }),
+    })
+    .optional(),
 }).superRefine((value, ctx) => {
+  if (value.category === PersonCategory.EMPLOYEE && !value.esslUserId) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "an employee's ID is required", path: ["esslUserId"] });
+  }
   if (value.category === PersonCategory.EMPLOYEE && value.deviceIds.length + value.zoneIds.length === 0) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: "employees require at least one zone or device", path: ["deviceIds"] });
   }
@@ -188,6 +195,7 @@ function personSummary(v: SummaryInput) {
     isActive: v.isActive,
     resignedAt: v.resignedAt,
     resignedReason: v.resignedReason,
+    erasedAt: v.erasedAt,
     hasPhoto: Boolean(v.biometric),
     profileComplete: v.detailsComplete,
     needsDetails: !v.detailsComplete,
@@ -245,9 +253,21 @@ export async function personRoutes(app: FastifyInstance): Promise<void> {
     const gaps = profileGaps(input, passType);
     if (gaps.length > 0) return reply.code(400).send({ error: `required: ${describeGaps(gaps)}`, missing: gaps });
 
+    // A visitor with no ID gets the next system one, checked against every
+    // terminal that takes visitors (rule #7), only once everything else is
+    // valid so a refused form never uses up a number.
+    let issuedId: string | null = null;
+    if (!input.esslUserId) {
+      const { visitorIdPrefix } = await getSettings();
+      const devices = (await prisma.device.findMany()).filter((d) => d.visitorIdPatterns.length > 0);
+      if (devices.length === 0) return reply.code(409).send({ error: "no terminal has a visitor ID pattern yet — set one on the Devices page" });
+      assertVisitorIdFits(`${visitorIdPrefix}00001`, visitorIdPrefix, devices);
+      issuedId = await issueVisitorId(visitorIdPrefix);
+    }
+
     try {
       const result = await prisma.$transaction(async (tx) => {
-        const esslUserId = input.esslUserId;
+        const esslUserId = issuedId ?? input.esslUserId!;
 
         // Looked up before the person row is written, not after, because
         // whether a device-pushed photo already exists for this PIN decides
@@ -337,7 +357,7 @@ export async function personRoutes(app: FastifyInstance): Promise<void> {
             ? "that Aadhaar number is already registered to another person"
             : target.some((t) => t.includes("pan"))
               ? "that PAN is already registered to another person"
-              : `esslUserId ${input.esslUserId} is already registered`,
+              : `esslUserId ${issuedId ?? input.esslUserId} is already registered`,
         });
       }
       throw err;
@@ -538,6 +558,7 @@ export async function personRoutes(app: FastifyInstance): Promise<void> {
       include: { employeeAccess: true },
     });
     if (!current) return reply.code(404).send({ error: "person not found" });
+    if (current.erasedAt) return reply.code(409).send({ error: "this person's data was erased; register them again if they return" });
     if (parsed.data.category !== undefined && parsed.data.category !== current.category && !(await hasPermission(request, "person_category:update"))) {
       return reply.code(403).send({ error: "only an administrator can change category" });
     }
@@ -675,6 +696,31 @@ export async function personRoutes(app: FastifyInstance): Promise<void> {
     return reply.send(personSummary(updated));
   });
 
+  // ---- reactivate (F2 #1a) ---------------------------------------------------
+  // The way back from Deactivate, for visitors. An employee comes back through
+  // Rehire, which restores their terminals; an erased person never does.
+  app.post("/people/:id/reactivate", { preHandler: requirePermission("people:delete") }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const person = await prisma.person.findUnique({ where: { id } });
+    if (!person) return reply.code(404).send({ error: "person not found" });
+    if (person.erasedAt) return reply.code(409).send({ error: "this person's data was erased; register them again if they return" });
+    if (person.resignedAt) return reply.code(409).send({ error: "a resigned employee comes back through Rehire" });
+    if (person.isActive) return reply.code(409).send({ error: "this person is already active" });
+    const [updated] = await prisma.$transaction([
+      prisma.person.update({ where: { id }, data: { isActive: true }, include: { biometric: { select: { id: true } } } }),
+      prisma.auditLog.create({ data: auditRow({ action: AuditAction.PERSON_REACTIVATED, entityType: "person", entityId: id, actorId: actorId(request) }) }),
+    ]);
+    return reply.send(personSummary(updated));
+  });
+
+  // ---- erase on request (F2 #1b) ----------------------------------------------
+  app.post("/people/:id/erase", { preHandler: requirePermission("people_erasure:delete") }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const { reason } = (request.body ?? {}) as { reason?: unknown };
+    const result = await erasePerson(id, typeof reason === "string" ? reason : "", actorId(request));
+    return reply.send(result);
+  });
+
   // ---- photo: serve -------------------------------------------------------------
   app.get("/people/:id/photo", { preHandler: requirePermission("people:view") }, async (request, reply) => {
     const { id } = request.params as { id: string };
@@ -700,6 +746,7 @@ export async function personRoutes(app: FastifyInstance): Promise<void> {
     const { id } = request.params as { id: string };
     const person = await prisma.person.findUnique({ where: { id } });
     if (!person) return reply.code(404).send({ error: "person not found" });
+    if (person.erasedAt) return reply.code(409).send({ error: "this person's data was erased" });
 
     const body = request.body;
     if (!Buffer.isBuffer(body) || body.length === 0) {

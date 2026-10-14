@@ -11,11 +11,13 @@ import { Alert, Badge, Button, Card, Empty, Field, Input, Select, Table } from "
 // long it may last, and whether it carries an external credential whose
 // expiry caps the pass. Configuration, never code.
 
-type Draft = Omit<PassType, "id" | "isActive">;
+// "Kind" (short/long-term) is gone from the console (owner, 14 Oct 2026): it
+// was a label nothing read. A one-time visit vs. a period is what the entry
+// modes and maximum validity already decide.
+type Draft = Omit<PassType, "id" | "isActive" | "kind">;
 const BLANK: Draft = {
   name: "",
   description: null,
-  kind: "SHORT_TERM",
   entryModes: ["SINGLE_ENTRY", "MULTI_ENTRY"],
   requiresHostClear: true,
   maxValidityDays: 1,
@@ -78,11 +80,10 @@ export default function PassTypesPage() {
         {data.items.length === 0 ? (
           <p className="text-sm text-[var(--text-muted)]">No pass types yet. Visitors use the General rule (company, department, mobile, Aadhaar or PAN) until you add one.</p>
         ) : (
-          <Table head={["Name", "Kind", "Entry", "Host Clear", "Exit code", "Max days", "Credential", "Status", ""]}>
+          <Table head={["Name", "Entry", "Host Clear", "Exit code", "Max days", "Credential", "Status", ""]}>
             {data.items.map((t) => (
               <tr key={t.id} className="border-b border-[var(--border)] last:border-0">
                 <td className="px-2 py-2">{t.name}{t.description && <div className="text-xs text-[var(--text-muted)]">{t.description}</div>}</td>
-                <td className="px-2 py-2">{t.kind === "LONG_TERM" ? "Long-term" : "Short-term"}</td>
                 <td className="px-2 py-2">{t.entryModes.map((m) => (m === "SINGLE_ENTRY" ? "single" : "multi")).join(" / ")}</td>
                 <td className="px-2 py-2">{t.requiresHostClear ? "Yes" : "No"}</td>
                 <td className="px-2 py-2">{!t.entryModes.includes("SINGLE_ENTRY") ? "—" : t.exitCodeRequired && t.exitCodeZoneIds.length ? t.exitCodeZoneIds.map((z) => `${zoneName(z)} exit`).join(", ") : "No"}</td>
@@ -134,12 +135,6 @@ function Editor({ draft, zones, fields, onChange }: { draft: Draft; zones: { id:
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <Field label="Name"><Input maxLength={60} value={draft.name} onChange={(e) => set("name", e.target.value)} placeholder="e.g. Contractor staff" /></Field>
         <Field label="Description" hint="optional"><Input maxLength={200} value={draft.description ?? ""} onChange={(e) => set("description", e.target.value || null)} /></Field>
-        <Field label="Kind">
-          <Select value={draft.kind} onChange={(e) => set("kind", e.target.value as Draft["kind"])}>
-            <option value="SHORT_TERM">Short-term (a visit)</option>
-            <option value="LONG_TERM">Long-term (a period)</option>
-          </Select>
-        </Field>
         <Field label="Entry modes allowed">
           <div className="mt-2 flex gap-4 text-sm">
             <label className="flex items-center gap-1"><input type="checkbox" checked={draft.entryModes.includes("SINGLE_ENTRY")} onChange={() => toggleMode("SINGLE_ENTRY")} />Single entry</label>

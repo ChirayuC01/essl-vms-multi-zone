@@ -199,6 +199,8 @@ export interface Person {
   isActive: boolean;
   resignedAt: string | null;
   resignedReason: string | null;
+  /** Identity, photo and documents wiped on request (F2 #1b). */
+  erasedAt: string | null;
   hasPhoto: boolean;
   profileComplete: boolean;
   needsDetails: boolean;

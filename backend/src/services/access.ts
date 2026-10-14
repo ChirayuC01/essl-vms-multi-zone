@@ -90,6 +90,12 @@ export const RESOURCES = {
     actions: ["delete"],
     notes: { delete: "discard a hand enrolment: photo and terminal entry" },
   },
+  people_erasure: {
+    label: "Erase a person's data",
+    group: "People",
+    actions: ["delete"],
+    notes: { delete: "wipe identity, photo and documents on request; history kept" },
+  },
   people_export: {
     label: "Person details report",
     group: "Reports",

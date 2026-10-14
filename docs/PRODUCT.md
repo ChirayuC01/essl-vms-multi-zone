@@ -14,7 +14,7 @@ terminal opens its own barrier on a face match; the system decides only who
 is loaded.
 
 Records are never deleted. Photographs and documents stay on the site's own
-server.
+server. The one exception is **erasure on request** (§10).
 
 ## 2. Site topology (Phase 1 — implemented)
 
@@ -70,7 +70,6 @@ Pass types are a site's own visitor categories, created by an Admin on the
 **Pass types** page. Nothing is pre-seeded and no type is named in code. Each
 defines:
 
-- short- or long-term
 - allowed entry modes (single / multi)
 - whether a host must Clear it
 - for single entry, whether the exit needs the exit code and at which
@@ -104,13 +103,13 @@ forms show the latest allowed end before saving.
 **Recommended setup for the first two-zone site.** An Admin creates these;
 they're configuration, not built in:
 
-| Pass type | Kind | Entry | Host Clear | Max days | Required fields | Hidden | Credential |
-|---|---|---|---|---|---|---|---|
-| Planned visitor | short | single, multi | yes | 1 | mobile, company, Govt ID number | — | — |
-| Walk-in | short | single, multi | yes (setting) | 1 | mobile, company | — | — |
-| Sub-contractor staff | long | multi (single if wanted) | no | 90 | mobile, email, company, Govt ID number, police clearance | — | — |
-| CHA / customer rep | long | multi | no | 90 | as sub-contractor, plus credential number and expiry | — | "BCBA pass", caps validity |
-| Customs official | long | multi | no | Security decides | designation | mobile, company, department | — |
+| Pass type | Entry | Host Clear | Max days | Required fields | Hidden | Credential |
+|---|---|---|---|---|---|---|
+| Planned visitor | single, multi | yes | 1 | mobile, company, Govt ID number | — | — |
+| Walk-in | single, multi | yes (setting) | 1 | mobile, company | — | — |
+| Sub-contractor staff | multi (single if wanted) | no | 90 | mobile, email, company, Govt ID number, police clearance | — | — |
+| CHA / customer rep | multi | no | 90 | as sub-contractor, plus credential number and expiry | — | "BCBA pass", caps validity |
+| Customs official | multi | no | Security decides | designation | mobile, company, department | — |
 
 Daily sub-contractor passes stay outside the system.
 
@@ -339,6 +338,19 @@ confirmed rule. Which zones' exits are code-gated is set per pass type
   the database with `--database-url` on the server, never through the API.
 - Retention periods for photos, documents and history await the site's
   answer; until then nothing is deleted.
+- **Erasure on request** (F2; Administrator only by default, reason
+  mandatory). Wipes the person's name ("Erased person"), contact details,
+  every ID number, vehicle, credential, photo and cached face template, every
+  document file, their visit requests' name, mobile, email, form and selfie,
+  and the recipient and text of messages sent to them. Keeps the row and
+  terminal ID (never reused), category, company and department, passes,
+  punches, consent records (proof of consent) and the audit trail. Refused
+  while a pass is live, and for an employee not yet resigned. An erased
+  person can't be edited, reactivated or given a pass; if they return they
+  are registered afresh. Older audit rows can still name them (see
+  `KNOWN_ISSUES.md`).
+- **Deactivate** (visitors; employees use Resign) hides a person from lists
+  and passes and keeps everything; **Reactivate** reverses it.
 - Terminals shared with employees: only IDs matching a configured pattern are
   ever collected (carried over from the 0.4.x shared-terminal analysis in
   `legacy/DPDP_SHARED_TERMINAL_RISK.md`).

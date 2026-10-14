@@ -147,6 +147,12 @@ carried at the top; their full history is in `legacy/`.
 | 2026-10-14 | Person details report: new cell `people_export:view`, Administrator only; Govt ID, Aadhaar and PAN masked in SQL (first 2 + last 2), so the CSV never holds a full number | Bulk personal data; rule #12 | F3 F-h |
 | 2026-10-14 | Device roster in two-zone reads `pass_gate` (loading/loaded) for visitors, not PROVISION commands | Gates are the two-zone truth | F3 F-h |
 | 2026-10-14 | The Monthly Status Excel always lays out at least 31 day columns, like the PDF and the eTimeTrackLite original | A range under 8 days crashed the 0.4.24 Excel export (negative column) | F3 F-f |
+| 2026-10-14 | Erasure scope: wipe identity, photo and template, document files, the person's visit-request identity/form/selfie, and messages addressed to them; keep row, ID, category, company/department, passes, punches, consent records and the audit trail. Refused for a live pass or an unresigned employee. New cell `people_erasure:delete`; the PERSON_ERASED audit holds the reason and counts, never the erased values | DPDP erasure while keeping accountability and visit counts | F2 #1b |
+| 2026-10-14 | Register person issues a visitor's ID from the same counter and checks as Clear when none is sent; the API still accepts an explicit ID (imports, older clients). Issuing skips numbers held by a person **or by a waiting hand enrolment's photo** | One counter, no clashes with a face already on a terminal | F2 #2 |
+| 2026-10-14 | Visitors are deactivated / reactivated on their page (`people:delete`); employees keep Resign / Rehire. An erased person can never be reactivated | One way out and back per category | F2 #1a |
+| 2026-10-14 | Pass type "Kind" (short/long-term) removed from the console; the column and API field stay (additive) but nothing reads them | It was a label only; one visit vs. a period is what entry modes and maximum validity decide | Owner |
+| 2026-10-14 | Erasure stays alongside Deactivate: Deactivate is the everyday removal (data kept), Erase the Administrator-only answer to a formal DPDP erasure request | Deactivating keeps the personal data; only erasure satisfies a request | Owner |
+| 2026-10-14 | Zones move to their own page out of Devices; to be done with the UI redesign | Zones are site layout, not terminal settings | Owner |
 
 ## Open (awaiting client)
 

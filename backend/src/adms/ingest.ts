@@ -284,6 +284,8 @@ export async function ingestAttlog(
     rows.push({
       esslUserId: rec.pin,
       deviceId: device.id,
+      // F3 F-z: the zone as it is now, from the row already loaded.
+      zoneId: device.zoneId,
       punchedAtDevice,
       punchedAtUtc,
       statusCode: rec.statusCode,

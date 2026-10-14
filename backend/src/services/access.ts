@@ -90,6 +90,12 @@ export const RESOURCES = {
     actions: ["delete"],
     notes: { delete: "discard a hand enrolment: photo and terminal entry" },
   },
+  people_export: {
+    label: "Person details report",
+    group: "Reports",
+    actions: ["view"],
+    notes: { view: "bulk export of personal details (ID numbers masked)" },
+  },
   passes_force_end: {
     label: "Remove someone still inside",
     group: "Gate",

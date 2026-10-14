@@ -629,6 +629,10 @@ model PunchEvent {
   // ingestion must never fail on an unknown user.
   esslUserId      String          @map("essl_user_id")
   deviceId        String          @map("device_id")
+  // The terminal's zone at the moment of the punch (F3 F-z), so attendance by
+  // zone stays right after a terminal moves or a zone is re-parented. Not a
+  // relation: history must survive any later zone change.
+  zoneId          String?         @map("zone_id")
   punchedAtDevice DateTime        @map("punched_at_device") // as reported (device-local)
   punchedAtUtc    DateTime        @map("punched_at_utc") // normalised on ingest
   statusCode      Int?            @map("status_code") // ATTLOG field 3
@@ -646,6 +650,7 @@ model PunchEvent {
 
   @@index([esslUserId])
   @@index([processed])
+  @@index([zoneId])
   @@map("punch_event")
 }
 

@@ -3,8 +3,10 @@ import { z } from "zod";
 import { config } from "../config/index.js";
 import { REPORTS, findReport, runReport, runReportAll, type ReportFilters } from "../reports/registry.js";
 import { prisma } from "../db/index.js";
-import { hasPermission } from "./permissions.js";
+import { hasPermission, requirePermission } from "./permissions.js";
 import { getBranding } from "../services/branding.js";
+import { loadMonthlyStatus } from "../services/monthly-status.js";
+import { toExcel, toPdf } from "../reports/monthly-status-render.js";
 
 // Reporting endpoints (Phase 4 Milestone 20).
 //
@@ -76,10 +78,23 @@ const querySchema = z.object({
   companyId: z.string().min(1).optional(),
   departmentId: z.string().min(1).optional(),
   category: z.enum(["EMPLOYEE", "VISITOR"]).optional(),
+  search: z.string().trim().min(1).max(100).optional(),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(200).default(50),
   format: z.enum(["json", "csv"]).default("json"),
 });
+
+const monthlyStatusSchema = z.object({
+  from: z.string().regex(DATE),
+  to: z.string().regex(DATE),
+  category: z.enum(["EMPLOYEE", "VISITOR"]).optional(),
+  companyId: z.string().min(1).optional(),
+  departmentId: z.string().min(1).optional(),
+  search: z.string().trim().min(1).max(100).optional(),
+  personId: z.string().min(1).optional(),
+  format: z.enum(["xlsx", "pdf"]),
+});
+const MAX_MONTHLY_DAYS = 31;
 
 /**
  * Does this value risk being executed as a spreadsheet formula?
@@ -173,6 +188,33 @@ export async function reportRoutes(app: FastifyInstance): Promise<void> {
       // unattended" is one of the more useful things to isolate.
       actors: actors.map((a) => ({ id: a.id ?? "system", email: a.email ?? "system" })),
     });
+  });
+
+  // The Monthly Status grid (F3 F-f) is a layout, not rows, so it is
+  // rendered here rather than through the registry's table/CSV path.
+  // Registered before `/reports/:key` so that route never shadows it.
+  app.get("/reports/monthly-status", { preHandler: requirePermission("reports:view") }, async (request, reply) => {
+    const parsed = monthlyStatusSchema.safeParse(request.query);
+    if (!parsed.success) return reply.code(400).send({ error: "validation", issues: parsed.error.issues });
+    const { format, ...filters } = parsed.data;
+    const span = (Date.parse(filters.to) - Date.parse(filters.from)) / 86_400_000 + 1;
+    if (span < 1) return reply.code(400).send({ error: "`from` is after `to`" });
+    if (span > MAX_MONTHLY_DAYS) return reply.code(400).send({ error: `pick at most ${MAX_MONTHLY_DAYS} days` });
+
+    const now = new Date();
+    const report = await loadMonthlyStatus(filters, IST_DATE.format(now));
+    const meta = { printedAt: new Date(now.getTime() + 330 * 60_000), generatedBy: request.operator?.email ?? "VMS" };
+    const name = `monthly-status-${filters.from}-to-${filters.to}`;
+    if (format === "pdf") {
+      return reply
+        .header("Content-Type", "application/pdf")
+        .header("Content-Disposition", `attachment; filename="${name}.pdf"`)
+        .send(await toPdf(report, meta));
+    }
+    return reply
+      .header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+      .header("Content-Disposition", `attachment; filename="${name}.xlsx"`)
+      .send(await toExcel(report, meta));
   });
 
   app.get("/reports/:key", async (request, reply) => {

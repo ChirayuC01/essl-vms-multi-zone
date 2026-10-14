@@ -32,9 +32,11 @@ export interface ReportFilters {
   companyId?: string | undefined;
   departmentId?: string | undefined;
   category?: "EMPLOYEE" | "VISITOR" | undefined;
+  /** Free text matched against a person's name or terminal ID (F3 F-h). */
+  search?: string | undefined;
 }
 
-export type FilterName = "dateRange" | "person" | "device" | "actor" | "action" | "company" | "department" | "category";
+export type FilterName = "dateRange" | "person" | "device" | "actor" | "action" | "company" | "department" | "category" | "search";
 
 export interface ReportColumn {
   key: string;
@@ -78,6 +80,22 @@ const eqActor = (col: Prisma.Sql, id?: string) =>
       : Prisma.sql`AND ${col} = ${id}`;
 const eqAction = (col: Prisma.Sql, action?: string) =>
   action ? Prisma.sql`AND ${col} = ${action}` : Prisma.empty;
+
+// Substring on name or terminal ID. LIKE metacharacters are escaped so a
+// typed `%` or `_` matches itself rather than everything.
+const matchesSearch = (name: Prisma.Sql, pin: Prisma.Sql, q?: string) => {
+  if (!q) return Prisma.empty;
+  const pattern = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+  return Prisma.sql`AND (${name} ILIKE ${pattern} OR ${pin} ILIKE ${pattern})`;
+};
+
+// A saved ID number as every screen shows it: first 2 and last 2 characters
+// (CLAUDE.md #12, same as `maskId`). Done in SQL so neither the table nor the
+// CSV ever carries the full number.
+const masked = (col: Prisma.Sql) => Prisma.sql`CASE
+  WHEN ${col} IS NULL OR ${col} = '' THEN NULL
+  WHEN LENGTH(${col}) <= 4 THEN REPEAT('*', LENGTH(${col}))
+  ELSE LEFT(${col}, 2) || REPEAT('*', LENGTH(${col}) - 4) || RIGHT(${col}, 2) END`;
 
 // Database audit/application timestamps are UTC. Report date filters are
 // calendar dates entered by Indian operators, so apply the same IST boundary
@@ -142,7 +160,7 @@ export const REPORTS: ReportDef[] = [
     description: "Daily attendance with paired IN/OUT work duration. Use Today, Week, Month, or a custom date range in the report screen.",
     group: "Movement",
     permission: "reports:view",
-    filters: ["dateRange", "person", "device", "company", "department", "category"],
+    filters: ["dateRange", "person", "device", "company", "department", "category", "search"],
     columns: [
       { key: "day", label: "Date" },
       { key: "person", label: "Person" },
@@ -228,8 +246,143 @@ export const REPORTS: ReportDef[] = [
          ${eqValue(Prisma.sql`p."company_id"`, f.companyId)}
          ${eqValue(Prisma.sql`p."department_id"`, f.departmentId)}
          ${eqValue(Prisma.sql`p."category"::text`, f.category)}
+         ${matchesSearch(Prisma.sql`p."name"`, Prisma.sql`a.pin`, f.search)}
        GROUP BY a.day, p."id", p."name", a.pin, p."category", c."name", d."name"
        ORDER BY a.day DESC, p."name" ASC NULLS LAST`,
+  },
+  {
+    key: "punch-log",
+    title: "Punch log",
+    description:
+      "Every individual punch: the time, IN or OUT, which terminal and its zone at the time. Raw punches only — once retention has summarised a day, its individual times are gone and only the counts in Attendance remain.",
+    group: "Movement",
+    permission: "punches:view",
+    filters: ["dateRange", "person", "device", "search"],
+    columns: [
+      { key: "day", label: "Date" },
+      { key: "punched_at", label: "Time" },
+      { key: "direction", label: "Direction" },
+      { key: "device", label: "Terminal" },
+      { key: "zone", label: "Zone" },
+      { key: "person", label: "Person" },
+      { key: "pin", label: "ID" },
+    ],
+    base: (f) => Prisma.sql`
+      SELECT DATE(p."punched_at_device") AS day, p."punched_at_utc" AS punched_at, p."direction",
+             COALESCE(d."name", d."serial_no") AS device, z."name" AS zone, v."id" AS person_id,
+             v."name" AS person, p."essl_user_id" AS pin
+        FROM "punch_event" p
+        JOIN "device" d ON d."id" = p."device_id"
+        LEFT JOIN "zone" z ON z."id" = p."zone_id"
+        LEFT JOIN "person" v ON UPPER(v."essl_user_id") = UPPER(p."essl_user_id")
+       WHERE TRUE
+         ${dateAtLeast(Prisma.sql`DATE(p."punched_at_device")`, f.from)}
+         ${dateAtMost(Prisma.sql`DATE(p."punched_at_device")`, f.to)}
+         ${eqDevice(Prisma.sql`p."device_id"`, f.deviceId)}
+         ${eqPerson(Prisma.sql`v."id"`, f.personId)}
+         ${matchesSearch(Prisma.sql`v."name"`, Prisma.sql`p."essl_user_id"`, f.search)}
+       ORDER BY p."punched_at_utc" DESC, p."id" DESC`,
+  },
+  {
+    key: "person-details",
+    title: "Person details",
+    description:
+      "One row per person with identity, contact and their latest pass. With a date range, only people issued a pass in that range, showing the latest pass from it. ID numbers are masked. Administrators only by default, because it exports personal details in bulk.",
+    group: "People",
+    permission: "people_export:view",
+    filters: ["dateRange", "person", "company", "department", "category", "search"],
+    columns: [
+      { key: "person", label: "Name" },
+      { key: "pin", label: "ID" },
+      { key: "category", label: "Category" },
+      { key: "pass_type", label: "Pass type" },
+      { key: "company", label: "Company" },
+      { key: "department", label: "Department" },
+      { key: "mobile", label: "Mobile" },
+      { key: "govt_id_number", label: "Govt ID" },
+      { key: "aadhar_number", label: "Aadhaar" },
+      { key: "pan_number", label: "PAN" },
+      { key: "pass_issued_at", label: "Pass issued" },
+      { key: "pass_valid_until", label: "Pass valid until" },
+      { key: "purpose_of_visit", label: "Purpose" },
+      { key: "state", label: "Pass state" },
+    ],
+    base: (f) => Prisma.sql`
+      SELECT v."id" AS person_id, v."name" AS person, v."essl_user_id" AS pin, v."category",
+             pt."name" AS pass_type, c."name" AS company, dp."name" AS department, v."mobile",
+             ${masked(Prisma.sql`v."govt_id_number"`)} AS govt_id_number,
+             ${masked(Prisma.sql`v."aadhar_number"`)} AS aadhar_number,
+             ${masked(Prisma.sql`v."pan_number"`)} AS pan_number,
+             e."created_at" AS pass_issued_at, e."retention_expires_at" AS pass_valid_until,
+             e."purpose_of_visit", e."state"
+        FROM "person" v
+        LEFT JOIN "pass_type" pt ON pt."id" = v."pass_type_id"
+        LEFT JOIN "company" c ON c."id" = v."company_id"
+        LEFT JOIN "department" dp ON dp."id" = v."department_id"
+        ${f.from || f.to ? Prisma.sql`JOIN` : Prisma.sql`LEFT JOIN`} LATERAL (
+          SELECT x."created_at", x."retention_expires_at", x."purpose_of_visit", x."state"
+            FROM "entry" x
+           WHERE x."person_id" = v."id"
+             ${dateAtLeast(istDate(Prisma.sql`x."created_at"`), f.from)}
+             ${dateAtMost(istDate(Prisma.sql`x."created_at"`), f.to)}
+           ORDER BY x."created_at" DESC
+           LIMIT 1
+        ) e ON TRUE
+       WHERE TRUE
+         ${eqPerson(Prisma.sql`v."id"`, f.personId)}
+         ${eqValue(Prisma.sql`v."company_id"`, f.companyId)}
+         ${eqValue(Prisma.sql`v."department_id"`, f.departmentId)}
+         ${eqValue(Prisma.sql`v."category"::text`, f.category)}
+         ${matchesSearch(Prisma.sql`v."name"`, Prisma.sql`v."essl_user_id"`, f.search)}
+       ORDER BY v."name" ASC`,
+  },
+  {
+    key: "device-roster",
+    title: "Device roster",
+    description:
+      "Who VMS has loaded, or is loading, on each terminal: Employees with permanent access, and visitors whose pass gate is loading or loaded. This is what VMS believes, not a read of the terminal — reconciliation and the drift alerts cover a terminal that disagrees.",
+    group: "People",
+    permission: "reports:view",
+    filters: ["device", "person", "company", "category", "search"],
+    columns: [
+      { key: "device", label: "Terminal" },
+      { key: "zone", label: "Zone" },
+      { key: "person", label: "Person" },
+      { key: "pin", label: "ID" },
+      { key: "category", label: "Category" },
+      { key: "company", label: "Company" },
+      { key: "department", label: "Department" },
+      { key: "status", label: "Status" },
+      { key: "since", label: "Since" },
+    ],
+    base: (f) => Prisma.sql`
+      SELECT COALESCE(dv."name", dv."serial_no") AS device, z."name" AS zone, v."id" AS person_id,
+             v."name" AS person, v."essl_user_id" AS pin, v."category", c."name" AS company,
+             dp."name" AS department, r.status, r.since
+        FROM (
+          SELECT a."device_id", a."person_id",
+                 CASE WHEN a."provisioned" THEN 'LOADED' ELSE 'LOADING' END AS status,
+                 a."assigned_at" AS since
+            FROM "employee_device_access" a
+           WHERE a."desired_access"
+          UNION ALL
+          SELECT g."device_id", e."person_id", g."state"::text, COALESCE(g."loaded_at", g."load_at")
+            FROM "pass_gate" g
+            JOIN "entry" e ON e."id" = g."entry_id"
+           WHERE g."state" IN ('LOADING'::"GateState", 'LOADED'::"GateState")
+        ) r
+        JOIN "device" dv ON dv."id" = r."device_id"
+        LEFT JOIN "zone" z ON z."id" = dv."zone_id"
+        JOIN "person" v ON v."id" = r."person_id"
+        LEFT JOIN "company" c ON c."id" = v."company_id"
+        LEFT JOIN "department" dp ON dp."id" = v."department_id"
+       WHERE TRUE
+         ${eqDevice(Prisma.sql`r."device_id"`, f.deviceId)}
+         ${eqPerson(Prisma.sql`v."id"`, f.personId)}
+         ${eqValue(Prisma.sql`v."company_id"`, f.companyId)}
+         ${eqValue(Prisma.sql`v."category"::text`, f.category)}
+         ${matchesSearch(Prisma.sql`v."name"`, Prisma.sql`v."essl_user_id"`, f.search)}
+       ORDER BY device ASC, v."name" ASC`,
   },
   {
     key: "daily-movement",

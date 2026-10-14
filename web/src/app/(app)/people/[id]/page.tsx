@@ -18,6 +18,8 @@ import {
   type PassTypeList,
 } from "@/lib/api";
 import { DocumentsCard } from "@/components/documents-card";
+import { PersonMovement } from "@/components/person-movement";
+import { PersonReports } from "@/components/person-reports";
 import { IssuePassForm } from "@/components/issue-pass-form";
 import { ZonePicker } from "@/components/zone-picker";
 import { PassGates } from "@/components/pass-gates";
@@ -555,6 +557,9 @@ export default function PersonDetailPage() {
         )}
       </Card>
 
+      {/* F3 F-g: this person's ins and outs, and their reports. */}
+      {can("reports:view") && can("punches:view") && <PersonMovement personId={person.id} />}
+      {can("reports:view") && <PersonReports personId={person.id} employee={person.category === "EMPLOYEE"} />}
       <PersonHistory personId={person.id} />
     </div>
   );

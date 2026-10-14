@@ -122,12 +122,13 @@ export async function zoneRoutes(app: FastifyInstance): Promise<void> {
     const { id } = request.params as { id: string };
     const zone = await prisma.zone.findUnique({ where: { id } });
     if (!zone) return reply.code(404).send({ error: "zone not found" });
-    const [children, devices, passes, requests, passTypes] = await Promise.all([
+    const [children, devices, passes, requests, passTypes, punches] = await Promise.all([
       prisma.zone.count({ where: { parentZoneId: id } }),
       prisma.device.count({ where: { zoneId: id } }),
       prisma.entry.count({ where: { zoneIds: { has: id } } }),
       prisma.visitRequest.count({ where: { zoneIds: { has: id } } }),
       prisma.passType.count({ where: { exitCodeZoneIds: { has: id } } }),
+      prisma.punchEvent.count({ where: { zoneId: id } }),
     ]);
     const used = [
       children && "zones inside it",
@@ -135,6 +136,7 @@ export async function zoneRoutes(app: FastifyInstance): Promise<void> {
       passes && "passes",
       requests && "visit requests",
       passTypes && "pass types' exit-code settings",
+      punches && "punches",
     ].filter(Boolean);
     if (used.length > 0) return reply.code(409).send({ error: `this zone has been used (${used.join(", ")}); deactivate it instead` });
     await prisma.$transaction([

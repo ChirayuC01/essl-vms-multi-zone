@@ -1111,3 +1111,48 @@ Plan: `PLAN.md` § F3 (F-a, F-j, F-m), ported from 0.4.21 / 0.4.24.
   for Security. Enrol an ID by hand on a terminal → it appears under
   Unregistered people → Delete → removed from the terminal, photo gone. Any
   form with a missing field now names it.
+
+### 2026-10-14 — F3 step 3: zone on every punch, new reports, person movement, Monthly Status
+
+Plan: `PLAN.md` § F3 (F-z, F-h, F-g, F-f), ported from 0.4.24.
+
+- **F-z:** `punch_event.zone_id` set at ingest from the cached terminal row
+  (cache is invalidated on a zone change); migration
+  `20261014150000_punch_zone` backfills existing punches from each
+  terminal's current zone and indexes it. A zone with punches can no longer
+  be deleted.
+- **F-h** (`reports/registry.ts`): `search` filter (name or ID, LIKE
+  metacharacters escaped) on Attendance and the new reports. New reports:
+  **Punch log** (`punches:view`, with zone), **Person details** (new cell
+  `people_export:view`, Administrator only; Govt ID / Aadhaar / PAN masked in
+  SQL), **Device roster** (employee access + visitor gates loading/loaded,
+  with zone). CSV already exported every row up to the cap. Reports page:
+  search box and terminal filter.
+- **F-g:** person page panels `components/person-movement.tsx` (ins and outs
+  for a date range: per-day Attendance + each punch with terminal and zone,
+  CSV) and `components/person-reports.tsx` (every report with a person
+  filter; Monthly Status for employees).
+- **F-f:** `services/monthly-status.ts` (no shifts: P / A, first in, last
+  out, paired duration; punches from top-level or unset zones only; summary
+  fallback) and `reports/monthly-status-render.ts` (Excel via exceljs, PDF via
+  **pdfkit 0.17**, new dependency + `@types/pdfkit`);
+  `GET /api/reports/monthly-status` (`reports:view`, ≤ 31 days). Reports page
+  card. `build-package.mjs` copies pdfkit's `data` next to the bundle and
+  skips stale `query_engine-*.tmp<N>` files.
+- **Bug found in 0.4.24 while porting:** the Excel layout put "Printed On"
+  7 columns from the right edge, so ranges under 8 days asked for a negative
+  column and failed. Two-zone always lays out 31 day columns (as the PDF
+  does). Recorded in `KNOWN_ISSUES.md` for the single-zone product.
+- Tests: unit `monthly-status.test.ts` (7). e2e section 39 (punch zone stamp;
+  outer IN → yard trip → outer OUT = one 8 h day; Excel `PK` and PDF `%PDF`
+  downloads; 31-day cap; Punch log search with zones; Person details masked
+  in table and CSV and Administrator-only; Device roster with zone;
+  case-insensitive search; a typed `%` matches itself).
+- **Verified:** typecheck PASS; `npm test` **118/118**; `verify:e2e` **596
+  passed, 0 failed**; web lint + build PASS. Migration applied to the dev
+  database.
+- Owner verification: Reports → Monthly status → Excel and PDF for this
+  month and for a single day (open both); Punch log / Person details / Device
+  roster with a search; a person's page → Ins and outs (zone column) and
+  Reports downloads. An employee who visits the yard should still show one
+  working day from the outer gate.

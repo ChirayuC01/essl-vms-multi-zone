@@ -48,6 +48,7 @@ import { expireRequests } from "../src/services/visit-review.js";
 import { issueDueExitCodes } from "../src/services/exit-codes.js";
 import { outageCheck } from "../src/services/outages.js";
 import { reconcileSweep } from "../src/services/reconcile.js";
+import { loadMonthlyStatus } from "../src/services/monthly-status.js";
 
 const SN = "E2ESIMDEVICE01";
 // IDs are TEXT. Numeric-looking ones are still the common case, and at least
@@ -4865,6 +4866,66 @@ async function main() {
     check("an ID outside every terminal's patterns is never sent to a terminal (rule #7)", outside.statusCode === 200 && JSON.parse(outside.body).devicesQueued === 0, outside.body);
     check("a registered person's ID cannot be discarded here", (await fx("DELETE", "/api/enrollments/unclaimed/91001")).statusCode === 409);
     await drainZones();
+  }
+
+  // ======================================================================
+  section("39. Zone on every punch, new reports, Monthly Status (F3 F-z, F-h, F-f)");
+  // ======================================================================
+  {
+    const rq = (url: string, as = token) => app.inject({ method: "GET", url, headers: auth(as) });
+    const outerIn = await prisma.device.findUniqueOrThrow({ where: { serialNo: "E2EZONEOUTERIN" } });
+    const outerOut = await prisma.device.findUniqueOrThrow({ where: { serialNo: "E2EZONEOUTEROUT" } });
+    const yardIn = await prisma.device.findUniqueOrThrow({ where: { serialNo: "E2EZONEYARDIN" } });
+    const yardOut = await prisma.device.findUniqueOrThrow({ where: { serialNo: "E2EZONEYARDOUT" } });
+
+    // F-z: ingestion stamps the terminal's zone on the punch.
+    const stampLocal = new Date(Date.now() + TZ_OFFSET * 60_000 - 3_600_000).toISOString().replace("T", " ").slice(0, 19);
+    await app.inject({ method: "POST", url: `/iclock/cdata.aspx?SN=${yardIn.serialNo}&table=ATTLOG`, payload: `ZSTAMP1\t${stampLocal}\t0\t15\t0\t0` });
+    const stamped = await prisma.punchEvent.findFirst({ where: { esslUserId: "ZSTAMP1" } });
+    check("a punch records its terminal's zone (F-z)", stamped !== null && stamped.zoneId === yardIn.zoneId && yardIn.zoneId !== null, JSON.stringify(stamped));
+
+    // An employee's day: in at the outer gate, a yard trip, out at the outer gate.
+    const msEmp = JSON.parse((await app.inject({ method: "POST", url: "/api/people", headers: auth(token), payload: { ...registration("Monthly Status Employee", "MSEMP1"), category: "EMPLOYEE", deviceIds: [outerIn.id] } })).body) as { id: string };
+    const ist = new Date(Date.now() + 330 * 60_000 - 86_400_000);
+    const day = ist.toISOString().slice(0, 10);
+    const at = (hhmm: string) => new Date(`${day}T${hhmm}:00Z`);
+    const punch = (d: { id: string; zoneId: string | null }, hhmm: string, direction: "IN" | "OUT") => ({
+      esslUserId: "MSEMP1", deviceId: d.id, zoneId: d.zoneId, punchedAtDevice: at(hhmm), punchedAtUtc: new Date(at(hhmm).getTime() - 330 * 60_000),
+      direction, raw: `e2e ${hhmm}`, rawRecordHash: `e2e-ms-${day}-${hhmm}`, processed: true,
+    });
+    await prisma.punchEvent.createMany({
+      data: [punch(outerIn, "09:00", "IN"), punch(yardIn, "10:00", "IN"), punch(yardOut, "11:00", "OUT"), punch(outerOut, "17:00", "OUT")],
+      skipDuplicates: true,
+    });
+    const month = await loadMonthlyStatus({ from: day, to: day, personId: msEmp.id }, day);
+    const msDay = month.people[0]?.days[0];
+    check("Monthly Status: the day runs outer IN to outer OUT; the yard trip is not a second arrival", msDay?.status === "P" && msDay.workedMinutes === 8 * 60 && msDay.inAt === at("09:00").getTime(), JSON.stringify(msDay));
+
+    const from = `from=${day}&to=${day}`;
+    const xlsx = await rq(`/api/reports/monthly-status?${from}&format=xlsx`);
+    check("Monthly Status downloads as Excel", xlsx.statusCode === 200 && String(xlsx.headers["content-type"]).includes("spreadsheetml") && xlsx.rawPayload.subarray(0, 2).toString() === "PK", xlsx.body.slice(0, 120));
+    const pdf = await rq(`/api/reports/monthly-status?${from}&format=pdf`);
+    check("...and as PDF", pdf.statusCode === 200 && pdf.rawPayload.subarray(0, 4).toString() === "%PDF", pdf.body.slice(0, 120));
+    check("...at most 31 days", (await rq(`/api/reports/monthly-status?from=2026-01-01&to=2026-02-15&format=pdf`)).statusCode === 400);
+
+    // F-h: punch log with zones, search, person details masked, device roster.
+    const log = await rq(`/api/reports/punch-log?${from}&search=MSEMP`);
+    const logRows = log.statusCode === 200 ? (JSON.parse(log.body).rows as { pin: string; zone: string | null }[]) : [];
+    check("Punch log finds the person by search, with each punch's zone", logRows.length === 4 && logRows.every((r) => r.pin === "MSEMP1") && logRows.some((r) => r.zone === "E2E Yard"), log.body.slice(0, 300));
+    const details = await rq(`/api/reports/person-details?search=MSEMP1`);
+    const detail = details.statusCode === 200 ? (JSON.parse(details.body).rows as { aadhar_number: string | null }[])[0] : undefined;
+    check("Person details masks ID numbers as first 2 + last 2 (rule #12)", detail !== undefined && /^\d{2}\*{8}\d{2}$/.test(detail.aadhar_number ?? ""), details.body.slice(0, 300));
+    const detailsCsv = await rq(`/api/reports/person-details?search=MSEMP1&format=csv`);
+    check("...in the CSV too", detailsCsv.statusCode === 200 && /\d{2}\*{8}\d{2}/.test(detailsCsv.body) && !/\b2\d{11}\b/.test(detailsCsv.body));
+    const securityTok3 = JSON.parse((await app.inject({ method: "POST", url: "/api/auth/login", payload: { email: "security@vms.local", password: "role-password" } })).body).token as string;
+    check("...and is Administrator only by default", (await rq(`/api/reports/person-details`, securityTok3)).statusCode === 403);
+    const roster = await rq(`/api/reports/device-roster?search=MSEMP1`);
+    const rosterRows = roster.statusCode === 200 ? (JSON.parse(roster.body).rows as { device: string; zone: string | null }[]) : [];
+    check("Device roster lists the employee on the terminal they were given, with its zone", rosterRows.length === 1 && rosterRows[0]?.zone === "E2E Premise", roster.body.slice(0, 300));
+    const attendance = await rq(`/api/reports/attendance?${from}&search=msemp`);
+    check("Attendance can be searched by ID, case-insensitively", attendance.statusCode === 200 && (JSON.parse(attendance.body).rows as unknown[]).length === 1, attendance.body.slice(0, 200));
+    const literal = await rq(`/api/reports/attendance?${from}&search=%25`);
+    check("...a typed % matches itself, not everything", literal.statusCode === 200 && (JSON.parse(literal.body).rows as unknown[]).length === 0);
   }
 
   // ======================================================================

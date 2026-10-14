@@ -143,6 +143,10 @@ carried at the top; their full history is in `legacy/`.
 | 2026-10-14 | Searchable dropdowns for every list that comes from data (companies, departments, pass types, hosts, zones, report filters); fixed two- to four-option lists (category, entry mode, kind, yes/no, status, field rule) and the admin-only role pickers stay native | Search only helps where the list grows | F2 #5 |
 | 2026-10-14 | Removing someone still inside is a `force` on the normal de-provision, gated by a new cell `passes_force_end:update` (Administrator only by default), with a mandatory reason; it clears the location and every gate. Without `force`, inside is still refused and the engine never removes anyone inside | 0.4.21 field need (left without punching out); rule #9 holds by default | F3 F-a |
 | 2026-10-14 | Discarding a hand enrolment is a new cell `unclaimed:delete` (Administrator only); terminal removals go only to terminals whose ID patterns cover the ID, best-effort | 0.4.24, plus rule #7 (never touch IDs outside the patterns) | F3 F-j |
+| 2026-10-14 | Monthly Status counts punches whose stamped zone is top level or unset (no zones / unplaced terminal); days already summarised by retention use the summary, which has no zone | Matches "only the outer gate is the working day"; unplaced terminals are counted rather than silently dropped | F3 F-f |
+| 2026-10-14 | Person details report: new cell `people_export:view`, Administrator only; Govt ID, Aadhaar and PAN masked in SQL (first 2 + last 2), so the CSV never holds a full number | Bulk personal data; rule #12 | F3 F-h |
+| 2026-10-14 | Device roster in two-zone reads `pass_gate` (loading/loaded) for visitors, not PROVISION commands | Gates are the two-zone truth | F3 F-h |
+| 2026-10-14 | The Monthly Status Excel always lays out at least 31 day columns, like the PDF and the eTimeTrackLite original | A range under 8 days crashed the 0.4.24 Excel export (negative column) | F3 F-f |
 
 ## Open (awaiting client)
 

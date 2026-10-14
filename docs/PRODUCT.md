@@ -388,6 +388,16 @@ Reports page, grouped. New for the two-zone product:
 | Blacklist history | audit viewers | every blacklisting and lift, operator, reason |
 | Outages and releases | Security, Security In-charge | each outage and who was released — for the admin-card register |
 | Messages sent | Administrator | every SMS/email, recipient, status — **without the text** (it can hold codes) |
+| Punch log (F3) | Punch log viewers | every punch: time, IN/OUT, terminal, and the terminal's zone at the time |
+| Person details (F3) | Administrator | one row per person with contact, pass type and latest pass; ID numbers masked |
+| Device roster (F3) | report viewers | who VMS has loaded, or is loading, on each terminal, with its zone |
+| Monthly Status (F3) | report viewers | eTimeTrackLite-style grid per person, up to 31 days, Excel / PDF: P / A, first in, last out, duration. Only top-level zones' gates count, so a yard trip is not a second arrival. Late, early, OT and weekly offs await shifts (F4) |
+
+Attendance, Punch log, Person details and Device roster can be searched by
+name or ID. A person's page shows their ins and outs for a date range (with
+the zone of each punch) and downloads every report that has a person filter.
+Every punch records its terminal's zone at the time (F3), so attendance by
+zone stays right after a terminal moves or a zone is re-parented.
 
 Every report exports to CSV; no saved ID number appears in any of them.
 

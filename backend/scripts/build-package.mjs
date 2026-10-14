@@ -59,6 +59,12 @@ async function main() {
 
   copyPrismaClient();
 
+  // pdfkit (Monthly Status PDF, F3 F-f) reads its built-in font metrics from
+  // `${__dirname}/data/*.afm` at runtime, and __dirname is this directory once
+  // bundled. So they go to dist-package\data — NOT backend\data, which holds
+  // the site's pgdata and photos.
+  cpSync(path.join(backendRoot, "node_modules", "pdfkit", "js", "data"), path.join(outDir, "data"), { recursive: true });
+
   console.log(`\nVMS ${productVersion} package built: ${path.join(outDir, "server.cjs")}`);
   console.log("Run with: node server.cjs   (from inside the output directory)");
 }
@@ -79,7 +85,9 @@ function copyPrismaClient() {
 
   mkdirSync(path.join(outNodeModules, "@prisma"), { recursive: true });
   cpSync(prismaClientPkg, path.join(outNodeModules, "@prisma", "client"), { recursive: true });
-  cpSync(dotPrismaClient, path.join(outNodeModules, ".prisma", "client"), { recursive: true });
+  // Interrupted `prisma generate` runs leave query_engine-*.tmp<N> copies
+  // (~20 MB each) that used to ship in the payload; never copy them.
+  cpSync(dotPrismaClient, path.join(outNodeModules, ".prisma", "client"), { recursive: true, filter: (src) => !/\.tmp\d+$/.test(src) });
 }
 
 main().catch((err) => {

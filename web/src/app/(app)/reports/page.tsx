@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { getApiBase, getToken, type AuditFacets, type DirectoryList, type ReportList, type ReportRun } from "@/lib/api";
+import { getApiBase, getToken, type AuditFacets, type DeviceList, type DirectoryList, type ReportList, type ReportRun } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
 import { useApi } from "@/lib/swr";
 import { dayOfMonthIst, formatDateInputIst, formatDateTime } from "@/lib/format";
 import { Alert, Badge, Button, Card, Empty, Field, Input, SearchSelect, Select, Table } from "@/components/ui";
@@ -35,6 +36,10 @@ export default function ReportsPage() {
   const [category, setCategory] = useState("");
   const [companyId, setCompanyId] = useState("");
   const [departmentId, setDepartmentId] = useState("");
+  const [search, setSearch] = useState("");
+  const [deviceId, setDeviceId] = useState("");
+  const { data: deviceList } = useApi<DeviceList>("/api/devices");
+  const { can } = useAuth();
   const { data: companies } = useApi<DirectoryList>("/api/companies");
   const { data: departments } = useApi<DirectoryList>("/api/departments");
 
@@ -47,6 +52,8 @@ export default function ReportsPage() {
   if (category) params.set("category", category);
   if (companyId) params.set("companyId", companyId);
   if (departmentId) params.set("departmentId", departmentId);
+  if (search.trim() && selected?.filters.includes("search")) params.set("search", search.trim());
+  if (deviceId && selected?.filters.includes("device")) params.set("deviceId", deviceId);
 
   // Only fetched for the reports that offer these filters, and only by a role
   // allowed to read the audit log at all.
@@ -72,6 +79,7 @@ export default function ReportsPage() {
 
   return (
     <div className="space-y-4">
+      {can("reports:view") && <MonthlyStatusCard companies={companies} departments={departments} />}
       <Card title="Reports">
         {!catalogue ? (
           <Empty>Loading…</Empty>
@@ -170,6 +178,20 @@ export default function ReportsPage() {
             </div>
           )}
 
+          {(selected.filters.includes("search") || selected.filters.includes("device")) && (
+            <div className="mb-3 grid gap-3 sm:grid-cols-3">
+              {selected.filters.includes("search") && (
+                <Field label="Search" hint="Name or ID">
+                  <Input value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} placeholder="e.g. Ramesh or V00012" />
+                </Field>
+              )}
+              {selected.filters.includes("device") && (
+                <Field label="Terminal">
+                  <SearchSelect value={deviceId} onChange={(v) => { setDeviceId(v); setPage(1); }} options={(deviceList?.items ?? []).map((d) => ({ value: d.id, label: d.name ?? d.serialNo }))} emptyLabel="All terminals" />
+                </Field>
+              )}
+            </div>
+          )}
           {(selected.filters.includes("category") || selected.filters.includes("company") || selected.filters.includes("department")) && <div className="mb-3 grid gap-3 sm:grid-cols-3">
             {selected.filters.includes("category") && <Field label="Category"><Select value={category} onChange={(e) => { setCategory(e.target.value); setPage(1); }}><option value="">Employees and visitors</option><option value="EMPLOYEE">Employees</option><option value="VISITOR">Visitors</option></Select></Field>}
             {selected.filters.includes("company") && <Field label="Company"><SearchSelect value={companyId} onChange={(v) => { setCompanyId(v); setPage(1); }} options={(companies?.items ?? []).map((x) => ({ value: x.id, label: x.name }))} emptyLabel="All companies" /></Field>}
@@ -298,5 +320,55 @@ export default function ReportsPage() {
         </Card>
       )}
     </div>
+  );
+}
+
+/**
+ * The eTimeTrackLite-style Monthly Status grid (F3 F-f). A layout rather than
+ * rows, so it downloads as Excel or PDF instead of rendering in the table.
+ * Without shifts for now (F4): P / A, in, out and duration per day.
+ */
+function MonthlyStatusCard({ companies, departments }: { companies?: DirectoryList; departments?: DirectoryList }) {
+  const today = new Date();
+  const [from, setFrom] = useState(formatDateInputIst(new Date(today.getTime() - (dayOfMonthIst(today) - 1) * 86_400_000)));
+  const [to, setTo] = useState(formatDateInputIst(today));
+  const [category, setCategory] = useState("EMPLOYEE");
+  const [companyId, setCompanyId] = useState("");
+  const [departmentId, setDepartmentId] = useState("");
+  const [search, setSearch] = useState("");
+
+  const span = from && to ? (Date.parse(to) - Date.parse(from)) / 86_400_000 + 1 : 0;
+  const invalid = span < 1 ? "Pick a From date on or before the To date." : span > 31 ? "Pick at most 31 days." : null;
+  const params = new URLSearchParams({ from, to, token: getToken() ?? "" });
+  if (category) params.set("category", category);
+  if (companyId) params.set("companyId", companyId);
+  if (departmentId) params.set("departmentId", departmentId);
+  if (search.trim()) params.set("search", search.trim());
+  const href = (format: "xlsx" | "pdf") => `${getApiBase()}/api/reports/monthly-status?${params.toString()}&format=${format}`;
+
+  return (
+    <Card title="Monthly status report">
+      <p className="mb-3 text-sm text-[var(--text-muted)]">
+        Each person&rsquo;s day-by-day status (P / A), first in, last out and duration, laid out like the
+        eTimeTrackLite Monthly Status report. Only the outer zone&rsquo;s gates count, so a trip into an inner
+        zone is not a second arrival. Late, early, overtime and weekly offs need shifts and are not shown yet.
+      </p>
+      <div className="grid gap-3 sm:grid-cols-4">
+        <Field label="From"><Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} /></Field>
+        <Field label="To"><Input type="date" value={to} onChange={(e) => setTo(e.target.value)} /></Field>
+        <Field label="Category"><Select value={category} onChange={(e) => setCategory(e.target.value)}><option value="EMPLOYEE">Employees</option><option value="VISITOR">Visitors</option><option value="">Employees and visitors</option></Select></Field>
+        <Field label="Search"><Input value={search} placeholder="Name or ID…" onChange={(e) => setSearch(e.target.value)} /></Field>
+        <Field label="Company"><SearchSelect value={companyId} onChange={setCompanyId} options={(companies?.items ?? []).map((x) => ({ value: x.id, label: x.name }))} emptyLabel="All companies" /></Field>
+        <Field label="Department"><SearchSelect value={departmentId} onChange={setDepartmentId} options={(departments?.items ?? []).map((x) => ({ value: x.id, label: x.name }))} emptyLabel="All departments" /></Field>
+      </div>
+      {invalid ? (
+        <p className="mt-3 text-sm text-[var(--danger)]">{invalid}</p>
+      ) : (
+        <div className="mt-3 flex gap-2">
+          <a href={href("xlsx")} download><Button variant="primary">Download Excel</Button></a>
+          <a href={href("pdf")} download><Button>Download PDF</Button></a>
+        </div>
+      )}
+    </Card>
   );
 }

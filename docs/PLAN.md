@@ -705,7 +705,7 @@ gate-security and alert-noise fixes the client will hit first.
 
 1. B1, B2, B4, D1–D3 (security and field knowledge), then B3. **Done 14 Oct 2026, awaiting owner verification** (`EXECUTION_LOG.md`).
 2. F-a, F-j, F-m. **Done 14 Oct 2026, awaiting owner verification** (`EXECUTION_LOG.md`).
-3. F-z, F-h, F-g, then F-f.
+3. F-z, F-h, F-g, then F-f. **Done 14 Oct 2026, awaiting owner verification** (`EXECUTION_LOG.md`).
 
 Each step: `npm run typecheck && npm test`, `verify:e2e` with new sections
 (resign across terminals and the punch-triggered removal; sweep rotation;

@@ -137,6 +137,14 @@ Delivered phase by phase; see `PLAN.md` for the exact fields.
 
 From `legacy/SESSION_HANDOFF_PHASE6.md`; each cost real debugging time.
 
+- **pdfkit fonts** (Monthly Status PDF, F3): pdfkit reads its font metrics
+  from `<bundle dir>\data\*.afm` at runtime, so `build-package.mjs` copies
+  them to `dist-package\data` — not `backend\data`, the site's data folder.
+- **Stale Prisma engine copies:** an interrupted `prisma generate` (e.g. while
+  the dev backend holds the engine DLL) leaves `query_engine-*.tmp<N>` files
+  of ~20 MB each in `node_modules\.prisma\client`. `build-package.mjs` now
+  skips them; delete them from the dev tree when convenient.
+
 - **PostgreSQL refuses to run elevated.** The `VmsPostgres` service runs as
   `NT AUTHORITY\NetworkService`, and nothing in the installer may start
   `postgres.exe` from the elevated installer process (`bundled-postgres.mjs

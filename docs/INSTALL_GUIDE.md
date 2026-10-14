@@ -53,6 +53,24 @@ text, their visitor types, zone layout, host list with mobile numbers, and
 Not needed on a client: `DEV_ALLOWED_ORIGINS` (development only). The block
 on the console for anything arriving through Cloudflare is built in.
 
+## Upgrading 0.5.2 → 0.5.3
+
+Same steps as below (back up, verify the SHA-256 in `VERSIONS.md`, run the
+installer as Administrator over the existing install). The services apply
+five additive database changes on start; people, photos, passes, punches and
+settings are kept. Then, as an Admin:
+
+1. Hard-refresh the browser (Ctrl+F5): the console now has a left sidebar.
+2. **Pass types:** open each type that requires the exit code and check
+   *which exits* (they were copied from the zones' old "exit code by
+   default"). A pass with no pass type no longer needs an exit code.
+3. **Zones** now have their own page (Site setup); terminals are still
+   placed into zones on **Devices**.
+4. **Operators:** make sure every host has a phone number (exit codes and
+   arrival messages go there).
+5. Register a test visitor (the ID is issued automatically) and provision
+   them once, to see a face load end to end.
+
 ## Upgrading 0.4.19 → 0.5.0
 
 0.5.0 upgrades an existing site **in place**, keeping every person, photo,

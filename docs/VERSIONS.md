@@ -52,7 +52,7 @@ patch version for every changed installer.
 
 ## The register
 
-> **Current boundary (8 October 2026):** 0.4.19 is the deployed artifact (notes below); 0.5.2 is the two-zone release candidate (0.5.0 + F1, production licence key), built 12 October 2026; do not deploy 0.5.0 or 0.5.1 (development licence key). Earlier: 0.4.18 was the packaged artifact on 10 September. Do not deploy 0.4.14: its frontend baked in `localhost:48102`.
+> **Current boundary (14 October 2026):** 0.4.19 is the deployed single-zone artifact (notes below); 0.5.3 is the two-zone release (built by the owner; supersedes 0.5.2, upgrades it in place). Before it, 0.5.2 was the two-zone release candidate (0.5.0 + F1, production licence key), built 12 October 2026; do not deploy 0.5.0 or 0.5.1 (development licence key). Earlier: 0.4.18 was the packaged artifact on 10 September. Do not deploy 0.4.14: its frontend baked in `localhost:48102`.
 
 | Version | Date | Built from | Installer | Size | Migrations added |
 |---|---|---|---|---|---|
@@ -87,6 +87,34 @@ patch version for every changed installer.
 >
 > This is precisely the failure this document exists to prevent. Fill the row
 > in *at build time*, not afterwards.
+
+## 0.5.3 — first-client feedback (F2), single-zone ports (F3), sidebar, pre-demo sweep
+
+- **To be built by the owner** with `installer/license-public.pem` (the
+  production key in `C:\Secure\VMS-Licensing`). Fill in the commit, size and
+  SHA-256 below at build time.
+- **Upgrades 0.5.2 in place** (same AppId). The `VmsPostgres` service applies
+  five additive migrations on start: `20261014090000_revoked_employee_reconcile`,
+  `20261014120000_pass_type_exit_code_zones`, `20261014130000_host_directory_create`,
+  `20261014150000_punch_zone`, `20261014170000_person_erasure`. Checked on
+  14 October 2026 against a database built at 0.5.2 (commit `368ecf2`) with
+  site-shaped data: pass types needing the code took the zones' default
+  exits, a resigned employee's re-adopted access was repaired, punches took
+  their device's zone, hosts gained `directory:create`; a second start is a
+  no-op. No `.env` change is needed (`RECONCILE_REMOVED_DAYS` defaults to 30).
+- **New dependency** `pdfkit` (Monthly Status PDF): its font files ship in
+  `dist-package\data` (`npm run package` copies them); checked by rendering
+  the PDF and Excel from a bundle built with the package's settings.
+- **Behaviour changes an upgraded site will notice:** a pass with no pass
+  type ("General") no longer needs an exit code; which exits need it is set
+  on each pass type; Zones have their own page; sidebar navigation; Register
+  person issues visitor IDs; console wording (Devices, provision, ID). See
+  `INSTALL_GUIDE.md` § Upgrading 0.5.2 → 0.5.3.
+- Release staging now skips stale `query_engine-*.tmp<N>` files.
+- **Verified before the build:** typecheck PASS; `npm test` 118/118;
+  `verify:e2e` 613/613; web lint + build PASS.
+- **Built:** _commit ___, `installer/Output/vms-setup.exe`, ___ bytes,
+  SHA-256 ___._
 
 ## 0.5.2 — 0.5.1 with the production licence key (release candidate)
 

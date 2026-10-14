@@ -154,7 +154,9 @@ function auditRelease(root) {
 
 // backend/
 copy(path.join(backendRoot, "dist-package"), path.join(releaseRoot, "backend", "dist-package"));
-copy(path.join(backendRoot, "node_modules"), path.join(releaseRoot, "backend", "node_modules"));
+// Interrupted `prisma generate` runs leave query_engine-*.tmp<N> copies
+// (~20 MB each) in node_modules/.prisma/client; 0.4.20 once shipped them.
+copy(path.join(backendRoot, "node_modules"), path.join(releaseRoot, "backend", "node_modules"), { filter: (src) => !/\.tmp\d+$/.test(src) });
 copy(path.join(backendRoot, "package.json"), path.join(releaseRoot, "backend", "package.json"));
 copy(path.join(backendRoot, "package-lock.json"), path.join(releaseRoot, "backend", "package-lock.json"));
 copy(path.join(backendRoot, "prisma", "schema.prisma"), path.join(releaseRoot, "backend", "prisma", "schema.prisma"));

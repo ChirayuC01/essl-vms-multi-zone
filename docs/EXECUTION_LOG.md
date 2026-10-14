@@ -1265,3 +1265,25 @@ Unregistered panels and the "verified" badges.
   device; report value checks use the labels.
 - **Verified:** typecheck PASS; `npm test` 118/118; `verify:e2e` **613
   passed, 0 failed**; web lint + build PASS. No migration.
+
+### 2026-10-14 — 0.5.3 release preparation and upgrade check
+
+- `AppVersion` 0.5.3 (`installer/vms-installer.iss`; same AppId, so it
+  upgrades 0.5.2 in place). `build-release.mjs` skips stale
+  `query_engine-*.tmp<N>` files when staging `node_modules` (eight were
+  present in the dev tree, ~160 MB).
+- **Upgrade 0.5.2 → 0.5.3 checked on a database:** a throwaway database was
+  migrated with 0.5.2's own schema (commit `368ecf2`, git worktree), seeded
+  with site-shaped data (zones with and without the exit-code default,
+  devices placed and unplaced, pass types requiring and not requiring the
+  code, a resigned employee carrying the 0.4.19 re-adoption bug, punches),
+  then migrated with 0.5.3: all five migrations applied; pass types took the
+  default exits, the resigned access was repaired, punches took their
+  device's zone, hosts gained `directory:create`, indexes created; a second
+  run was a no-op. Database, worktree and scratch files removed afterwards.
+- **Packaging checked:** `npm run package` into a scratch folder built 0.5.3
+  with pdfkit's 15 font files beside `server.cjs` and no `.tmp` engine
+  copies; Monthly Status PDF (`%PDF`) and Excel (`PK`) rendered from a
+  bundle built with the package's esbuild settings.
+- Notes: `VERSIONS.md` § 0.5.3 (to be completed at build time),
+  `INSTALL_GUIDE.md` § Upgrading 0.5.2 → 0.5.3.

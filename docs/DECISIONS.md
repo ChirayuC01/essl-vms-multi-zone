@@ -158,8 +158,10 @@ carried at the top; their full history is in `legacy/`.
 | 2026-10-14 | Block / Unblock stays; the "Unregistered people" panel stays on both Dashboard and People; the "Aadhaar verified" / "PAN verified" badges stay, by the client's request | Owner (client requests) | Owner |
 | 2026-10-14 | Reports "On site now" (duplicate of "Inside now, by zone") and "Single-entry blocks" (retired mechanism) removed; report values show the console's wording, never database codes | Pre-demo sweep | Owner |
 | 2026-10-14 | Uploading a photo on the person page re-sends it to devices already holding the face (visitor gates, employee access); the pass panel's separate Retake is removed | The upload used to save only the file, leaving the gate on the old face | Pre-demo sweep |
-| 2026-10-27 | SMS goes through **MSG91 Flow**: MSG91 holds each DLT template (with the site's signature) under its own template ID; we send only the values as `var1`…`varN` in the order of the registered text | No message text or client name in code; DLT wording changes need no release | Owner |
+| 2026-10-27 | SMS goes through **MSG91 Flow**: MSG91 holds each DLT template (with the site's signature) under its own template ID; we send only the values as `var1`…`varN` in the order of the registered text (**superseded the same day** by the sendsms row below) | No message text or client name in code; DLT wording changes need no release | Owner |
 | 2026-10-27 | 11 DLT templates, one per message variant (visit link invite/query; host alert walk-in/planned/automatic-pass-failed split out). The registered wording is kept verbatim in `services/notify.ts` for the Outbox and email; #2 and #6 changed to match the registration | The Outbox must show what the visitor actually got | Owner (DLT registration, 23 Oct) |
+| 2026-10-27 | **0.5.5: SMS goes through MSG91 `api/v2/sendsms`** with the full text, the site's sender ID and the template's **DLT ID** (route 4; `unicode` when the text is not ASCII). Nothing is set up inside MSG91. Every site registers the same 11 wordings; only the **signature** (a setting, e.g. ` - Acme`), sender ID and DLT IDs differ | Same API already proven in the owner's other product; per client it needs only what DLT registration produces; no client name in code | Owner |
+| 2026-10-27 | A site whose DLT reviewer forces a wording change cannot be served until the wording becomes a setting; build that only if it happens | YAGNI; the registration sheet tells the team not to accept wording changes | Owner |
 | 2026-10-27 | MSG91 auth key, template IDs, SMTP server and credentials are **per-site settings** (Settings → Messaging), not code or `.env`; `MESSAGE_TRANSPORT` env removed. Secrets are write-only: never returned by the API or written to the audit log | Each client has its own key and templates; set up a site by filling a form | Owner |
 | 2026-10-27 | One MSG91 account (ours), a **separate auth key per client** | One client's key can be revoked without touching the others | Owner (recommendation) |
 | 2026-10-27 | A delivery failure never fails the action: the link or code stands, the Outbox row is FAILED with the reason. A blank template ID counts as a failure | Losing a visit request to a provider hiccup is worse than a resend | Owner |
@@ -172,7 +174,7 @@ carried at the top; their full history is in `legacy/`.
 - Privacy notice wording and retention periods for photos, documents and history.
 - Documents required per pass type, formats and size limits.
 - Email account (SMS: MSG91, decided 2026-10-27); site domain for the visitor portal.
-- MSG91 template IDs for the 11 DLT templates, and whether `{#uro#}` (template 2) vs `{#urg#}` (3, 6) is intended.
+- Whether `{#uro#}` (template 2) vs `{#urg#}` (3, 6) is intended; DLT acceptance of dates (`24 Oct 2026, 11:00 am`) in `{#alp#}`.
 - Names/phones per role; whether all employees may host.
 - Employee list with zone per person; any existing software on the terminals.
 - Daily sub-contractor pass sentence (cut off in the client's document).

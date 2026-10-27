@@ -67,8 +67,12 @@ const fields = {
   /** "console" records SMS on the Outbox page only; "msg91" sends them. */
   smsTransport: z.enum(["console", "msg91"]).default("console"),
   msg91AuthKey: z.string().trim().max(200).default(""),
-  /** MSG91's own template ID for each DLT template. A blank one is recorded as failed, never sent. */
-  msg91TemplateIds: z.record(z.enum(SMS_TEMPLATE_KEYS), z.string().trim().max(64)).default({}),
+  /** The DLT-registered sender ID (header), e.g. "ABCDEF". */
+  msg91SenderId: z.string().trim().regex(/^[A-Za-z0-9]{0,11}$/, "letters and digits only").default(""),
+  /** Text after every SMS exactly as registered on DLT, e.g. " - Acme". */
+  smsSignature: z.string().max(60).default(""),
+  /** The DLT template ID of each registered template. A blank one is recorded as failed, never sent. */
+  dltTemplateIds: z.record(z.enum(SMS_TEMPLATE_KEYS), z.string().trim().regex(/^\d{0,30}$/, "digits only")).default({}),
   /** Off: no email is sent or recorded; SMS carries everything. */
   emailEnabled: z.boolean().default(false),
   smtpHost: z.string().trim().max(200).default(""),
@@ -113,7 +117,7 @@ export function resolveSettings(stored: unknown): SiteSettings {
 
 /** What a turned-on channel still lacks, or null. Pure, for tests. */
 export function missingForSending(s: SiteSettings): string | null {
-  if (s.smsTransport === "msg91" && !s.msg91AuthKey) return "SMS via MSG91 needs the MSG91 auth key";
+  if (s.smsTransport === "msg91" && (!s.msg91AuthKey || !s.msg91SenderId)) return "SMS via MSG91 needs the MSG91 auth key and the sender ID";
   if (s.emailEnabled && (!s.smtpHost || !s.smtpFrom)) return "email needs the SMTP server and the From address";
   return null;
 }

@@ -43,7 +43,8 @@ test("a channel that is turned on must have what it needs to send", () => {
   assert.equal(s.emailEnabled, false);
   assert.equal(missingForSending(s), null);
   assert.match(missingForSending({ ...s, smsTransport: "msg91" }) ?? "", /auth key/);
-  assert.equal(missingForSending({ ...s, smsTransport: "msg91", msg91AuthKey: "k" }), null);
+  assert.match(missingForSending({ ...s, smsTransport: "msg91", msg91AuthKey: "k" }) ?? "", /sender ID/);
+  assert.equal(missingForSending({ ...s, smsTransport: "msg91", msg91AuthKey: "k", msg91SenderId: "ABCDEF" }), null);
   assert.match(missingForSending({ ...s, emailEnabled: true, smtpHost: "smtp.example.com" }) ?? "", /From/);
 });
 
@@ -54,7 +55,8 @@ test("secrets never leave in clear; the console only learns whether each is set"
   assert.deepEqual(out.secretsSet, { msg91AuthKey: true, smtpPassword: false });
 });
 
-test("template IDs are accepted only for the registered templates", () => {
-  assert.equal(settingsPatchSchema.safeParse({ msg91TemplateIds: { MOBILE_OTP: "abc123" } }).success, true);
-  assert.equal(settingsPatchSchema.safeParse({ msg91TemplateIds: { SOMETHING_ELSE: "abc123" } }).success, false);
+test("DLT template IDs are digits, and only for the registered templates", () => {
+  assert.equal(settingsPatchSchema.safeParse({ dltTemplateIds: { MOBILE_OTP: "1777179284345520583" } }).success, true);
+  assert.equal(settingsPatchSchema.safeParse({ dltTemplateIds: { MOBILE_OTP: "abc123" } }).success, false);
+  assert.equal(settingsPatchSchema.safeParse({ dltTemplateIds: { SOMETHING_ELSE: "1" } }).success, false);
 });

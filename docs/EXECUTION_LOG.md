@@ -1328,3 +1328,29 @@ Unregistered panels and the "verified" badges.
 - **Open with the team:** MSG91 template IDs and variable names;
   `{#uro#}` (template 2) vs `{#urg#}` (3, 6).
 
+### 2026-10-27 — 0.5.5 — SMS by DLT template ID
+
+- **Status:** `IMPLEMENTED_AWAITING_VERIFICATION` (owner: a real test SMS
+  with the site's sender ID, signature and DLT IDs).
+- **Why:** the owner's other product already sends through MSG91
+  `api/v2/sendsms` with the DLT ID directly; that needs nothing set up inside
+  MSG91 and no variable naming, and this system already builds the exact
+  registered text.
+- **Change:** `services/notify.ts` posts `sender`, `route: "4"`,
+  `DLT_TE_ID` and the full message (`unicode: 1` when not ASCII — template
+  7's em dash); the text is the wording + `smsSignature`, and the Outbox
+  shows exactly that. Settings: `msg91TemplateIds` → `dltTemplateIds`
+  (digits), new `msg91SenderId` (required with MSG91) and `smsSignature`
+  (not trimmed: its leading space is part of the registration). Console
+  card updated. `AppVersion` 0.5.5.
+- **e2e harness fix:** run at 22:14 IST, section 32 crashed — its visit
+  started at +2 h (tomorrow) but was capped at today's 23:59; walk-ins and
+  section 33's single-entry pass (+2 h) also crossed midnight. Start pulled
+  back to 23:29 IST and every end capped at 23:59 IST. A crashed run leaves
+  its photos in `data/photos-e2e`; they were cleared before the rerun.
+- **Verified:** typecheck PASS; `npm test` **124/124**; `verify:e2e`
+  **620 passed, 0 failed**; web lint + build PASS; Inno Setup PASS —
+  `vms-setup.exe` 0.5.5, 134,388,190 bytes, SHA-256 `FEB514D6…983A3D17`;
+  the staged bundle carries `api/v2/sendsms` and the production key.
+- **Not verified:** a real MSG91 send; SMTP.
+

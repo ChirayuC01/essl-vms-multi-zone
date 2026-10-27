@@ -4123,7 +4123,7 @@ async function main() {
     // Messaging settings (MSG91 + SMTP, Oct 2026).
     check("MSG91 is refused without its auth key", (await vr("PATCH", "/api/settings", { smsTransport: "msg91" })).statusCode === 400);
     check("email is refused without a server and From address", (await vr("PATCH", "/api/settings", { emailEnabled: true })).statusCode === 400);
-    const withKey = await vr("PATCH", "/api/settings", { msg91AuthKey: "e2e-secret-key", msg91TemplateIds: { MOBILE_OTP: "e2e-template" } });
+    const withKey = await vr("PATCH", "/api/settings", { msg91AuthKey: "e2e-secret-key", dltTemplateIds: { MOBILE_OTP: "1000000000000000001" } });
     const shown = JSON.parse(withKey.body) as { msg91AuthKey: string; secretsSet: { msg91AuthKey: boolean } };
     check("a saved auth key is never sent back, only that it is set", withKey.statusCode === 200 && shown.msg91AuthKey === "" && shown.secretsSet.msg91AuthKey, withKey.body);
     check("...a blank key on the next save keeps it", JSON.parse((await vr("PATCH", "/api/settings", { msg91AuthKey: "", otpMaxAttempts: 3 })).body).secretsSet.msg91AuthKey === true);
@@ -4282,11 +4282,14 @@ async function main() {
     await rv("PATCH", "/api/settings", { visitorIdPrefix: "V", walkInRequiresHostClear: true });
     const zoneTerms = await prisma.device.findMany({ where: { serialNo: { startsWith: "E2EZONE" } } });
     const zoneSims = zoneTerms.map((d) => new SimulatedDevice(app, d.serialNo));
-    const start = new Date(Date.now() + 2 * 3_600_000);
-    // Capped at 23:59 IST: a single-entry pass may not cross midnight, and
-    // +8h did from 16:00 IST on.
+    // Everything stays on today's IST date: a single-entry pass may not cross
+    // midnight, and walk-ins below start now. Capped at 23:59 IST (+8h crossed
+    // it from 16:00 IST on); the start is pulled back to 23:29 IST so a run
+    // after 22:00 IST does not start tomorrow.
     const istDay = 86_400_000, ist = 5.5 * 3_600_000;
-    const end = new Date(Math.min(Date.now() + 8 * 3_600_000, Math.floor((Date.now() + ist) / istDay) * istDay + istDay - ist - 60_000));
+    const todayEnd = Math.floor((Date.now() + ist) / istDay) * istDay + istDay - ist - 60_000;
+    const start = new Date(Math.min(Date.now() + 2 * 3_600_000, todayEnd - 30 * 60_000));
+    const end = new Date(Math.min(Date.now() + 8 * 3_600_000, todayEnd));
     const raise = (mobile: string, as = hostTok) =>
       rv("POST", "/api/visit-requests", {
         visitorName: "Review Visitor", visitorMobile: mobile, purpose: "E2E review", passTypeId: reviewType.id, companyId: reviewCo.id,
@@ -4478,7 +4481,8 @@ async function main() {
     const issueNow = async (personId: string, entryMode: "SINGLE_ENTRY" | "MULTI_ENTRY", host = hostX.id) => {
       const res = await xc("POST", `/api/people/${personId}/provision`, {
         purposeOfVisit: "E2E exit code", zoneIds: [zOff.id], entryMode, personToMeetId: host,
-        expectedInAt: new Date().toISOString(), validUntil: new Date(Date.now() + 2 * 3_600_000).toISOString(), retentionPolicy: "CUSTOM",
+        // Capped at 23:59 IST: a single-entry pass may not cross midnight.
+        expectedInAt: new Date().toISOString(), validUntil: new Date(Math.min(Date.now() + 2 * 3_600_000, Math.floor((Date.now() + 19_800_000) / 86_400_000) * 86_400_000 + 86_400_000 - 19_800_000 - 60_000)).toISOString(), retentionPolicy: "CUSTOM",
       });
       const id = JSON.parse(res.body).entry.id as string;
       await gateTick(silentLog);

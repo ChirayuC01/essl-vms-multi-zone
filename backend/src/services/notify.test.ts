@@ -6,8 +6,8 @@ import { SMS_TEMPLATE_KEYS } from "./settings.js";
 test("every registered template has its wording, and the wording renders in order", () => {
   for (const key of SMS_TEMPLATE_KEYS) assert.ok(SMS_TEXT[key].includes("{#}"), key);
   assert.equal(
-    renderSms("MOBILE_OTP", ["482913", "Acme Industries", "10"]),
-    "482913 is your code to confirm your visit to Acme Industries. It expires in 10 minutes. Do not share it.",
+    renderSms("MOBILE_OTP", ["482913", "Acme Industries", "10"], " - Acme"),
+    "482913 is your code to confirm your visit to Acme Industries. It expires in 10 minutes. Do not share it. - Acme",
   );
 });
 

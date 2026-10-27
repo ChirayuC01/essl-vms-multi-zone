@@ -9,9 +9,10 @@ import { getSettings, type SiteSettings, type SmsTemplateKey } from "./settings.
 // transport, so "was the visitor told?" always has an answer.
 //
 // SMS: "console" sends nothing; the message is readable on the Outbox page
-// (and in the log). "msg91" sends through MSG91 Flow: MSG91 holds the
-// DLT-registered wording (with the site's signature) under its own template
-// ID, and we send only the values, as var1, var2, ... in the order below.
+// (and in the log). "msg91" sends the full text through MSG91's sendsms API
+// with the site's sender ID and the template's DLT ID; nothing is set up
+// inside MSG91. The text (wording below + the site's signature) must match
+// the DLT registration character for character.
 // Email: off by default; when on, sent over the site's SMTP server.
 //
 // A real transport stores the body with its secrets (codes, link tokens)
@@ -50,10 +51,10 @@ const OUTBOX_NAME: Partial<Record<SmsTemplateKey, string>> = {
 const DLT_VAR_MAX = 30;
 export const fitVar = (v: string) => (/^https?:\/\//.test(v) || v.length <= DLT_VAR_MAX ? v : v.slice(0, DLT_VAR_MAX).trimEnd());
 
-/** Fill a template's `{#}` slots in order. Pure, for tests. */
-export function renderSms(template: SmsTemplateKey, vars: string[]): string {
+/** Fill a template's `{#}` slots in order and add the site's signature. Pure, for tests. */
+export function renderSms(template: SmsTemplateKey, vars: string[], signature = ""): string {
   let i = 0;
-  return SMS_TEXT[template].replace(/\{#\}/g, () => vars[i++] ?? "");
+  return SMS_TEXT[template].replace(/\{#\}/g, () => vars[i++] ?? "") + signature;
 }
 
 /** MSG91 wants the country code; a bare 10-digit number is taken as Indian. */
@@ -77,15 +78,20 @@ export interface OutgoingMessage {
   related?: { type: string; id: string };
 }
 
-async function sendMsg91(s: SiteSettings, template: SmsTemplateKey, to: string, vars: string[]) {
-  const templateId = s.msg91TemplateIds[template];
-  if (!templateId) throw new Error(`no MSG91 template ID for ${template} in Settings`);
-  const recipient: Record<string, string> = { mobiles: msg91Mobile(to) };
-  vars.forEach((v, i) => (recipient[`var${i + 1}`] = v));
-  const res = await fetch("https://control.msg91.com/api/v5/flow", {
+async function sendMsg91(s: SiteSettings, template: SmsTemplateKey, to: string, text: string) {
+  const dltId = s.dltTemplateIds[template];
+  if (!dltId) throw new Error(`no DLT template ID for ${template} in Settings`);
+  const res = await fetch("https://api.msg91.com/api/v2/sendsms", {
     method: "POST",
     headers: { authkey: s.msg91AuthKey, "content-type": "application/json", accept: "application/json" },
-    body: JSON.stringify({ template_id: templateId, short_url: "0", recipients: [recipient] }),
+    body: JSON.stringify({
+      sender: s.msg91SenderId,
+      route: "4",
+      DLT_TE_ID: dltId,
+      // Anything outside ASCII (template 7's em dash) needs a Unicode SMS.
+      ...(/[^\x00-\x7F]/.test(text) ? { unicode: 1 } : {}),
+      sms: [{ message: text, to: [msg91Mobile(to)] }],
+    }),
     signal: AbortSignal.timeout(15_000),
   });
   const reply = (await res.json().catch(() => ({}))) as { type?: string; message?: string };
@@ -114,12 +120,12 @@ export async function sendMessage(message: OutgoingMessage, log?: Logger) {
   const isSms = message.channel === MessageChannel.SMS;
   if (!isSms && !settings.emailEnabled) return null;
   const vars = message.vars.map(fitVar);
-  const body = renderSms(message.template, vars);
+  const body = renderSms(message.template, vars, settings.smsSignature);
   const transport = isSms ? settings.smsTransport : "smtp";
 
   let error: string | null = null;
   try {
-    if (transport === "msg91") await sendMsg91(settings, message.template, message.to, vars);
+    if (transport === "msg91") await sendMsg91(settings, message.template, message.to, body);
     else if (transport === "smtp") await sendEmail(settings, message.to, body);
     else log?.info({ channel: message.channel, to: message.to, template: message.template, body }, "message (console transport — not sent)");
   } catch (err) {

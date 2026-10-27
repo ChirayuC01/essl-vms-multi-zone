@@ -53,19 +53,18 @@ text, their visitor types, zone layout, host list with mobile numbers, and
 Not needed on a client: `DEV_ALLOWED_ORIGINS` (development only). The block
 on the console for anything arriving through Cloudflare is built in.
 
-## Upgrading 0.5.3 → 0.5.4
+## Upgrading 0.5.3 → 0.5.5
 
-Same steps as below (back up, verify the SHA-256 in `VERSIONS.md`, run the
+(0.5.4 was built but superseded the same day; it was never deployed.) Same steps as below (back up, verify the SHA-256 in `VERSIONS.md`, run the
 installer as Administrator over the existing install). No database change.
 Then, as an Admin:
 
 1. **Operators:** give every operator a mobile number. A visit request for a
    host without one is now refused.
 2. **Settings → Messaging:**
-   - paste the site's MSG91 auth key and the MSG91 template ID for each of
-     the 11 templates (MSG91 → SMS → Templates; not the DLT IDs). Each
-     template's variables must be named `var1`, `var2`, … in the order they
-     appear in the registered text;
+   - paste the site's MSG91 auth key, the DLT sender ID, the signature
+     exactly as registered (with its leading space, e.g. ` - Acme`) and the
+     DLT template ID of each of the 11 templates;
    - set *Send SMS* to *Through MSG91* and save;
    - send a test SMS to your own mobile, then check the Outbox page: a
      failure shows MSG91's reason under the status.

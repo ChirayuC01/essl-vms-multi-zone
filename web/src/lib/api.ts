@@ -518,7 +518,9 @@ export interface SiteSettings {
   smsTransport: "console" | "msg91";
   /** Always "" from the server; send a value only to replace the stored key. */
   msg91AuthKey: string;
-  msg91TemplateIds: Partial<Record<SmsTemplateKey, string>>;
+  msg91SenderId: string;
+  smsSignature: string;
+  dltTemplateIds: Partial<Record<SmsTemplateKey, string>>;
   emailEnabled: boolean;
   smtpHost: string;
   smtpPort: number;

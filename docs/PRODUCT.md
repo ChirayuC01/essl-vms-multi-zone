@@ -365,11 +365,14 @@ over the site's own SMTP server. Every SMS and every sent email is a row on the
 
 **Settings → Messaging** (Administrator), per site:
 - Send SMS: *Outbox only* (records, sends nothing; for testing) or *Through MSG91*.
-- MSG91 auth key (write-only: the console shows only whether it is set).
-- The MSG91 template ID for each of the 11 DLT-registered templates. The
-  wording lives in MSG91 (with the site's signature); the system sends only
-  the values, as `var1`, `var2`, … in the order of the registered text. Values
-  over 30 characters are cut (DLT's limit); links are not.
+- MSG91 auth key (write-only: the console shows only whether it is set),
+  the DLT sender ID, and the signature registered after every template
+  (e.g. ` - Acme`).
+- The DLT template ID of each of the 11 templates. The system sends the full
+  text (the standard wording, filled in, plus the signature) with that ID;
+  nothing is set up inside MSG91. Each site registers the same 11 wordings,
+  differing only in the signature. Values over 30 characters are cut (DLT's
+  limit); links are not.
 - Email on/off; when on: SMTP server, port, TLS, username, password
   (write-only) and From address. Turning a channel on without what it needs
   is refused.

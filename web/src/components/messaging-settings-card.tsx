@@ -5,10 +5,11 @@ import { api, SMS_TEMPLATES, type SiteSettings } from "@/lib/api";
 import { refresh, useApi } from "@/lib/swr";
 import { Alert, Button, Card, Field, Input, Select } from "@/components/ui";
 
-type Messaging = Pick<SiteSettings, "smsTransport" | "msg91AuthKey" | "msg91TemplateIds" | "emailEnabled" | "smtpHost" | "smtpPort" | "smtpSecure" | "smtpUser" | "smtpPassword" | "smtpFrom">;
+type Messaging = Pick<SiteSettings, "smsTransport" | "msg91AuthKey" | "msg91SenderId" | "smsSignature" | "dltTemplateIds" | "emailEnabled" | "smtpHost" | "smtpPort" | "smtpSecure" | "smtpUser" | "smtpPassword" | "smtpFrom">;
 
-// How SMS and email leave this site. Each site has its own MSG91 key and
-// template IDs; secrets are never sent back, so a blank box keeps the stored one.
+// How SMS and email leave this site. Each site has its own MSG91 key, sender
+// ID, signature and DLT template IDs; secrets are never sent back, so a blank
+// box keeps the stored one.
 export function MessagingSettingsCard({ editable }: { editable: boolean }) {
   const { data } = useApi<SiteSettings>("/api/settings");
   const [edited, setDraft] = useState<Messaging | null>(null);
@@ -23,8 +24,8 @@ export function MessagingSettingsCard({ editable }: { editable: boolean }) {
     if (!draft) return;
     setError(null);
     try {
-      const { smsTransport, msg91AuthKey, msg91TemplateIds, emailEnabled, smtpHost, smtpPort, smtpSecure, smtpUser, smtpPassword, smtpFrom } = draft;
-      await api("/api/settings", { method: "PATCH", body: { smsTransport, msg91AuthKey, msg91TemplateIds, emailEnabled, smtpHost, smtpPort, smtpSecure, smtpUser, smtpPassword, smtpFrom } });
+      const { smsTransport, msg91AuthKey, msg91SenderId, smsSignature, dltTemplateIds, emailEnabled, smtpHost, smtpPort, smtpSecure, smtpUser, smtpPassword, smtpFrom } = draft;
+      await api("/api/settings", { method: "PATCH", body: { smsTransport, msg91AuthKey, msg91SenderId, smsSignature, dltTemplateIds, emailEnabled, smtpHost, smtpPort, smtpSecure, smtpUser, smtpPassword, smtpFrom } });
       await refresh("/api/settings");
       setDraft(null);
       setNotice("Messaging settings saved.");
@@ -45,7 +46,7 @@ export function MessagingSettingsCard({ editable }: { editable: boolean }) {
       {error && <Alert>{error}</Alert>}
       {notice && <Alert tone="info">{notice}</Alert>}
       <h3 className="mb-2 text-sm font-semibold">SMS (MSG91)</h3>
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Field label="Send SMS" hint="Outbox only records messages without sending them">
           <Select value={draft.smsTransport} onChange={(e) => set("smsTransport", e.target.value as Messaging["smsTransport"])}>
             <option value="console">Outbox only (not sent)</option>
@@ -55,14 +56,20 @@ export function MessagingSettingsCard({ editable }: { editable: boolean }) {
         <Field label="MSG91 auth key" hint={secretHint(data.secretsSet.msg91AuthKey)}>
           <Input type="password" autoComplete="off" value={draft.msg91AuthKey} onChange={(e) => set("msg91AuthKey", e.target.value)} />
         </Field>
+        <Field label="Sender ID" hint="the DLT header, e.g. ABCDEF">
+          <Input value={draft.msg91SenderId} maxLength={11} onChange={(e) => set("msg91SenderId", e.target.value)} />
+        </Field>
+        <Field label="Signature" hint='exactly as registered, with its leading space, e.g. " - Acme"'>
+          <Input value={draft.smsSignature} maxLength={60} onChange={(e) => set("smsSignature", e.target.value)} />
+        </Field>
       </div>
       <p className="mt-3 text-xs text-[var(--text-muted)]">
-        MSG91 template ID for each DLT template (MSG91 → SMS → Templates; not the DLT ID). Name each template&apos;s variables var1, var2, … in the order they appear. A blank ID means that message is recorded as failed instead of sent.
+        DLT template ID for each template, numbered as in the DLT registration sheet. The wording must be registered exactly as the sheet gives it, followed by the signature. A blank ID means that message is recorded as failed instead of sent.
       </p>
       <div className="mt-2 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {SMS_TEMPLATES.map(([key, label]) => (
           <Field key={key} label={label}>
-            <Input value={draft.msg91TemplateIds[key] ?? ""} maxLength={64} onChange={(e) => set("msg91TemplateIds", { ...draft.msg91TemplateIds, [key]: e.target.value })} />
+            <Input inputMode="numeric" value={draft.dltTemplateIds[key] ?? ""} maxLength={30} onChange={(e) => set("dltTemplateIds", { ...draft.dltTemplateIds, [key]: e.target.value.trim() })} />
           </Field>
         ))}
       </div>

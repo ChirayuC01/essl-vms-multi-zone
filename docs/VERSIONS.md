@@ -52,7 +52,7 @@ patch version for every changed installer.
 
 ## The register
 
-> **Current boundary (27 October 2026):** 0.4.19 is the deployed single-zone artifact (notes below); 0.5.4 is the two-zone release (built 27 October 2026; supersedes 0.5.3 and upgrades it in place). 0.5.3 was built 14 October 2026 and superseded 0.5.2. Before it, 0.5.2 was the two-zone release candidate (0.5.0 + F1, production licence key), built 12 October 2026; do not deploy 0.5.0 or 0.5.1 (development licence key). Earlier: 0.4.18 was the packaged artifact on 10 September. Do not deploy 0.4.14: its frontend baked in `localhost:48102`.
+> **Current boundary (27 October 2026):** 0.4.19 is the deployed single-zone artifact (notes below); 0.5.5 is the two-zone release (built 27 October 2026; supersedes 0.5.3 and upgrades it in place; 0.5.4, built the same day with MSG91 Flow, was never deployed). 0.5.3 was built 14 October 2026 and superseded 0.5.2. Before it, 0.5.2 was the two-zone release candidate (0.5.0 + F1, production licence key), built 12 October 2026; do not deploy 0.5.0 or 0.5.1 (development licence key). Earlier: 0.4.18 was the packaged artifact on 10 September. Do not deploy 0.4.14: its frontend baked in `localhost:48102`.
 
 | Version | Date | Built from | Installer | Size | Migrations added |
 |---|---|---|---|---|---|
@@ -88,7 +88,27 @@ patch version for every changed installer.
 > This is precisely the failure this document exists to prevent. Fill the row
 > in *at build time*, not afterwards.
 
-## 0.5.4 — SMS through MSG91, optional email, host mobile required
+## 0.5.5 — SMS by DLT template ID (MSG91 sendsms), signature setting
+
+- Staged with `installer/license-public.pem` (production; staged
+  `.env.example` carries `…B9n4ZADRpq4=`).
+- **Upgrades 0.5.3 (or 0.5.4) in place** (same AppId). **No migration** (35).
+- Everything in 0.5.4 below, except SMS now goes through MSG91
+  `api/v2/sendsms` with the full text, sender ID and **DLT template ID**:
+  Settings → Messaging asks for the sender ID, the signature and the 11 DLT
+  IDs instead of MSG91 template IDs. Nothing is set up inside MSG91.
+- e2e harness: three checks that built single-entry passes crossing IST
+  midnight when run after 22:00 IST now keep them on today's date.
+- **Verified before the build:** typecheck PASS; `npm test` 124/124;
+  `verify:e2e` 620/620 (run at 22:30 IST); web lint + build PASS. Not yet
+  verified: a real send through MSG91; SMTP.
+- **Built:** 27 October 2026 from the working tree on top of `93e15cd`.
+  `installer/Output/vms-setup.exe`, ProductVersion 0.5.5, **134,388,190
+  bytes**, SHA-256
+  `FEB514D627093252B525B52EE9A7D8BFD19791054976B8FF13466251983A3D17`. The
+  0.5.4 binary is kept at `installer/Output/previous/vms-setup-0.5.4.exe`.
+
+## 0.5.4 — SMS through MSG91, optional email, host mobile required (superseded by 0.5.5 the same day; never deployed)
 
 - Staged with `installer/license-public.pem`, identical to the production
   public key in `C:\Secure\VMS-Licensing` (checked byte for byte; staged

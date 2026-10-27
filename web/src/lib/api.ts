@@ -515,7 +515,37 @@ export interface SiteSettings {
   privacyNoticeText: string;
   /** Server-set when the notice text changes; read-only. */
   privacyNoticeVersion: string | null;
+  smsTransport: "console" | "msg91";
+  /** Always "" from the server; send a value only to replace the stored key. */
+  msg91AuthKey: string;
+  msg91TemplateIds: Partial<Record<SmsTemplateKey, string>>;
+  emailEnabled: boolean;
+  smtpHost: string;
+  smtpPort: number;
+  smtpSecure: boolean;
+  smtpUser: string;
+  /** Always "" from the server; send a value only to replace the stored password. */
+  smtpPassword: string;
+  smtpFrom: string;
+  /** Read-only: whether each secret is stored. */
+  secretsSet: { msg91AuthKey: boolean; smtpPassword: boolean };
 }
+
+/** One per DLT-registered SMS template, numbered as in the DLT registration sheet. */
+export const SMS_TEMPLATES = [
+  ["MOBILE_OTP", "1. Mobile code (OTP)"],
+  ["VISIT_LINK_INVITE", "2. Visit link — invite"],
+  ["VISIT_LINK_QUERY", "3. Visit link — host query"],
+  ["VISIT_CONFIRMED", "4. Visit confirmed"],
+  ["VISIT_REJECTED", "5. Visit not approved"],
+  ["OUT_PASS", "6. Out-pass link"],
+  ["EXIT_CODE", "7. Exit code (to host)"],
+  ["REQUEST_SUBMITTED_WALK_IN", "8. Walk-in at the gate (to host)"],
+  ["REQUEST_SUBMITTED_PLANNED", "9. Details submitted (to host)"],
+  ["REQUEST_SUBMITTED_AUTO_FAILED", "10. Automatic pass failed (to host)"],
+  ["PASS_ISSUED", "11. Pass issued (to host)"],
+] as const;
+export type SmsTemplateKey = (typeof SMS_TEMPLATES)[number][0];
 
 /** An operator role (GET /api/roles). `key` is immutable; `name` is editable. */
 export interface Role {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { resolveSettings, settingsPatchSchema } from "./settings.js";
+import { missingForSending, publicSettings, resolveSettings, settingsPatchSchema } from "./settings.js";
 
 test("an install with nothing stored gets the client-confirmed defaults", () => {
   const s = resolveSettings(undefined);
@@ -35,4 +35,26 @@ test("a digit visitor prefix is allowed (numeric-only terminals), but never empt
   assert.equal(settingsPatchSchema.safeParse({ visitorIdPrefix: "V" }).success, true);
   assert.equal(settingsPatchSchema.safeParse({ visitorIdPrefix: "" }).success, false);
   assert.equal(settingsPatchSchema.safeParse({ visitorIdPrefix: "0" }).success, false);
+});
+
+test("a channel that is turned on must have what it needs to send", () => {
+  const s = resolveSettings(undefined);
+  assert.equal(s.smsTransport, "console");
+  assert.equal(s.emailEnabled, false);
+  assert.equal(missingForSending(s), null);
+  assert.match(missingForSending({ ...s, smsTransport: "msg91" }) ?? "", /auth key/);
+  assert.equal(missingForSending({ ...s, smsTransport: "msg91", msg91AuthKey: "k" }), null);
+  assert.match(missingForSending({ ...s, emailEnabled: true, smtpHost: "smtp.example.com" }) ?? "", /From/);
+});
+
+test("secrets never leave in clear; the console only learns whether each is set", () => {
+  const out = publicSettings({ ...resolveSettings(undefined), msg91AuthKey: "secret-key" });
+  assert.equal(out.msg91AuthKey, "");
+  assert.equal(out.smtpPassword, "");
+  assert.deepEqual(out.secretsSet, { msg91AuthKey: true, smtpPassword: false });
+});
+
+test("template IDs are accepted only for the registered templates", () => {
+  assert.equal(settingsPatchSchema.safeParse({ msg91TemplateIds: { MOBILE_OTP: "abc123" } }).success, true);
+  assert.equal(settingsPatchSchema.safeParse({ msg91TemplateIds: { SOMETHING_ELSE: "abc123" } }).success, false);
 });

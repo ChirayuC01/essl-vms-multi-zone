@@ -53,7 +53,7 @@ async function sendOutPass(entry: CodeEntry, organizationName: string, who: stri
     channel: MessageChannel.SMS,
     to: entry.person.mobile,
     template: "OUT_PASS",
-    body: `Welcome to ${organizationName}. When you leave, open ${config.publicPortalUrl}/v/out/${token} and enter the exit code ${who} gives you.`,
+    vars: [organizationName, `${config.publicPortalUrl}/v/out/${token}`, who],
     secrets: [token],
     related: { type: "entry", id: entry.id },
   });
@@ -63,10 +63,10 @@ async function sendOutPass(entry: CodeEntry, organizationName: string, who: stri
 async function messageHostCode(entry: CodeEntry, organizationName: string, code: string): Promise<boolean> {
   const host = entry.personToMeet;
   if (!host) return false;
-  const body = `${entry.person.name} has arrived at ${organizationName}. Their exit code is ${code} — give it to them when the visit ends.`;
+  const vars = [entry.person.name, organizationName, code];
   const related = { type: "entry", id: entry.id };
-  if (host.phone) await sendMessage({ channel: MessageChannel.SMS, to: host.phone, template: "EXIT_CODE", body, secrets: [code], related });
-  if (host.email.includes("@")) await sendMessage({ channel: MessageChannel.EMAIL, to: host.email, template: "EXIT_CODE", body, secrets: [code], related });
+  if (host.phone) await sendMessage({ channel: MessageChannel.SMS, to: host.phone, template: "EXIT_CODE", vars, secrets: [code], related });
+  if (host.email.includes("@")) await sendMessage({ channel: MessageChannel.EMAIL, to: host.email, template: "EXIT_CODE", vars, secrets: [code], related });
   return Boolean(host.phone || host.email.includes("@"));
 }
 

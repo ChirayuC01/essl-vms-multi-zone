@@ -98,8 +98,8 @@ export default function OperatorsPage() {
           <Field label="Name" hint="Optional">
             <Input name="name" maxLength={100} placeholder="Operator name" />
           </Field>
-          <Field label="Phone number" hint="Hosts need this: exit codes and visitor arrivals are sent here">
-            <Input name="phone" type="tel" maxLength={30} placeholder="Phone number" />
+          <Field label="Mobile number" hint="Required: every operator can be a host, and hosts are told by SMS">
+            <Input name="phone" type="tel" maxLength={30} required placeholder="e.g. 98765 43210" />
           </Field>
           <Field label="Role">
             <Select name="role" defaultValue="SECURITY">
@@ -126,7 +126,7 @@ export default function OperatorsPage() {
         {!data ? (
           <Empty>Loading…</Empty>
         ) : (
-          <Table head={["Operator", "Phone", "Role", "Status", "Password", "Added", ""]}>
+          <Table head={["Operator", "Mobile", "Role", "Status", "Password", "Added", ""]}>
             {data.items.map((op) => {
               const self = op.id === user?.id;
               return (
@@ -248,7 +248,7 @@ export default function OperatorsPage() {
             {problem && <Alert>{problem}</Alert>}
             <Field label="Email"><Input value={editing.email} disabled /></Field>
             <Field label="Name" hint="Optional"><Input name="name" maxLength={100} defaultValue={editing.name ?? ""} /></Field>
-            <Field label="Phone number" hint="Hosts need this: exit codes and visitor arrivals are sent here"><Input name="phone" type="tel" maxLength={30} defaultValue={editing.phone ?? ""} /></Field>
+            <Field label="Mobile number" hint="Required: every operator can be a host, and hosts are told by SMS"><Input name="phone" type="tel" maxLength={30} required defaultValue={editing.phone ?? ""} /></Field>
             <Button type="submit" variant="primary" loading={busy}>Save details</Button>
           </form>
         </Modal>

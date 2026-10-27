@@ -17,7 +17,7 @@ import { provisionPerson } from "./entries.js";
 import { ServiceError } from "./errors.js";
 import { sendMessage } from "./notify.js";
 import { describeGaps, profileGaps } from "./pass-types.js";
-import { getSettings } from "./settings.js";
+import { getSettings, type SmsTemplateKey } from "./settings.js";
 import { messageHost, sendLink, submitRequest, when, type PortalRequest, type VisitorContext } from "./visit-requests.js";
 import { zoneDevices } from "./zones.js";
 
@@ -44,8 +44,8 @@ function event(request: VisitRequest, to: VisitRequestStatus, actorId: string | 
   });
 }
 
-async function messageVisitor(request: VisitRequest, template: string, body: string) {
-  await sendMessage({ channel: MessageChannel.SMS, to: request.visitorMobile, template, body, related: { type: "visit_request", id: request.id } });
+async function messageVisitor(request: VisitRequest, template: SmsTemplateKey, vars: string[]) {
+  await sendMessage({ channel: MessageChannel.SMS, to: request.visitorMobile, template, vars, related: { type: "visit_request", id: request.id } });
 }
 
 /**
@@ -208,7 +208,7 @@ export async function clearRequest(requestId: string, actorId: string | null, op
     }),
   ]);
   const { organizationName } = await getBranding();
-  await messageVisitor(request, "VISIT_CONFIRMED", `Your visit to ${organizationName} on ${when(request.expectedAt)} is confirmed. At the entry gate, simply look at the camera.`);
+  await messageVisitor(request, "VISIT_CONFIRMED", [organizationName, when(request.expectedAt)]);
   return { personId, esslUserId, entryId: entry.id, returning: Boolean(existing) };
 }
 
@@ -235,7 +235,7 @@ export async function rejectRequest(requestId: string, actorId: string, reason: 
   ]);
   // The visitor is told it was not approved; the host's reason stays internal.
   const { organizationName } = await getBranding();
-  await messageVisitor(request, "VISIT_REJECTED", `Your visit request to ${organizationName} for ${when(request.expectedAt)} was not approved. Please contact your host.`);
+  await messageVisitor(request, "VISIT_REJECTED", [organizationName, when(request.expectedAt)]);
 }
 
 /** Requests whose visit window has ended without a decision. One read, three writes. */
@@ -272,11 +272,11 @@ export async function submitAndDecide(request: PortalRequest, ctx: VisitorContex
       ? `the pass type "${passType.name}" does not require one`
       : "walk-ins do not require one (site setting)";
     const cleared = await clearRequest(request.id, ctx.actorId ?? null, { automatic: true, automaticReason });
-    await messageHost(request, "PASS_ISSUED", `${name} has been issued a pass to visit you (${when(request.expectedAt)}).`);
+    await messageHost(request, "PASS_ISSUED", [name, when(request.expectedAt)]);
     return { status: VisitRequestStatus.CLEARED, awaitingHost: false, ...cleared };
   } catch (err) {
     if (!(err instanceof ServiceError)) throw err;
-    await messageHost(request, "REQUEST_SUBMITTED", `${name}'s pass could not be issued automatically (${err.message}). Please review the request in the visitor console.`);
+    await messageHost(request, "REQUEST_SUBMITTED_AUTO_FAILED", [name, err.message]);
     return { status: VisitRequestStatus.SUBMITTED, awaitingHost: true, problem: err.message };
   }
 }

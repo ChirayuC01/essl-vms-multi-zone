@@ -26,7 +26,7 @@ carried at the top; their full history is in `legacy/`.
 | 2026-09-15 | Visitor uploads a selfie during pre-registration; it becomes the enrolment photo | Removes gate capture for planned visitors | Owner |
 | 2026-09-15 | Host reviews pre-registration: Clear / Query (mandatory text, new link) / Reject | Replaces gate verification | Owner |
 | 2026-09-23 | Live selfie with a face guide; Security can retake at the gate | Selfie quality is the main recognition risk | Client (via owner) |
-| 2026-09-23 | SMS via MSG91, email via SMTP/nodemailer — **not yet confirmed**; build against a local outbox now | Unblocks development | Owner |
+| 2026-09-23 | SMS via MSG91, email via SMTP/nodemailer — **not yet confirmed**; build against a local outbox now (superseded 2026-10-27) | Unblocks development | Owner |
 | 2026-09-23 | Entry face loads **5 min** before the expected time | Client preference (draft said 30) | Owner |
 | 2026-09-23 | Walk-ins need the host's Clear first; switchable later to immediate load | Client undecided; safer default | Owner |
 | 2026-09-23 | Keep full audit history of every request, including queries (with text) and rejections | Accountability | Owner |
@@ -158,12 +158,21 @@ carried at the top; their full history is in `legacy/`.
 | 2026-10-14 | Block / Unblock stays; the "Unregistered people" panel stays on both Dashboard and People; the "Aadhaar verified" / "PAN verified" badges stay, by the client's request | Owner (client requests) | Owner |
 | 2026-10-14 | Reports "On site now" (duplicate of "Inside now, by zone") and "Single-entry blocks" (retired mechanism) removed; report values show the console's wording, never database codes | Pre-demo sweep | Owner |
 | 2026-10-14 | Uploading a photo on the person page re-sends it to devices already holding the face (visitor gates, employee access); the pass panel's separate Retake is removed | The upload used to save only the file, leaving the gate on the old face | Pre-demo sweep |
+| 2026-10-27 | SMS goes through **MSG91 Flow**: MSG91 holds each DLT template (with the site's signature) under its own template ID; we send only the values as `var1`…`varN` in the order of the registered text | No message text or client name in code; DLT wording changes need no release | Owner |
+| 2026-10-27 | 11 DLT templates, one per message variant (visit link invite/query; host alert walk-in/planned/automatic-pass-failed split out). The registered wording is kept verbatim in `services/notify.ts` for the Outbox and email; #2 and #6 changed to match the registration | The Outbox must show what the visitor actually got | Owner (DLT registration, 23 Oct) |
+| 2026-10-27 | MSG91 auth key, template IDs, SMTP server and credentials are **per-site settings** (Settings → Messaging), not code or `.env`; `MESSAGE_TRANSPORT` env removed. Secrets are write-only: never returned by the API or written to the audit log | Each client has its own key and templates; set up a site by filling a form | Owner |
+| 2026-10-27 | One MSG91 account (ours), a **separate auth key per client** | One client's key can be revoked without touching the others | Owner (recommendation) |
+| 2026-10-27 | A delivery failure never fails the action: the link or code stands, the Outbox row is FAILED with the reason. A blank template ID counts as a failure | Losing a visit request to a provider hiccup is worse than a resend | Owner |
+| 2026-10-27 | Values over 30 characters are cut (DLT's limit); links are not. A bare 10-digit mobile gets India's `91` | DLT rejects longer values; MSG91 needs the country code | Owner |
+| 2026-10-27 | **Email is optional, off by default.** Off: nothing is emailed or recorded; on: SMTP server, port, TLS, user, password, From are required. Nodemailer ≥ 10.2 (earlier versions carry published advisories) | No email account yet; SMS carries every message | Owner |
+| 2026-10-27 | **Every operator needs a mobile number** (any operator can be a host; hosts are told by SMS). A request for a host with none is refused with a pointer to the Operators page | With email off, a host without a mobile would get nothing, including the exit code | Owner |
 
 ## Open (awaiting client)
 
 - Privacy notice wording and retention periods for photos, documents and history.
 - Documents required per pass type, formats and size limits.
-- SMS provider and email account; site domain for the visitor portal.
+- Email account (SMS: MSG91, decided 2026-10-27); site domain for the visitor portal.
+- MSG91 template IDs for the 11 DLT templates, and whether `{#uro#}` (template 2) vs `{#urg#}` (3, 6) is intended.
 - Names/phones per role; whether all employees may host.
 - Employee list with zone per person; any existing software on the terminals.
 - Daily sub-contractor pass sentence (cut off in the client's document).

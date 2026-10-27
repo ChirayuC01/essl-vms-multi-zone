@@ -28,10 +28,13 @@ export const password = z
   .min(MIN_PASSWORD, `password must be at least ${MIN_PASSWORD} characters`)
   .max(200);
 
+// Every operator can be a host, and hosts are told by SMS: a mobile is required.
+const mobile = z.string().trim().regex(/^\+?[0-9][0-9 -]{8,18}[0-9]$/, "a mobile number is required (digits, optionally with + and the country code)");
+
 const createSchema = z.object({
   email: z.string().trim().toLowerCase().email().max(200),
   name: z.string().trim().max(100).transform((value) => value || null).nullable().optional(),
-  phone: z.string().trim().max(30).transform((value) => value || null).nullable().optional(),
+  phone: mobile,
   // A role key (Role.key); must name an active role.
   role: z.string().trim().min(1).max(64),
   temporaryPassword: password,
@@ -39,7 +42,7 @@ const createSchema = z.object({
 
 const updateSchema = z.object({
   name: z.string().trim().max(100).transform((value) => value || null).nullable().optional(),
-  phone: z.string().trim().max(30).transform((value) => value || null).nullable().optional(),
+  phone: mobile.optional(),
   role: z.string().trim().min(1).max(64).optional(),
   isActive: z.boolean().optional(),
 });

@@ -13,7 +13,7 @@ import { sendMessage } from "./notify.js";
 import { PROFILE_FIELDS, ruleFor, type ProfileField, type RuleSource } from "./pass-types.js";
 import { isMasked, maskId } from "./redact.js";
 import { allow } from "./rate-limit.js";
-import { getSettings } from "./settings.js";
+import { getSettings, type SmsTemplateKey } from "./settings.js";
 
 // Visit requests and the visitor portal (two-zone rebuild, Phase 5).
 //
@@ -102,9 +102,10 @@ export async function createVisitRequest(
 ) {
   const actorId = opts.actorId ?? hostId;
   const origin = opts.origin ?? VisitOrigin.PLANNED;
-  if (origin === VisitOrigin.WALK_IN && !(await prisma.appUser.findFirst({ where: { id: hostId, isActive: true } }))) {
-    throw new ServiceError(400, "select the host the visitor is meeting");
-  }
+  const host = await prisma.appUser.findFirst({ where: { id: hostId, isActive: true }, select: { phone: true } });
+  if (origin === VisitOrigin.WALK_IN && !host) throw new ServiceError(400, "select the host the visitor is meeting");
+  // The host is told by SMS (arrivals, exit codes); email may be off.
+  if (host && !host.phone) throw new ServiceError(400, "the host has no mobile number — add one on the Operators page first");
   if (input.expectedAt.getTime() < now.getTime() - 60 * 60_000) throw new ServiceError(400, "the visit must be in the future");
   if (input.validUntil <= input.expectedAt) throw new ServiceError(400, "the visit must end after it starts");
   const passType = await prisma.passType.findUnique({ where: { id: input.passTypeId } });
@@ -170,14 +171,13 @@ export async function sendLink(request: VisitRequest, actorId: string | null, no
   const [{ organizationName }, host] = await Promise.all([getBranding(), prisma.appUser.findUnique({ where: { id: request.hostId }, select: { name: true, email: true } })]);
   const url = `${config.publicPortalUrl}/v/${token}`;
   const hostName = host?.name || host?.email || "your host";
-  const intro = request.queryText
-    ? `${hostName} at ${organizationName} needs a change to your visit details: "${request.queryText}".`
-    : `${hostName} has invited you to ${organizationName} on ${when(request.expectedAt)}.`;
-  const body = `${intro} Please complete your details before you arrive: ${url} (valid until ${when(expiresAt)}).`;
-  const related = { type: "visit_request", id: request.id };
-  await sendMessage({ channel: MessageChannel.SMS, to: request.visitorMobile, template: "VISIT_LINK", body, secrets: [token], related });
+  const [template, vars] = request.queryText
+    ? (["VISIT_LINK_QUERY", [hostName, organizationName, request.queryText, url, when(expiresAt)]] as const)
+    : (["VISIT_LINK_INVITE", [hostName, organizationName, when(request.expectedAt), url, when(expiresAt)]] as const);
+  const message = { template, vars: [...vars], secrets: [token], related: { type: "visit_request", id: request.id } };
+  await sendMessage({ channel: MessageChannel.SMS, to: request.visitorMobile, ...message });
   if (request.visitorEmail) {
-    await sendMessage({ channel: MessageChannel.EMAIL, to: request.visitorEmail, template: "VISIT_LINK", body, secrets: [token], related });
+    await sendMessage({ channel: MessageChannel.EMAIL, to: request.visitorEmail, ...message });
   }
   await audit(AuditAction.VISIT_LINK_SENT, request.id, { to: [request.visitorMobile, request.visitorEmail].filter(Boolean), expiresAt: expiresAt.toISOString() }, actorId);
   return { expiresAt };
@@ -305,7 +305,7 @@ export async function sendMobileCode(request: PortalRequest, ctx: VisitorContext
     channel: MessageChannel.SMS,
     to: request.visitorMobile,
     template: "MOBILE_OTP",
-    body: `${code} is your code to confirm your visit to ${organizationName}. It expires in ${settings.otpTtlMinutes} minutes. Do not share it.`,
+    vars: [code, organizationName, String(settings.otpTtlMinutes)],
     secrets: [code],
     related: { type: "visit_request", id: request.id },
   });
@@ -475,16 +475,16 @@ export async function submitRequest(request: PortalRequest, ctx: VisitorContext,
   ]);
   if (notifyHost) {
     const name = ((request.submission ?? {}) as { name?: string }).name ?? request.visitorName;
-    const lead = request.origin === VisitOrigin.WALK_IN ? `${name} is at the gate to see you` : `${name} has submitted their details for the visit on ${when(request.expectedAt)}`;
-    await messageHost(request, "REQUEST_SUBMITTED", `${lead}. Please review the request in the visitor console.`);
+    if (request.origin === VisitOrigin.WALK_IN) await messageHost(request, "REQUEST_SUBMITTED_WALK_IN", [name]);
+    else await messageHost(request, "REQUEST_SUBMITTED_PLANNED", [name, when(request.expectedAt)]);
   }
   return { submittedAt: now };
 }
 
 /** SMS and email the host, whichever they have. */
-export async function messageHost(request: Pick<VisitRequest, "id" | "hostId">, template: string, body: string) {
+export async function messageHost(request: Pick<VisitRequest, "id" | "hostId">, template: SmsTemplateKey, vars: string[]) {
   const host = await prisma.appUser.findUnique({ where: { id: request.hostId }, select: { email: true, phone: true } });
   const related = { type: "visit_request", id: request.id };
-  if (host?.phone) await sendMessage({ channel: MessageChannel.SMS, to: host.phone, template, body, related });
-  if (host?.email?.includes("@")) await sendMessage({ channel: MessageChannel.EMAIL, to: host.email, template, body, related });
+  if (host?.phone) await sendMessage({ channel: MessageChannel.SMS, to: host.phone, template, vars, related });
+  if (host?.email?.includes("@")) await sendMessage({ channel: MessageChannel.EMAIL, to: host.email, template, vars, related });
 }

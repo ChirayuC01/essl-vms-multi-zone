@@ -294,6 +294,7 @@ async function resetDatabase(): Promise<void> {
   await prisma.appUser.create({
     data: {
       email: "e2e@vms.local",
+      phone: "9876543210",
       passwordHash: `scrypt$${salt.toString("hex")}$${scryptSync("e2e-password", salt, 64).toString("hex")}`,
       role: "ADMIN",
     },
@@ -2543,7 +2544,7 @@ async function main() {
       method: "POST",
       url: "/api/operators",
       headers: auth(token),
-      payload: { email: "gate@vms.local", role: "AUTHORIZED_PERSON", temporaryPassword: "short" },
+      payload: { email: "gate@vms.local", role: "AUTHORIZED_PERSON", phone: "9876543210", temporaryPassword: "short" },
     });
     check("a short password is refused", tooShort.statusCode === 400, tooShort.body);
 
@@ -2553,6 +2554,7 @@ async function main() {
       headers: auth(token),
       payload: {
         email: "Gate@VMS.local",
+        phone: "9876543210",
         role: "AUTHORIZED_PERSON",
         temporaryPassword: "temporary-one",
       },
@@ -2573,7 +2575,7 @@ async function main() {
       method: "POST",
       url: "/api/operators",
       headers: auth(token),
-      payload: { email: "gate@vms.local", role: "ADMIN", temporaryPassword: "temporary-two" },
+      payload: { email: "gate@vms.local", role: "ADMIN", phone: "9876543210", temporaryPassword: "temporary-two" },
     });
     check("a duplicate email is refused", dupe.statusCode === 409, `${dupe.statusCode}`);
 
@@ -2691,7 +2693,7 @@ async function main() {
       method: "POST",
       url: "/api/operators",
       headers: auth(token),
-      payload: { email: "admin2@vms.local", role: "ADMIN", temporaryPassword: "second-admin-pw" },
+      payload: { email: "admin2@vms.local", role: "ADMIN", phone: "9876543210", temporaryPassword: "second-admin-pw" },
     });
     const secondId = JSON.parse(secondAdmin.body).id as string;
     const demoteSpare = await app.inject({
@@ -3557,7 +3559,7 @@ async function main() {
       const salt = randomBytes(16);
       const email = `${role.toLowerCase()}@vms.local`;
       await prisma.appUser.create({
-        data: { email, role, passwordHash: `scrypt$${salt.toString("hex")}$${scryptSync("role-password", salt, 64).toString("hex")}` },
+        data: { email, role, phone: "9876543212", passwordHash: `scrypt$${salt.toString("hex")}$${scryptSync("role-password", salt, 64).toString("hex")}` },
       });
       const res = await app.inject({ method: "POST", url: "/api/auth/login", payload: { email, password: "role-password" } });
       return JSON.parse(res.body).token as string;
@@ -4115,7 +4117,20 @@ async function main() {
     check("a host raises a visit request", created.statusCode === 201, created.body);
     const reqId = JSON.parse(created.body).id as string;
     const links = await outbox("VISIT_LINK");
-    check("the link goes out by SMS and email", links.some((m) => m.channel === "SMS" && m.recipient === "+91 91234 00001") && links.some((m) => m.channel === "EMAIL"), JSON.stringify(links.map((m) => m.channel)));
+    check("the link goes out by SMS; email is off by default, so none is sent or recorded", links.some((m) => m.channel === "SMS" && m.recipient === "+91 91234 00001") && !links.some((m) => m.channel === "EMAIL"), JSON.stringify(links.map((m) => m.channel)));
+    check("...and the SMS carries the DLT-registered wording", links[0]?.body.includes("Please complete your details before you arrive:") && links[0]?.body.includes(". Form valid until "), links[0]?.body);
+
+    // Messaging settings (MSG91 + SMTP, Oct 2026).
+    check("MSG91 is refused without its auth key", (await vr("PATCH", "/api/settings", { smsTransport: "msg91" })).statusCode === 400);
+    check("email is refused without a server and From address", (await vr("PATCH", "/api/settings", { emailEnabled: true })).statusCode === 400);
+    const withKey = await vr("PATCH", "/api/settings", { msg91AuthKey: "e2e-secret-key", msg91TemplateIds: { MOBILE_OTP: "e2e-template" } });
+    const shown = JSON.parse(withKey.body) as { msg91AuthKey: string; secretsSet: { msg91AuthKey: boolean } };
+    check("a saved auth key is never sent back, only that it is set", withKey.statusCode === 200 && shown.msg91AuthKey === "" && shown.secretsSet.msg91AuthKey, withKey.body);
+    check("...a blank key on the next save keeps it", JSON.parse((await vr("PATCH", "/api/settings", { msg91AuthKey: "", otpMaxAttempts: 3 })).body).secretsSet.msg91AuthKey === true);
+    check("...and the audit log does not hold it", !JSON.stringify(await prisma.auditLog.findMany({ where: { action: "SETTINGS_CHANGED" } })).includes("e2e-secret-key"));
+    const noPhone = await prisma.appUser.create({ data: { email: "nophone@vms.local", role: "ADMIN", passwordHash: "x" } });
+    check("a request for a host with no mobile is refused", (await vr("POST", "/api/walk-ins", { visitorName: "W", visitorMobile: "9123400099", purpose: "E2E", passTypeId: portalType.id, zoneIds: [portalZone.id], entryMode: "SINGLE_ENTRY", expectedAt: soon.toISOString(), validUntil: later.toISOString(), hostId: noPhone.id })).body.includes("no mobile number"));
+    await prisma.appUser.update({ where: { id: noPhone.id }, data: { isActive: false } });
     const link = linkFrom(links[0]!.body);
     check("the link carries a long random token, and only its hash is stored", link.length >= 40 && (await prisma.linkToken.count({ where: { tokenHash: link } })) === 0);
 
@@ -4297,7 +4312,7 @@ async function main() {
     check("a query needs text", (await rv("POST", `/api/visit-requests/${rqId}/query`, {}, hostTok)).statusCode === 400);
     // A second host (no "decide any request" cell) is refused; Admin holds every cell.
     const salt2 = randomBytes(16);
-    await prisma.appUser.create({ data: { email: "host2@vms.local", role: "HOST", passwordHash: `scrypt$${salt2.toString("hex")}$${scryptSync("host2-password", salt2, 64).toString("hex")}` } });
+    await prisma.appUser.create({ data: { email: "host2@vms.local", phone: "9876543211", role: "HOST", passwordHash: `scrypt$${salt2.toString("hex")}$${scryptSync("host2-password", salt2, 64).toString("hex")}` } });
     const host2Tok = JSON.parse((await app.inject({ method: "POST", url: "/api/auth/login", payload: { email: "host2@vms.local", password: "host2-password" } })).body).token as string;
     check("another host cannot see, let alone decide, this request", (await rv("POST", `/api/visit-requests/${rqId}/query`, { text: "fix it" }, host2Tok)).statusCode === 404);
     for (const round of [1, 2]) {
@@ -4488,7 +4503,7 @@ async function main() {
     check("...and the visitor an out-pass link", outLink.length > 20 && outMsg?.recipient === "9666000001");
     check("the code is stored only hashed", (await prisma.otp.count({ where: { codeHash: exitCode } })) === 0);
     await punchAt(outerIn, "XC1", 0);
-    check("a second IN sends nothing more (one SMS and one email to the host, once)", (await msgs()).filter((m) => m.template === "EXIT_CODE" && m.relatedId === sEntry).length === 2);
+    check("a second IN sends nothing more (one SMS to the host, once; email is off)", (await msgs()).filter((m) => m.template === "EXIT_CODE" && m.relatedId === sEntry).length === 1);
     const outState = JSON.parse((await app.inject({ method: "GET", url: `/public-api/out/${outLink}` })).body) as { firstName: string; exitOpen: boolean };
     check("the out-pass page shows only a first name, exit not yet open", outState.firstName === "Exit" && outState.exitOpen === false, JSON.stringify(outState));
     resetLimits();

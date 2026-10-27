@@ -1287,3 +1287,44 @@ Unregistered panels and the "verified" badges.
   bundle built with the package's esbuild settings.
 - Notes: `VERSIONS.md` § 0.5.3 (to be completed at build time),
   `INSTALL_GUIDE.md` § Upgrading 0.5.2 → 0.5.3.
+
+### 2026-10-27 — 0.5.4 — SMS through MSG91, optional email, host mobile required
+
+- **Status:** `IMPLEMENTED_AWAITING_VERIFICATION` (owner: MSG91 template IDs,
+  a real test SMS, upgrade on a site).
+- **SMS:** `services/notify.ts` sends through MSG91 Flow
+  (`POST control.msg91.com/api/v5/flow`, `template_id` + `var1…varN`). The 11
+  DLT-registered texts (23 Oct sheet) are kept verbatim, minus the
+  signature, for the Outbox and email; callers pass a template key and its
+  values. Values cut to 30 characters (links exempt); bare 10-digit mobiles
+  get `91`. A failure (no template ID, MSG91 error, timeout 15 s) is stored
+  FAILED with the reason; the caller's action stands.
+- **Settings → Messaging** (`services/settings.ts`, new
+  `web/src/components/messaging-settings-card.tsx`): SMS transport, MSG91
+  auth key, 11 template IDs, email on/off, SMTP server/port/TLS/user/
+  password/From. Secrets are write-only (`publicSettings`), blank keeps the
+  stored value, the audit row says only "set". Turning a channel on without
+  what it needs is refused. `POST /api/settings/test-message`. The existing
+  settings card now saves only its own fields. `MESSAGE_TRANSPORT` env removed.
+- **Email:** optional, off by default; when off, nothing is emailed or
+  recorded. Nodemailer 10.2.1.
+- **Hosts:** operator create/edit requires a mobile number;
+  `createVisitRequest` refuses a host without one.
+- **Outbox:** shows "outbox only" for unsent console rows and the failure
+  reason under a failed one.
+- **Tests:** `notify.test.ts` (wording, 30-char cut, mobile prefix);
+  settings tests (channel requirements, secrets); e2e: DLT wording on the
+  link, no email while off, MSG91/email refused when incomplete, key never
+  returned or audited, blank keeps it, host without mobile refused; e2e hosts
+  given mobiles; exit-code check expects one SMS.
+- **Verified:** typecheck PASS; `npm test` **124/124**; `verify:e2e`
+  **620 passed, 0 failed** (first run 618/2: both from the new rules — a
+  host without a mobile, and the email no longer sent — fixed in the
+  harness); web lint + build PASS; release staged with the production
+  public key; `nodemailer` loads under the bundled Node; Inno Setup PASS —
+  `vms-setup.exe` 0.5.4, 134,379,036 bytes, SHA-256 `5ADAA93E…2621C7`.
+- **Not verified:** a real MSG91 send (template IDs not yet received);
+  SMTP (no account).
+- **Open with the team:** MSG91 template IDs and variable names;
+  `{#uro#}` (template 2) vs `{#urg#}` (3, 6).
+

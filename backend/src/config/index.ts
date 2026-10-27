@@ -49,10 +49,6 @@ const schema = z.object({
   // so an upgraded site works before its tunnel exists; development sets the
   // dev port (48101) in backend/.env.
   PUBLIC_PORTAL_URL: z.string().url().default("http://localhost:47101"),
-  // How messages leave: "console" writes them to the Outbox page (and the
-  // log) without sending anything — for development and until the site's SMS
-  // and email providers are confirmed.
-  MESSAGE_TRANSPORT: z.enum(["console"]).default("console"),
   // Person documents (Govt ID copies, vehicle papers). Local disk, like photos.
   DOCUMENT_STORAGE_PATH: z.string().min(1).default("./data/documents"),
   JWT_SECRET: z.string().min(16, "JWT_SECRET must be at least 16 characters"),
@@ -192,7 +188,6 @@ export const config = {
     ? env.PHOTO_STORAGE_PATH
     : path.resolve(backendRoot, env.PHOTO_STORAGE_PATH),
   publicPortalUrl: env.PUBLIC_PORTAL_URL.replace(/\/+$/, ""),
-  messageTransport: env.MESSAGE_TRANSPORT,
   documentStoragePath: path.isAbsolute(env.DOCUMENT_STORAGE_PATH)
     ? env.DOCUMENT_STORAGE_PATH
     : path.resolve(backendRoot, env.DOCUMENT_STORAGE_PATH),

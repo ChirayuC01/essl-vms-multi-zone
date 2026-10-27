@@ -52,7 +52,7 @@ patch version for every changed installer.
 
 ## The register
 
-> **Current boundary (14 October 2026):** 0.4.19 is the deployed single-zone artifact (notes below); 0.5.3 is the two-zone release (built 14 October 2026; supersedes 0.5.2 and upgrades it in place). Before it, 0.5.2 was the two-zone release candidate (0.5.0 + F1, production licence key), built 12 October 2026; do not deploy 0.5.0 or 0.5.1 (development licence key). Earlier: 0.4.18 was the packaged artifact on 10 September. Do not deploy 0.4.14: its frontend baked in `localhost:48102`.
+> **Current boundary (27 October 2026):** 0.4.19 is the deployed single-zone artifact (notes below); 0.5.4 is the two-zone release (built 27 October 2026; supersedes 0.5.3 and upgrades it in place). 0.5.3 was built 14 October 2026 and superseded 0.5.2. Before it, 0.5.2 was the two-zone release candidate (0.5.0 + F1, production licence key), built 12 October 2026; do not deploy 0.5.0 or 0.5.1 (development licence key). Earlier: 0.4.18 was the packaged artifact on 10 September. Do not deploy 0.4.14: its frontend baked in `localhost:48102`.
 
 | Version | Date | Built from | Installer | Size | Migrations added |
 |---|---|---|---|---|---|
@@ -87,6 +87,32 @@ patch version for every changed installer.
 >
 > This is precisely the failure this document exists to prevent. Fill the row
 > in *at build time*, not afterwards.
+
+## 0.5.4 — SMS through MSG91, optional email, host mobile required
+
+- Staged with `installer/license-public.pem`, identical to the production
+  public key in `C:\Secure\VMS-Licensing` (checked byte for byte; staged
+  `.env.example` carries `…B9n4ZADRpq4=`).
+- **Upgrades 0.5.3 in place** (same AppId). **No migration** (35, as 0.5.3):
+  the new settings live in the existing `app_config` row and take their
+  defaults on upgrade — SMS *Outbox only*, email off. Nothing is sent until an
+  Admin fills Settings → Messaging. `MESSAGE_TRANSPORT` in an existing `.env`
+  is now ignored.
+- **New dependency** `nodemailer` 10.2.1 (bundled into `server.cjs`; versions
+  up to 10.1.3 carry published advisories).
+- **Behaviour changes an upgraded site will notice:** every operator needs a
+  mobile number, and a request for a host without one is refused; email is
+  no longer recorded on the Outbox while email is off; SMS wording for the
+  visit link (invite) and out-pass now matches the DLT registration. See
+  `INSTALL_GUIDE.md` § Upgrading 0.5.3 → 0.5.4.
+- **Verified before the build:** typecheck PASS; `npm test` 124/124;
+  `verify:e2e` 620/620; web lint + build PASS. Not yet verified: a real send
+  through MSG91 (needs the MSG91 template IDs) or SMTP (no account yet).
+- **Built:** 27 October 2026 from the working tree on top of `ff0cfab`
+  (uncommitted at build time). `installer/Output/vms-setup.exe`,
+  ProductVersion 0.5.4, **134,379,036 bytes**, SHA-256
+  `5ADAA93E8D684303B72D8AC34773D12653A469A7CA8CB320FD75CF3EFA2621C7`. The
+  0.5.3 binary is kept at `installer/Output/previous/vms-setup-0.5.3.exe`.
 
 ## 0.5.3 — first-client feedback (F2), single-zone ports (F3), sidebar, pre-demo sweep
 

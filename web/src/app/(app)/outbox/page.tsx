@@ -33,7 +33,7 @@ export default function OutboxPage() {
                   )}
                 </td>
                 <td className="px-2 py-2 break-all">{m.body}</td>
-                <td className="px-2 py-2"><Badge tone={m.status === "SENT" ? "ok" : "danger"}>{m.status.toLowerCase()}</Badge></td>
+                <td className="px-2 py-2"><Badge tone={m.status === "SENT" ? "ok" : "danger"}>{m.transport === "console" ? "outbox only" : m.status.toLowerCase()}</Badge>{m.error && <div className="mt-1 text-xs text-[var(--text-muted)]">{m.error}</div>}</td>
               </tr>
             ))}
           </Table>

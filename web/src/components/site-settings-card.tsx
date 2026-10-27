@@ -34,8 +34,8 @@ export function SiteSettingsCard({ editable }: { editable: boolean }) {
     if (!draft) return;
     setError(null);
     try {
-      const { privacyNoticeVersion: _version, ...body } = draft;
-      void _version;
+      const { entryLoadLeadMinutes, unloadAfterPunchMinutes, walkInRequiresHostClear, outageGapMinutes, visitorIdPrefix, linkExpiryHours, otpTtlMinutes, otpMaxAttempts, documentMaxMb, documentMaxCount, documentTypes, privacyNoticeText } = draft;
+      const body = { entryLoadLeadMinutes, unloadAfterPunchMinutes, walkInRequiresHostClear, outageGapMinutes, visitorIdPrefix, linkExpiryHours, otpTtlMinutes, otpMaxAttempts, documentMaxMb, documentMaxCount, documentTypes, privacyNoticeText };
       await api("/api/settings", { method: "PATCH", body });
       await refresh("/api/settings");
       setDraft(null);

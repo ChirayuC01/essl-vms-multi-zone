@@ -18,6 +18,25 @@ const KEY = "site_settings";
 
 export const DOCUMENT_TYPES = ["jpeg", "png", "webp", "pdf"] as const;
 
+/** One per DLT-registered SMS template; see services/notify.ts for the wording. */
+export const SMS_TEMPLATE_KEYS = [
+  "MOBILE_OTP",
+  "VISIT_LINK_INVITE",
+  "VISIT_LINK_QUERY",
+  "VISIT_CONFIRMED",
+  "VISIT_REJECTED",
+  "OUT_PASS",
+  "EXIT_CODE",
+  "REQUEST_SUBMITTED_WALK_IN",
+  "REQUEST_SUBMITTED_PLANNED",
+  "REQUEST_SUBMITTED_AUTO_FAILED",
+  "PASS_ISSUED",
+] as const;
+export type SmsTemplateKey = (typeof SMS_TEMPLATE_KEYS)[number];
+
+/** Never returned by the API or written to the audit log in clear. */
+export const SECRET_SETTINGS = ["msg91AuthKey", "smtpPassword"] as const;
+
 const fields = {
   /** Minutes before the expected time that a visitor's face loads onto the entry gates. */
   entryLoadLeadMinutes: z.number().int().min(0).max(240).default(5),
@@ -45,6 +64,21 @@ const fields = {
   documentTypes: z.array(z.enum(DOCUMENT_TYPES)).max(DOCUMENT_TYPES.length).default([...DOCUMENT_TYPES]),
   /** The site's privacy (DPDP) notice, shown to every visitor before collection. */
   privacyNoticeText: z.string().max(10_000).default(""),
+  /** "console" records SMS on the Outbox page only; "msg91" sends them. */
+  smsTransport: z.enum(["console", "msg91"]).default("console"),
+  msg91AuthKey: z.string().trim().max(200).default(""),
+  /** MSG91's own template ID for each DLT template. A blank one is recorded as failed, never sent. */
+  msg91TemplateIds: z.record(z.enum(SMS_TEMPLATE_KEYS), z.string().trim().max(64)).default({}),
+  /** Off: no email is sent or recorded; SMS carries everything. */
+  emailEnabled: z.boolean().default(false),
+  smtpHost: z.string().trim().max(200).default(""),
+  smtpPort: z.number().int().min(1).max(65535).default(587),
+  /** TLS from the first byte (usually port 465); off means STARTTLS when offered. */
+  smtpSecure: z.boolean().default(false),
+  smtpUser: z.string().trim().max(200).default(""),
+  smtpPassword: z.string().max(200).default(""),
+  /** The From address, e.g. "Visitor desk <visitors@example.com>". */
+  smtpFrom: z.string().trim().max(200).default(""),
 } as const;
 
 type Fields = typeof fields;
@@ -77,6 +111,22 @@ export function resolveSettings(stored: unknown): SiteSettings {
   return out as SiteSettings;
 }
 
+/** What a turned-on channel still lacks, or null. Pure, for tests. */
+export function missingForSending(s: SiteSettings): string | null {
+  if (s.smsTransport === "msg91" && !s.msg91AuthKey) return "SMS via MSG91 needs the MSG91 auth key";
+  if (s.emailEnabled && (!s.smtpHost || !s.smtpFrom)) return "email needs the SMTP server and the From address";
+  return null;
+}
+
+/** Settings as the console sees them: secrets blanked, with whether each is set. */
+export function publicSettings(s: SiteSettings) {
+  return {
+    ...s,
+    ...Object.fromEntries(SECRET_SETTINGS.map((k) => [k, ""])),
+    secretsSet: Object.fromEntries(SECRET_SETTINGS.map((k) => [k, s[k] !== ""])) as Record<(typeof SECRET_SETTINGS)[number], boolean>,
+  };
+}
+
 export async function getSettings(): Promise<SiteSettings> {
   const row = await prisma.appConfig.findUnique({ where: { key: KEY } });
   return resolveSettings(row?.value);
@@ -98,12 +148,17 @@ export async function updateSettings(patch: unknown, actorId?: string, now = new
   const changes: Record<string, { from: unknown; to: unknown }> = {};
   for (const [key, value] of Object.entries(parsed.data)) {
     if (value === undefined) continue;
+    const secret = (SECRET_SETTINGS as readonly string[]).includes(key);
+    // The console never sees a stored secret, so a blank one means "keep it".
+    if (secret && value === "") continue;
     const old = before[key as keyof SiteSettings];
     if (JSON.stringify(old) === JSON.stringify(value)) continue;
-    changes[key] = { from: old, to: value };
+    changes[key] = secret ? { from: old ? "set" : "not set", to: "set" } : { from: old, to: value };
     (next as Record<string, unknown>)[key] = value;
   }
   if (Object.keys(changes).length === 0) return before;
+  const missing = missingForSending(next);
+  if (missing) throw new ServiceError(400, missing);
   if (changes.privacyNoticeText) next.privacyNoticeVersion = now.toISOString();
 
   await prisma.$transaction([

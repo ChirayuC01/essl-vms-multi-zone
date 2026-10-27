@@ -358,15 +358,31 @@ confirmed rule. Which zones' exits are code-gated is set per pass type
 
 ## 11. Messaging and the visitor portal (Phases 5 and 9)
 
-Links and OTPs go by SMS and email. Until the site confirms a provider (MSG91
-and an SMTP account are expected), messages go to an **outbox** readable by an
-Admin in the console, which is how the flows are tested locally.
+Links, codes and alerts go by **SMS through MSG91**. **Email is optional** and
+off by default; when on, every message also goes to an email address on file,
+over the site's own SMTP server. Every SMS and every sent email is a row on the
+**Outbox** page, with its status and, if it failed, why.
+
+**Settings → Messaging** (Administrator), per site:
+- Send SMS: *Outbox only* (records, sends nothing; for testing) or *Through MSG91*.
+- MSG91 auth key (write-only: the console shows only whether it is set).
+- The MSG91 template ID for each of the 11 DLT-registered templates. The
+  wording lives in MSG91 (with the site's signature); the system sends only
+  the values, as `var1`, `var2`, … in the order of the registered text. Values
+  over 30 characters are cut (DLT's limit); links are not.
+- Email on/off; when on: SMTP server, port, TLS, username, password
+  (write-only) and From address. Turning a channel on without what it needs
+  is refused.
+- Send a test SMS (template 1 with code 123456) or test email.
+
+Every operator can be a host, and hosts are told by SMS, so **every operator
+needs a mobile number**; a request for a host without one is refused.
 
 **Implemented in Phase 5:**
 - **Requests** page: a host raises a request (visitor name, mobile, optional
   email, company chosen from the Directory (or added there, F2), pass type, entry mode, zones, visit
-  time, valid until, purpose). The visitor gets the link by SMS (and email if
-  given). The host sees status, details (IDs masked), photo, documents and
+  time, valid until, purpose). The visitor gets the link by SMS (and by email
+  if given and email is on). The host sees status, details (IDs masked), photo, documents and
   history; can send a new link (the old one stops working) or cancel with a
   reason. A host sees only their own requests; anyone who can see passes sees
   all.

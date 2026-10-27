@@ -1353,4 +1353,8 @@ Unregistered panels and the "verified" badges.
   `vms-setup.exe` 0.5.5, 134,388,190 bytes, SHA-256 `FEB514D6…983A3D17`;
   the staged bundle carries `api/v2/sendsms` and the production key.
 - **Not verified:** a real MSG91 send; SMTP.
+- **Owner check (27 Oct 2026):** a test SMS from Settings → Messaging
+  (template 1, MSG91 sendsms, the site's sender ID, signature and DLT ID)
+  was received. Long visitor links (~81 characters) noted as deferred in
+  `KNOWN_ISSUES.md`.
 
